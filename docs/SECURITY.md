@@ -17,7 +17,8 @@ vibehawk は **2 系統の認証経路** を持つ。利用者リポジトリの
 ```text
 利用者リポジトリの GitHub Actions
    ├─ ① Anthropic 認証（LLM 呼び出し）
-   │     └─ CLAUDE_CODE_OAUTH_TOKEN（Claude Max 枠）または ANTHROPIC_API_KEY
+   │     └─ CLAUDE_CODE_OAUTH_TOKEN（Claude Max 枠）
+   │       ※ 将来 ANTHROPIC_API_KEY による従量課金経路への対応も検討
    │
    └─ ② GitHub 認証（PR コメント投稿・edit・resolve）
          └─ vibehawk GitHub App の Installation Token
@@ -45,10 +46,12 @@ vibehawk は **2 系統の認証経路** を持つ。利用者リポジトリの
 | 手順 | 内容 |
 |---|---|
 | 1 | リポジトリに `vibehawk` GitHub App をインストール（クリック数回） |
-| 2 | `.github/workflows/vibehawk.yml` を配置（テンプレートからコピペ） |
-| 3 | secrets に `CLAUDE_CODE_OAUTH_TOKEN` を設定 |
+| 2 | `.github/workflows/vibehawk-review.yml` を配置（テンプレートからコピペ） |
+| 3 | secrets に 3 つを設定: `CLAUDE_CODE_OAUTH_TOKEN` / `VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY` |
 
-→ CodeRabbit の導入手順とほぼ同じ感覚。claude-code-action と比べて App インストールの 1 手間だけ増える。
+各 secret の意味は `README.md` の「利用者の導入手順」セクションを参照。
+
+→ CodeRabbit の導入手順とほぼ同じ感覚。claude-code-action と比べて App インストールの 1 手間と App ID/Private Key の secrets 設定が増える。
 
 ## データ保護
 
