@@ -69,16 +69,18 @@ else
   fail "cancel-in-progress が true でない"
 fi
 
-# 最小権限（表記揺れ対応）
+# 最小権限（表記揺れ対応）+ id-token: write（autonomous-restrictions.md §6 例外、CISO 承認済）
 declare -a required_perms=(
   "pull-requests:[[:space:]]*write"
   "issues:[[:space:]]*write"
   "contents:[[:space:]]*read"
+  "id-token:[[:space:]]*write"
 )
 declare -a perm_labels=(
   "pull-requests: write"
   "issues: write"
   "contents: read"
+  "id-token: write"
 )
 for i in "${!required_perms[@]}"; do
   pattern="${required_perms[$i]}"
@@ -152,6 +154,20 @@ if echo "$WORKFLOW_BODY" | grep -F "draft == false" > /dev/null; then
   pass "draft skip ロジックが設定されている"
 else
   fail "draft skip ロジック (draft == false) が設定されていない"
+fi
+
+# claude_args（claude-code-action のツール明示）
+if echo "$WORKFLOW_BODY" | grep -F "claude_args:" > /dev/null; then
+  pass "claude_args が設定されている（claude-code-action のツール明示）"
+else
+  fail "claude_args が設定されていない（claude-code-action が automatic review mode で動作しない）"
+fi
+
+# claude が PR コメント投稿できる allowedTools
+if echo "$WORKFLOW_BODY" | grep -F "Bash(gh pr comment:*)" > /dev/null; then
+  pass "allowedTools に Bash(gh pr comment:*) が含まれる"
+else
+  fail "allowedTools に Bash(gh pr comment:*) が含まれない（vibehawk[bot] がコメント投稿できない）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
