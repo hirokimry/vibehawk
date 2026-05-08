@@ -289,5 +289,67 @@ else
   fail "--dry-run で実際の操作が走る可能性"
 fi
 
+# Issue #28: parseYes が --yes / -y を検出
+if node -e '
+const { parseYes } = require("./cli/install");
+if (parseYes(["--yes"]) !== true) process.exit(1);
+if (parseYes(["-y"]) !== true) process.exit(1);
+if (parseYes(["--owner", "alice"]) !== false) process.exit(1);
+if (parseYes([]) !== false) process.exit(1);
+'; then
+  pass "parseYes が --yes / -y を検出"
+else
+  fail "parseYes の挙動が想定と異なる"
+fi
+
+# Issue #28: 同意拒否時に HTTP server / browser / fetch が起動しないこと
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const install = require("./cli/install");
+let httpServerStarted = false;
+let browserOpened = false;
+let fetchCalled = false;
+global.fetch = () => { fetchCalled = true; return Promise.reject(new Error("should not be called")); };
+const originalCreateServer = require("http").createServer;
+require("http").createServer = function() { httpServerStarted = true; return originalCreateServer.apply(this, arguments); };
+install.run({
+  argv: ["--owner", "alice"],
+  openBrowser: () => { browserOpened = true; },
+  readOwner: async () => "alice",
+  readConsent: async () => false,
+}).then((result) => {
+  if (httpServerStarted) { console.error("http server should not start when consent denied"); process.exit(1); }
+  if (browserOpened) { console.error("browser should not open when consent denied"); process.exit(1); }
+  if (fetchCalled) { console.error("fetch should not be called when consent denied"); process.exit(1); }
+  if (!result.canceled) { console.error("result.canceled should be true"); process.exit(1); }
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "同意拒否時に HTTP server / browser / fetch が起動しない"
+else
+  fail "同意拒否時に実際の操作が走る可能性"
+fi
+
+# Issue #28: --yes フラグで consent prompt がスキップされること（readConsent が呼ばれない）
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const install = require("./cli/install");
+let consentCalled = false;
+install.run({
+  argv: ["--owner", "alice", "--yes", "--dry-run"],
+  openBrowser: () => {},
+  readOwner: async () => "alice",
+  readConsent: async () => { consentCalled = true; return true; },
+}).then((result) => {
+  if (consentCalled) { console.error("readConsent should not be called with --yes"); process.exit(1); }
+  if (!result.dryRun) process.exit(1);
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "--yes で consent prompt がスキップされる"
+else
+  fail "--yes で consent prompt が呼ばれる"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
