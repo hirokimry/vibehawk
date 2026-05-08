@@ -54,6 +54,21 @@ vibehawk は専用データストアを持たない。状態はすべて GitHub 
 
 この 3 点が揃って OSS 配布されたものは現時点で市場に存在しない。
 
+## 認証経路の設計（Phase 1 暫定）
+
+> ⚠️ 本セクションは Phase 1 暫定状態の記述。Issue #22 で `GITHUB_TOKEN` 1 系統への統合を実施し、本セクションは全面書き換え予定。
+
+vibehawk は 2 系統の認証経路を持つ:
+
+| 系統 | トークン | 役割 | 当事者 |
+|---|---|---|---|
+| LLM 認証 | `CLAUDE_CODE_OAUTH_TOKEN` | LLM 呼び出し | 利用者の Claude Pro / Max 契約 |
+| GitHub 認証 | GitHub App Installation Token（`VIBEHAWK_APP_ID` + `VIBEHAWK_PRIVATE_KEY`） | PR コメント投稿 | vibehawk 開発側の GitHub App |
+
+**Why（GitHub App 採用の根拠）**: 投稿者表示を `vibehawk[bot]` で固定して `specification.md` の「サマリ一意特定（投稿者 ID + マーカー二重チェック）」要件を満たすため。
+
+**既知の構造的問題**: 現状は CEO の GitHub App Private Key を全利用者に配布する構造であり、OSS 配布不可。Issue #22 で `${{ secrets.GITHUB_TOKEN }}` 利用に切替（投稿者表示は `github-actions[bot]` に妥協）し、Value 1「利用者の契約だけで、完結させる」を優先する設計に修正する。
+
 ## vibecorp とは
 
 vibecorp は「AIエージェントを組織化してプロダクト開発を回す」仕組みをプラグインとして提供する。

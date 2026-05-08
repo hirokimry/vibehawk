@@ -19,6 +19,7 @@ GitHub Marketplace（公開後）またはリポジトリ設定から `vibehawk`
 - `pull_requests: write`
 - `issues: write`
 - `contents: read`
+- `id-token: write` — GitHub OIDC 認証用（CISO 承認済み例外、`actions/create-github-app-token` で必要。Issue #22 で削除予定）
 
 ### 2. workflow ファイルを配置
 
