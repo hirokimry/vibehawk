@@ -157,6 +157,33 @@ vibehawk は専用 DB を持たない設計（`docs/design-philosophy.md` 状態
 
 （依存パッケージの更新方針・脆弱性スキャンの運用を記載）
 
+## npm 配布のセキュリティ（Issue #30）
+
+vibehawk CLI は npm registry 経由で配布される。npm 侵害は世界中の利用者に偽物 vibehawk が配布される最大のサプライチェーン攻撃面のため、以下の **CISO Critical 条件** を遵守する。
+
+### CISO Critical 条件 3 点
+
+| 要件 | 実装 |
+|---|---|
+| npm publish アカウントの 2FA 必須 | npmjs.com Settings 側で設定（CEO 手動）、authenticator app + recovery code |
+| GitHub Actions OIDC 経由の publish のみ許可 | `.github/workflows/release.yml`、`permissions: id-token: write` で短寿命 token を発行 |
+| npm provenance 署名 | `npm publish --provenance --access public` で改ざん検知。`package.json` の `publishConfig.provenance: true` で常時有効 |
+
+### 手動 publish 禁止
+
+- 開発者個人の npm token を使った `npm publish` は **運用上禁止** する
+- リリースは GitHub Releases 作成 → `.github/workflows/release.yml` 自動起動の経路のみ
+- 詳細は `CONTRIBUTING.md` の「リリースプロセス」を参照
+
+### npm 侵害時のインシデント対応（Issue #34 で詳細化予定）
+
+万が一 vibehawk の npm パッケージが改ざんされた場合:
+
+1. 改ざんを検知次第、npm Support に通報して該当 version を unpublish 申請
+2. GitHub Releases に該当 version の警告を追記
+3. 利用者向けにセキュリティアドバイザリ（GitHub Security Advisory）を発行
+4. 改ざん経路を特定し、再発防止策を CISO レビュー後に実装
+
 ## インシデント対応
 
 （セキュリティインシデント発生時の対応手順を記載）
