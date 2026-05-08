@@ -135,5 +135,57 @@ else
   fail "CLI version が semver を表示しない"
 fi
 
+# Issue #25: 命名統制 — buildAppName が vibehawk-for-<owner> 形式
+if node -e '
+const { buildAppName } = require("./cli/naming");
+const name = buildAppName("alice");
+if (name !== "vibehawk-for-alice") { console.error("expected vibehawk-for-alice, got:", name); process.exit(1); }
+'; then
+  pass "buildAppName(alice) → vibehawk-for-alice"
+else
+  fail "buildAppName が vibehawk-for-<owner> 形式を返さない"
+fi
+
+# Issue #25: 命名統制 — invalid owner はエラー
+for invalid in "" "-leading-hyphen" "trailing-hyphen-" "double--hyphen" "name_with_underscore" "12345678901234567890123456789012345678901"; do
+  if node -e "
+const { buildAppName } = require('./cli/naming');
+try {
+  buildAppName('${invalid}');
+  process.exit(1);
+} catch (e) {
+  process.exit(0);
+}
+"; then
+    pass "buildAppName('${invalid}') が拒否される"
+  else
+    fail "buildAppName('${invalid}') が拒否されない"
+  fi
+done
+
+# Issue #25: 命名統制 — valid owner（連続ハイフンなし、先頭末尾英数字）は受理
+for valid in "alice" "my-org" "user123" "Org-Name-1"; do
+  if node -e "
+const { buildAppName } = require('./cli/naming');
+buildAppName('${valid}');
+"; then
+    pass "buildAppName('${valid}') が受理される"
+  else
+    fail "buildAppName('${valid}') が受理されない"
+  fi
+done
+
+# Issue #25: 命名統制 — parseOwnerArg が --owner=foo / --owner foo を解析
+if node -e '
+const { parseOwnerArg } = require("./cli/naming");
+if (parseOwnerArg(["--owner=alice"]) !== "alice") process.exit(1);
+if (parseOwnerArg(["--owner", "bob"]) !== "bob") process.exit(1);
+if (parseOwnerArg(["--other"]) !== null) process.exit(1);
+'; then
+  pass "parseOwnerArg が --owner / --owner= 両形式を解析"
+else
+  fail "parseOwnerArg の解析挙動が想定と異なる"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

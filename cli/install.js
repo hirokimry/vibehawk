@@ -1,21 +1,33 @@
 'use strict';
 
 const http = require('http');
+const readline = require('readline');
 const { spawn } = require('child_process');
 const { URL } = require('url');
 const { buildManifest } = require('./manifest');
+const { buildAppName, parseOwnerArg, validateOwner } = require('./naming');
 
 const DEFAULT_PORT = 8765;
 const TIMEOUT_MS = 5 * 60 * 1000;
 
-// Issue #25 で <owner>-vibehawk-for 命名統制が入る予定。本 issue (#24) では暫定名を使用する。
-const APP_NAME = 'vibehawk';
+async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser, argv = process.argv.slice(3), readOwner = promptOwner } = {}) {
+  let owner = parseOwnerArg(argv);
+  if (!owner) {
+    owner = await readOwner();
+  }
+  validateOwner(owner);
+  const appName = buildAppName(owner);
 
-async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser } = {}) {
-  const manifest = buildManifest({ port, name: APP_NAME });
   console.log('vibehawk: GitHub App Manifest Flow を開始します');
   console.log('');
-  console.log('このコマンドは利用者の GitHub アカウントに vibehawk App を作成します。');
+  console.log(`作成される App 名: ${appName}[bot]`);
+  console.log('');
+  console.log('⚠️ 命名統制: vibehawk は App 名を vibehawk-for-<owner> 形式で固定しています。');
+  console.log('   利用者は App 名を自由にカスタマイズできません（GitHub Apps の名前ユニーク制約と');
+  console.log('   ブランド統制を両立させるための設計上の制約）。');
+  console.log('   詳細は docs/design-philosophy.md「命名統制」セクション参照。');
+  console.log('');
+  console.log('このコマンドは利用者の GitHub アカウントに App を作成します。');
   console.log('vibehawk 運営側のサーバーには一切通信しません（localhost のみで完結）。');
   console.log('');
 
@@ -23,8 +35,18 @@ async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser } = {
   console.log('vibehawk: GitHub から認可コードを受信しました。App credentials に変換します...');
   const credentials = await exchangeCode(code);
 
-  printResult(credentials);
+  printResult(credentials, appName);
   return credentials;
+}
+
+function promptOwner() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question('GitHub オーナー名（user 名 または org 名）を入力してください: ', (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
 }
 
 function waitForCallback({ port, manifest, openBrowser }) {
@@ -116,13 +138,22 @@ async function exchangeCode(code) {
   return await response.json();
 }
 
-function printResult(credentials) {
+function printResult(credentials, expectedAppName) {
   console.log('');
   console.log('=== GitHub App 作成完了 ===');
+  console.log(`App 名:     ${credentials.name}`);
   console.log(`App ID:     ${credentials.id}`);
   console.log(`Slug:       ${credentials.slug}`);
   console.log(`HTML URL:   ${credentials.html_url}`);
   console.log('');
+  if (expectedAppName && credentials.name !== expectedAppName) {
+    console.log('⚠️ 命名統制衝突検出:');
+    console.log(`   想定名: ${expectedAppName}`);
+    console.log(`   実際:   ${credentials.name}`);
+    console.log('   GitHub 側で同名 App が既に存在する場合、自動的に連番が付与される可能性があります。');
+    console.log('   既存の vibehawk-for-<owner> App を一度確認してから再実行してください。');
+    console.log('');
+  }
   console.log('=== 次のステップ ===');
   console.log(`1. ${credentials.html_url}/installations/new からこの App を対象リポジトリにインストール`);
   console.log('2. 対象リポジトリの Settings → Secrets で CLAUDE_CODE_OAUTH_TOKEN を設定');
@@ -163,4 +194,4 @@ function defaultOpenBrowser(url) {
   child.unref();
 }
 
-module.exports = { run, waitForCallback, exchangeCode, APP_NAME, DEFAULT_PORT };
+module.exports = { run, waitForCallback, exchangeCode, DEFAULT_PORT };
