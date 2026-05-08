@@ -31,6 +31,16 @@ for f in README.md MVV.md .coderabbit.yaml .claude/vibecorp.yml; do
   fi
 done
 
+# MVV.md のプレースホルダ検証（空テンプレでないことを保証）
+if [[ -f "MVV.md" ]]; then
+  if grep -F "（ここに" MVV.md > /dev/null; then
+    remaining=$(grep -nF "（ここに" MVV.md)
+    fail "MVV.md にプレースホルダが残っている:"$'\n'"$remaining"
+  else
+    pass "MVV.md にプレースホルダが残っていない"
+  fi
+fi
+
 # 後続テストは .claude/vibecorp.yml に依存するため、不在なら早期終了
 if [[ ! -f ".claude/vibecorp.yml" ]]; then
   echo "=== 結果: $PASSED passed, $FAILED failed ==="
