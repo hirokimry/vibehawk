@@ -45,7 +45,7 @@ PR を作成すると `vibehawk-review.yml` が起動し、`github-actions[bot]`
 `vibehawk-for-<owner>[bot]` 名義での投稿などブランド表示を希望する利用者は、`npx vibehawk install` で利用者自身の GitHub App を作成できます（v2 拡張ルート、Issue #25 以降で順次実装）。
 
 ```bash
-npx vibehawk install
+npx vibehawk install --owner <your-github-username>
 ```
 
 このコマンドは:
@@ -54,6 +54,24 @@ npx vibehawk install
 - ブラウザで GitHub App Manifest Flow を開始
 - vibehawk 運営側のサーバーには一切通信しない（localhost のみで完結）
 - Private Key は CLI が画面に印字せず破棄（CISO Critical 条件）
+
+### `--dry-run` モード
+
+実行内容を事前確認したい場合は `--dry-run` を付けてください。実際には何もせず、起動する HTTP サーバーのポート・通信先・書き込み範囲を表示するだけです:
+
+```bash
+npx vibehawk install --owner alice --dry-run
+```
+
+### `setup-token` コマンド
+
+`CLAUDE_CODE_OAUTH_TOKEN` を対象リポジトリの GitHub Secrets に登録するヘルパー:
+
+```bash
+npx vibehawk setup-token --repo alice/my-repo
+```
+
+別ターミナルで `claude setup-token` を実行してトークンを取得し、CLI のプロンプトに貼り付けます。vibehawk はトークンをローカルに保存せず、メモリ上のみで保持して `gh secret set` で登録します。
 
 デフォルト導入手順（上記）では CLI は不要です。`secrets.GITHUB_TOKEN` で完結します。
 

@@ -10,6 +10,32 @@ const { buildAppName, parseOwnerArg, validateOwner } = require('./naming');
 const DEFAULT_PORT = 8765;
 const TIMEOUT_MS = 5 * 60 * 1000;
 
+function parseDryRun(argv) {
+  return Array.isArray(argv) && argv.some((a) => a === '--dry-run');
+}
+
+function printPlan({ owner, appName, port, dryRun }) {
+  console.log('=== 実行予定プレビュー ===');
+  console.log(`オーナー名:        ${owner}`);
+  console.log(`作成される App 名: ${appName}[bot]`);
+  console.log(`localhost ポート:  ${port}`);
+  console.log('');
+  console.log('実行される操作:');
+  console.log(`  1. localhost:${port} に HTTP サーバーを起動`);
+  console.log('  2. ブラウザで GitHub App Manifest Flow を自動オープン');
+  console.log('  3. GitHub UI で利用者が「Create」ボタンを押下');
+  console.log(`  4. localhost:${port}/callback で App 作成完了を検知`);
+  console.log('  5. GitHub API で App credentials を取得（Private Key は画面に印字せず破棄）');
+  console.log('');
+  console.log('vibehawk 運営側サーバーへの通信: なし（localhost のみで完結）');
+  console.log('ローカルファイルへの書き込み: なし（標準出力のみ）');
+  console.log('');
+  if (dryRun) {
+    console.log('⚙️ --dry-run モード: 実際の操作は実行しません。');
+    console.log('');
+  }
+}
+
 async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser, argv = process.argv.slice(3), readOwner = promptOwner } = {}) {
   let owner = parseOwnerArg(argv);
   if (!owner) {
@@ -17,19 +43,27 @@ async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser, argv
   }
   validateOwner(owner);
   const appName = buildAppName(owner);
+  const dryRun = parseDryRun(argv);
 
   console.log('vibehawk: GitHub App Manifest Flow を開始します');
-  console.log('');
-  console.log(`作成される App 名: ${appName}[bot]`);
   console.log('');
   console.log('⚠️ 命名統制: vibehawk は App 名を vibehawk-for-<owner> 形式で固定しています。');
   console.log('   利用者は App 名を自由にカスタマイズできません（GitHub Apps の名前ユニーク制約と');
   console.log('   ブランド統制を両立させるための設計上の制約）。');
-  console.log('   詳細は docs/design-philosophy.md「命名統制」セクション参照。');
   console.log('');
+
+  printPlan({ owner, appName, port, dryRun });
+
+  if (dryRun) {
+    console.log('vibehawk: --dry-run のため実際の操作はスキップしました。');
+    return { dryRun: true, owner, appName };
+  }
+
   console.log('このコマンドは利用者の GitHub アカウントに App を作成します。');
   console.log('vibehawk 運営側のサーバーには一切通信しません（localhost のみで完結）。');
   console.log('');
+
+  const manifest = buildManifest({ port, name: appName });
 
   const code = await waitForCallback({ port, manifest, openBrowser });
   console.log('vibehawk: GitHub から認可コードを受信しました。App credentials に変換します...');
@@ -194,4 +228,4 @@ function defaultOpenBrowser(url) {
   child.unref();
 }
 
-module.exports = { run, waitForCallback, exchangeCode, DEFAULT_PORT };
+module.exports = { run, waitForCallback, exchangeCode, parseDryRun, printPlan, DEFAULT_PORT };

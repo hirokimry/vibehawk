@@ -247,5 +247,47 @@ else
   fail "CLI help が setup-token コマンドを表示しない"
 fi
 
+# Issue #27: parseDryRun が --dry-run を検出
+if node -e '
+const { parseDryRun } = require("./cli/install");
+if (parseDryRun(["--dry-run"]) !== true) process.exit(1);
+if (parseDryRun(["--owner", "alice", "--dry-run"]) !== true) process.exit(1);
+if (parseDryRun(["--owner", "alice"]) !== false) process.exit(1);
+if (parseDryRun([]) !== false) process.exit(1);
+'; then
+  pass "parseDryRun が --dry-run を検出"
+else
+  fail "parseDryRun の挙動が想定と異なる"
+fi
+
+# Issue #27: --dry-run 実行で実際の操作（HTTP server / browser / GitHub API）が起動しないこと
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const install = require("./cli/install");
+let httpServerStarted = false;
+let browserOpened = false;
+let fetchCalled = false;
+const originalFetch = global.fetch;
+global.fetch = () => { fetchCalled = true; return Promise.reject(new Error("should not be called")); };
+const originalCreateServer = require("http").createServer;
+require("http").createServer = function() { httpServerStarted = true; return originalCreateServer.apply(this, arguments); };
+install.run({
+  argv: ["--owner", "alice", "--dry-run"],
+  openBrowser: () => { browserOpened = true; },
+  readOwner: async () => "alice",
+}).then((result) => {
+  if (httpServerStarted) { console.error("http server should not start in dry-run"); process.exit(1); }
+  if (browserOpened) { console.error("browser should not open in dry-run"); process.exit(1); }
+  if (fetchCalled) { console.error("fetch should not be called in dry-run"); process.exit(1); }
+  if (!result.dryRun) { console.error("result.dryRun should be true"); process.exit(1); }
+  if (result.appName !== "vibehawk-for-alice") { console.error("appName mismatch"); process.exit(1); }
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "--dry-run で HTTP server / browser / fetch が起動しない"
+else
+  fail "--dry-run で実際の操作が走る可能性"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
