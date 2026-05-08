@@ -1,0 +1,37 @@
+{
+  "name": "vibehawk",
+  "version": "0.1.0",
+  "description": "鷹のように観察し、追加課金ゼロで PR レビューを届ける OSS プロダクト",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hirokimry/vibehawk.git"
+  },
+  "homepage": "https://github.com/hirokimry/vibehawk#readme",
+  "bugs": {
+    "url": "https://github.com/hirokimry/vibehawk/issues"
+  },
+  "bin": {
+    "vibehawk": "./cli/index.js"
+  },
+  "files": [
+    "cli/",
+    "templates/",
+    "README.md",
+    "MVV.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "bash tests/test_smoke.sh && bash tests/test_workflow_yaml.sh && bash tests/test_cli.sh"
+  },
+  "keywords": [
+    "code-review",
+    "claude",
+    "github-actions",
+    "oss",
+    "no-additional-fee"
+  ]
+}
