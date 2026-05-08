@@ -279,9 +279,19 @@ vibehawk は npm パッケージとして CLI を提供する。利用者は `np
 - **最小権限のみ要求**: `pull_requests: write` / `issues: write` / `contents: read`（`administration: write` / `secrets: write` / `workflows: write` / `id-token: write` は要求しない）
 - **App は public**: OSS として配布するため `public: true`
 
-### App 命名規則
+### App 命名規則（Issue #25 採用）
 
-Issue #24 時点では暫定的に `vibehawk` という名前で App が作成される。Issue #25 で `vibehawk-for-<owner>` 形式の命名統制が実装される（GitHub Apps のグローバル名前ユニーク制約への対応）。
+`npx vibehawk install` で作成される GitHub App の名前は **`vibehawk-for-<owner>` 形式に固定** される（例: owner が `alice` なら App 名は `vibehawk-for-alice`、bot 表示は `vibehawk-for-alice[bot]`）。
+
+| 観点 | 内容 |
+|---|---|
+| 形式 | `vibehawk-for-<owner>` |
+| owner 制約 | GitHub user/org 命名規則（1-39 文字、英数字とハイフン、先頭末尾はハイフン不可、連続ハイフン不可） |
+| カスタマイズ | 不可（CLI が引数 `--owner` または対話プロンプトで受け付け、命名は固定） |
+| 同名衝突 | GitHub が自動連番付与する場合あり。CLI が `printResult` で警告表示 |
+| 設計根拠 | `docs/design-philosophy.md`「命名統制」セクション参照 |
+
+CLI 起動時に「⚠️ 命名統制」の旨を明示表示し、利用者がカスタマイズ不可であることを認識した上で進める運用とする。
 
 ### CLI が必要な場合
 
