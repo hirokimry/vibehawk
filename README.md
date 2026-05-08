@@ -39,3 +39,4 @@ GitHub Marketplace（公開後）またはリポジトリ設定から `vibehawk`
 ## ステータス
 
 本リポジトリは **開発中**（Phase 1 基盤構築）です。Issue #7 で実行基盤を、Issue #8 以降で詳細レビュー機能（サマリコメント・inline コメント・severity 5 段階・@mention チャット応答）を順次積み上げます。
+
