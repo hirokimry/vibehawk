@@ -4,7 +4,7 @@
 
 ## 概要
 
-vibehawk は **追加課金ゼロの PR 自動レビュー OSS プロダクト** です。利用者が既に契約している LLM サブスクリプション枠（Claude Pro / ChatGPT Plus 等）の **内側だけ** で動作し、AI レビュー専用 SaaS の月額や LLM API の従量課金を発生させません。
+vibehawk は **追加課金ゼロの PR 自動レビュー OSS プロダクト** です。利用者が既に契約している LLM サブスクリプション枠（Claude Pro / Max 等）の **内側だけ** で動作し、AI レビュー専用 SaaS の月額や LLM API の従量課金を発生させません。
 
 vibe シリーズ（vibecorp / vibemux / vibehawk）の一員として、CodeRabbit の「うさぎ（速さ・量）」に対し「鷹（精度・観察力・全体俯瞰）」のメタファーで対置します。
 
@@ -12,31 +12,34 @@ vibe シリーズ（vibecorp / vibemux / vibehawk）の一員として、CodeRab
 
 ## 利用者の導入手順（3 ステップ）
 
-### 1. `vibehawk` GitHub App をインストール
+利用者が設定する secret は **`CLAUDE_CODE_OAUTH_TOKEN` 1 個のみ**。CEO の GitHub App Private Key を配布する必要がない設計です。
 
-GitHub Marketplace（公開後）またはリポジトリ設定から `vibehawk` App をインストールします。App は以下の **最小権限** のみ要求します（詳細は `docs/SECURITY.md`）:
+### 1. workflow ファイルを配置
+
+リポジトリに `.github/workflows/vibehawk-review.yml` を配置します。本リポジトリの同名ファイルをコピーして利用してください。workflow は以下の **最小権限** のみ要求します（詳細は `docs/SECURITY.md`）:
 
 - `pull_requests: write`
 - `issues: write`
 - `contents: read`
-- `id-token: write` — GitHub OIDC 認証用（CISO 承認済み例外、`actions/create-github-app-token` で必要。Issue #22 で削除予定）
 
-### 2. workflow ファイルを配置
-
-リポジトリに `.github/workflows/vibehawk-review.yml` を配置します。本リポジトリの同名ファイルをコピーして利用してください。
-
-### 3. secrets を設定
+### 2. secret を 1 個だけ設定
 
 リポジトリ Settings → Secrets and variables → Actions で以下を設定します:
 
 | secret 名 | 内容 | 取得元 |
 |---|---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Max サブスクリプションの OAuth Token | claude-code-action 公式手順 |
-| `VIBEHAWK_APP_ID` | vibehawk GitHub App ID | App 設定画面 |
-| `VIBEHAWK_PRIVATE_KEY` | vibehawk GitHub App Private Key | App 設定画面で発行 |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Pro / Max サブスクリプションの OAuth Token | claude-code-action 公式手順（`/install-github-app` 等） |
 
-> 3 つの secrets が揃わない状態では、workflow は起動しても自動的にスキップ動作（プレースホルダコメントのみ投稿）になります。
+`secrets.GITHUB_TOKEN` は GitHub Actions が自動発行するため、利用者が設定する必要はありません。
+
+### 3. PR を出す
+
+PR を作成すると `vibehawk-review.yml` が起動し、`github-actions[bot]` 名義でレビューサマリコメントを投稿します。
+
+> 投稿者表示について: 投稿者は `github-actions[bot]` になります。`vibehawk[bot]` ブランド表示は OSS 配布性（Private Key 非配布）とのトレードオフで Issue #22 にて妥協されました。詳細は `docs/SECURITY.md` の「認証経路の設計」セクションを参照。
+
+> `CLAUDE_CODE_OAUTH_TOKEN` 未設定の場合、workflow は起動してもプレースホルダコメントのみ投稿してスキップ動作になります。
 
 ## ステータス
 
-本リポジトリは **開発中**（Phase 1 基盤構築）です。Issue #7 で実行基盤を、Issue #8 以降で詳細レビュー機能（サマリコメント・inline コメント・severity 5 段階・@mention チャット応答）を順次積み上げます。
+本リポジトリは **開発中**（Phase 1 基盤構築 + OSS 配布対応）です。Issue #7 で実行基盤を、Issue #22 で OSS 配布可能化を、Issue #8 以降で詳細レビュー機能（サマリコメント・inline コメント・severity 5 段階・@mention チャット応答）を順次積み上げます。

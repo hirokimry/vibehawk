@@ -235,7 +235,15 @@ concurrency:
 
 ### セキュリティ
 
-（認証・認可・データ保護等の要件を記載。詳細は SECURITY.md を参照）
+詳細は `docs/SECURITY.md` を参照。本仕様書では特記事項のみ記述する。
+
+#### 投稿者表示（Issue #22 修正後）
+
+vibehawk が投稿するレビューコメントの投稿者は **`github-actions[bot]`** 名義になる。これは Issue #22 の修正により、CEO の GitHub App Private Key を利用者に配布する設計を撤廃し、`secrets.GITHUB_TOKEN` 1 系統認証に統合したためである。
+
+`vibehawk[bot]` ブランドでの投稿者表示は OSS 配布性（Private Key 非配布）とのトレードオフで妥協された。Value 1「利用者の契約だけで、完結させる」を優先した結論であり、利用者は GitHub App インストール不要・Private Key 配布不要・1 secret 設定のみで導入できる利点を得る。
+
+将来 GitHub App 経路を再導入する場合の v2 拡張余地は `docs/SECURITY.md` を参照。
 
 ### 可用性
 
