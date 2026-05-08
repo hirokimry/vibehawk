@@ -9,7 +9,7 @@
 
 ## 索引
 
-（エントリはまだありません）
+- 2026-05-08 — MVV 制定 — Mission/Value 1 を根拠に「利用者側追加コストゼロ」をコスト設計原則として確立し docs/cost-analysis.md と cost-principles.md に反映
 
 ## 運用ルール
 
