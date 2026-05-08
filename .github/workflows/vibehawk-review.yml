@@ -1,0 +1,64 @@
+name: vibehawk PR auto-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+concurrency:
+  group: vibehawk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: secrets 検証
+        id: check_secrets
+        env:
+          APP_ID: ${{ secrets.VIBEHAWK_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
+          OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [[ -z "$APP_ID" || -z "$PRIVATE_KEY" || -z "$OAUTH_TOKEN" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::vibehawk: 必須 secrets 未設定（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）。CEO の App 登録 + secrets 設定を待機中"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: secrets 未設定時のプレースホルダ投稿
+        if: steps.check_secrets.outputs.ready != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "🦅 vibehawk: 必須 secrets が未設定のためレビューをスキップしました（CEO の GitHub App 登録 + secrets 設定が必要）。詳細は README.md の利用者導入手順を参照。"
+
+      - name: App Installation Token 取得
+        if: steps.check_secrets.outputs.ready == 'true'
+        uses: actions/create-github-app-token@v2
+        id: app_token
+        with:
+          app-id: ${{ secrets.VIBEHAWK_APP_ID }}
+          private-key: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
+
+      - name: claude-code-action でレビュー実行
+        if: steps.check_secrets.outputs.ready == 'true'
+        uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app_token.outputs.token }}
+          prompt: |
+            このPRをレビューしてください。
+            （詳細なレビュー仕様は Issue #8 以降で順次積み上げ予定）
