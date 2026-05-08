@@ -146,15 +146,20 @@ vibehawk GitHub App（1 つだけ公開）
 ```bash
 prev_sha=$(extract_sha_from_summary)
 
+# base ブランチは GitHub Actions 環境変数から動的取得（main 以外の default branch にも対応）
+base_ref="${GITHUB_BASE_REF:-main}"
+
 if git merge-base --is-ancestor "$prev_sha" HEAD; then
   range="$prev_sha..HEAD"
 else
-  base_sha=$(git merge-base origin/main HEAD)
+  base_sha=$(git merge-base "origin/${base_ref}" HEAD)
   range="$base_sha..HEAD"
 fi
 ```
 
-> 注: GitHub Actions の shallow clone（`fetch-depth: 1` 等）では `$prev_sha` が履歴から欠落して `git merge-base --is-ancestor` が常に false を返し、意図せず force push 扱いになる場合がある。利用者の workflow では `actions/checkout` で `fetch-depth: 0` を指定するか、`git fetch --unshallow` でフォールバックすることを推奨する。
+> 注 1: base ブランチは `GITHUB_BASE_REF` 環境変数から取得する（pull_request イベント時に GitHub Actions が自動設定）。`main` 以外（`master` / `trunk` 等）のデフォルトブランチを持つリポジトリでも動作させるため `origin/main` ハードコードは避ける。
+>
+> 注 2: GitHub Actions の shallow clone（`fetch-depth: 1` 等）では `$prev_sha` が履歴から欠落して `git merge-base --is-ancestor` が常に false を返し、意図せず force push 扱いになる場合がある。利用者の workflow では `actions/checkout` で `fetch-depth: 0` を指定するか、`git fetch --unshallow` でフォールバックすることを推奨する。
 
 ### sticky review state
 
