@@ -54,20 +54,26 @@ vibehawk は専用データストアを持たない。状態はすべて GitHub 
 
 この 3 点が揃って OSS 配布されたものは現時点で市場に存在しない。
 
-## 認証経路の設計（Phase 1 暫定）
+## 認証経路の設計（OSS 配布版、Issue #22 修正後）
 
-> ⚠️ 本セクションは Phase 1 暫定状態の記述。Issue #22 で `GITHUB_TOKEN` 1 系統への統合を実施し、本セクションは全面書き換え予定。
+vibehawk は **`CLAUDE_CODE_OAUTH_TOKEN` 1 系統** の認証経路に統合されている。CEO の GitHub App Private Key を利用者に配布する設計は OSS 配布不可能であるため Issue #22 で撤廃した。
 
-vibehawk は 2 系統の認証経路を持つ:
+| 系統 | トークン | 役割 | 当事者 | 設定の必要性 |
+|---|---|---|---|---|
+| LLM 認証 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-code-action 経由の LLM 呼び出し | 利用者の Claude Pro / Max 契約 | 利用者が GitHub Secrets に設定 |
+| GitHub 認証 | `secrets.GITHUB_TOKEN` | PR コメント投稿 | GitHub Actions が自動発行（job permissions に scope 限定、短寿命） | 利用者設定不要 |
 
-| 系統 | トークン | 役割 | 当事者 |
-|---|---|---|---|
-| LLM 認証 | `CLAUDE_CODE_OAUTH_TOKEN` | LLM 呼び出し | 利用者の Claude Pro / Max 契約 |
-| GitHub 認証 | GitHub App Installation Token（`VIBEHAWK_APP_ID` + `VIBEHAWK_PRIVATE_KEY`） | PR コメント投稿 | vibehawk 開発側の GitHub App |
+**設計判断（Why `GITHUB_TOKEN` 1 系統）**
 
-**Why（GitHub App 採用の根拠）**: 投稿者表示を `vibehawk[bot]` で固定して `specification.md` の「サマリ一意特定（投稿者 ID + マーカー二重チェック）」要件を満たすため。
+claude-code-action 公式ドキュメントが `secrets.GITHUB_TOKEN` を推奨設定として明記している（auto-scope / job 終了時失効 / prompt injection 耐性）。Personal Access Token や長寿命の GitHub App Installation Token と比較して、`GITHUB_TOKEN` は最も安全かつシンプルな経路である。
 
-**既知の構造的問題**: 現状は CEO の GitHub App Private Key を全利用者に配布する構造であり、OSS 配布不可。Issue #22 で `${{ secrets.GITHUB_TOKEN }}` 利用に切替（投稿者表示は `github-actions[bot]` に妥協）し、Value 1「利用者の契約だけで、完結させる」を優先する設計に修正する。
+**ブランド表示の妥協**
+
+投稿者は `github-actions[bot]` 名義になる。`vibehawk[bot]` 名義のブランド表示は GitHub App Installation Token を必要とし、それは利用者への Private Key 配布または利用者自身の App 発行を要求する。前者は OSS 配布性を毀損し、後者は利用者の手間を増やす。Value 1「利用者の契約だけで、完結させる」を優先し、ブランド表示を妥協する。
+
+**v2 拡張余地（将来検討）**
+
+将来 GitHub App 経路を再導入する場合、利用者自身が GitHub App を発行・設定するルート（vibehawk 開発側の Private Key を配布しない）を検討する。Anthropic 公式 `claude` App の仕組み調査も並行する。v2 で再導入する場合も Issue #22 で確立した「1 secret のみ」の利用者体験を後退させない設計を最優先とする。詳細条件は `docs/SECURITY.md` の「v2 拡張余地」セクション参照。
 
 ## vibecorp とは
 
