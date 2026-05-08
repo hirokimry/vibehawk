@@ -8,6 +8,10 @@ const command = process.argv[2];
 
 const commands = {
   install: () => require('./install').run(),
+  'setup-token': () => require('./oauth').setupToken().catch((e) => {
+    console.error(e.message || e);
+    process.exit(1);
+  }),
   help: () => printHelp(),
   '--help': () => printHelp(),
   '-h': () => printHelp(),
@@ -20,9 +24,10 @@ function printHelp() {
   console.log(`vibehawk CLI
 
 usage:
-  npx vibehawk install     GitHub App Manifest Flow を起動して vibehawk App を作成
-  npx vibehawk help        このヘルプを表示
-  npx vibehawk version     バージョンを表示
+  npx vibehawk install                      GitHub App Manifest Flow を起動して vibehawk App を作成
+  npx vibehawk setup-token --repo OWNER/REPO   Claude OAuth Token を取得してリポジトリ secrets に登録
+  npx vibehawk help                         このヘルプを表示
+  npx vibehawk version                      バージョンを表示
 
 詳細: https://github.com/hirokimry/vibehawk
 `);

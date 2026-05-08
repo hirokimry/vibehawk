@@ -187,5 +187,65 @@ else
   fail "parseOwnerArg の解析挙動が想定と異なる"
 fi
 
+# Issue #26: oauth.js が存在
+if [[ -f cli/oauth.js ]]; then
+  pass "cli/oauth.js が存在する"
+else
+  fail "cli/oauth.js が存在しない"
+fi
+
+# Issue #26: validateToken が形式違反トークンを拒否
+if node -e '
+const { validateToken } = require("./cli/oauth");
+try { validateToken(""); process.exit(1); } catch (e) {}
+try { validateToken("short"); process.exit(1); } catch (e) {}
+try { validateToken("contains spaces in token here xxxxxxxxxx"); process.exit(1); } catch (e) {}
+try { validateToken("ABCDEFG_HIJKLMN-1234567890.+/=ABCDEFG"); /* OK */ } catch (e) { process.exit(1); }
+'; then
+  pass "validateToken が形式違反を拒否、有効トークンを受理"
+else
+  fail "validateToken の挙動が想定と異なる"
+fi
+
+# Issue #26: parseRepoArg が --repo / --repo= 両形式を解析
+if node -e '
+const { parseRepoArg } = require("./cli/oauth");
+if (parseRepoArg(["--repo=alice/bob"]) !== "alice/bob") process.exit(1);
+if (parseRepoArg(["--repo", "alice/bob"]) !== "alice/bob") process.exit(1);
+if (parseRepoArg(["--other"]) !== null) process.exit(1);
+'; then
+  pass "parseRepoArg が --repo / --repo= 両形式を解析"
+else
+  fail "parseRepoArg の挙動が想定と異なる"
+fi
+
+# Issue #26: oauth.js が外部 fetch を発行しないこと（Anthropic OAuth フローは委譲のみ）
+if grep -E "fetch\\(['\"]" cli/oauth.js > /dev/null; then
+  fail "oauth.js が外部 fetch を含む（公式 claude setup-token 委譲設計に反する）"
+else
+  pass "oauth.js は外部 fetch を持たず claude setup-token に委譲"
+fi
+
+# Issue #26: oauth.js がトークンをファイル書き込みしないこと
+if grep -E "(writeFile|writeFileSync|fs\\.write)" cli/oauth.js > /dev/null; then
+  fail "oauth.js がトークンをファイル書き込みしている可能性（メモリ上のみで保持すべき）"
+else
+  pass "oauth.js はトークンをファイル書き込みしない（メモリ上のみで保持）"
+fi
+
+# Issue #26: setup-token コマンドが index.js に登録されている
+if grep -F "'setup-token':" cli/index.js > /dev/null; then
+  pass "setup-token コマンドが index.js に登録されている"
+else
+  fail "setup-token コマンドが index.js に登録されていない"
+fi
+
+# Issue #26: help に setup-token が含まれる
+if node cli/index.js help 2>&1 | grep -F "setup-token" > /dev/null; then
+  pass "CLI help が setup-token コマンドを表示"
+else
+  fail "CLI help が setup-token コマンドを表示しない"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

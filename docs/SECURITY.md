@@ -106,6 +106,37 @@ GitHub App 経路を将来再導入する場合の条件:
 - Anthropic 公式 `claude` App と同等の仕組み調査
 - v2 で再導入する場合も Issue #22 で確立した「1 secret のみ」の利用者体験を後退させない設計を最優先とする
 
+### Claude OAuth Token の取得・登録（Issue #26）
+
+`npx vibehawk setup-token` は利用者の `CLAUDE_CODE_OAUTH_TOKEN` を対象リポジトリの GitHub Secrets に登録する。
+
+#### 設計判断
+
+- vibehawk は Anthropic OAuth client_id を保有しない（Value 4「公式の道を、迂回せず歩く」）
+- 公式 `claude setup-token` フロー（Anthropic 公式の Claude Code CLI が提供）に委譲
+- 利用者は別ターミナルで `claude setup-token` を実行してトークンを取得し、vibehawk CLI のプロンプトに貼り付ける
+- vibehawk は受け取ったトークンを `gh secret set` で対象リポジトリに登録するのみ
+
+#### 読み書き範囲
+
+| リソース | 操作 | 経路 |
+|---|---|---|
+| 利用者の OAuth Token | 受領（メモリ上のみ） | CLI プロンプト経由（標準入力） |
+| GitHub Secrets | 書き込み（CLAUDE_CODE_OAUTH_TOKEN のみ） | `gh secret set` 経由（公式 GitHub CLI） |
+| ローカルファイル | **書き込み禁止** | （該当なし） |
+| vibehawk 運営側サーバー | **通信禁止** | （該当なし） |
+
+#### 既存 secret 上書き時の挙動
+
+- 既に `CLAUDE_CODE_OAUTH_TOKEN` が登録済みの場合、CLI が `[y/N]` プロンプトで上書き確認する
+- N（デフォルト）の場合、既存値を保持して setup を中断する
+- Y の場合のみ `gh secret set` で上書きする
+
+#### キャンセル時の挙動
+
+- OAuth フローを途中で中断した場合（Ctrl+C 等）、トークンを GitHub Secrets に書き込まない
+- ローカル状態は変更されない（部分セットアップ状態を残さない）
+
 ## データ保護
 
 ### 機密情報の取り扱い
