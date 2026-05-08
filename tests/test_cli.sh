@@ -351,5 +351,26 @@ else
   fail "--yes で consent prompt が呼ばれる"
 fi
 
+# Issue #31: install.js に Windows ブラウザ起動コマンド (cmd /c start) が定義されている
+if grep -F "process.platform === 'win32'" cli/install.js > /dev/null && grep -F "'/c', 'start'" cli/install.js > /dev/null; then
+  pass "install.js が Windows 用ブラウザ起動 (cmd /c start) を実装"
+else
+  fail "install.js に Windows 用ブラウザ起動が実装されていない"
+fi
+
+# Issue #31: install.js の path 操作が OS 非依存（path.sep への依存がないこと）
+if grep -E "path\\.sep|\\\\\\\\|process.platform === 'win32'" cli/install.js | grep -v "process.platform === 'win32'" > /dev/null; then
+  fail "install.js に OS 依存のパス区切り文字が残っている"
+else
+  pass "install.js に OS 依存のパス区切り文字がない"
+fi
+
+# Issue #31: localhost サーバーが '127.0.0.1' を listen（Windows IPv6/IPv4 デュアルスタック対応）
+if grep -F "server.listen(port, '127.0.0.1'" cli/install.js > /dev/null; then
+  pass "install.js が 127.0.0.1 を明示 listen（Windows IPv6 デュアルスタック対応）"
+else
+  fail "install.js が 127.0.0.1 を明示 listen していない（Windows で IPv6 にバインドされる可能性）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

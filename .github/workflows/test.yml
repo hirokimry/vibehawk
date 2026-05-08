@@ -14,9 +14,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    # Windows runner でも bash テストを実行するため、step のデフォルト shell を bash に固定
+    # （Git Bash 経由、Issue #31）
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
+
+      - name: Node.js セットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: jq の確認
         run: jq --version
