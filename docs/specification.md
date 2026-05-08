@@ -47,6 +47,144 @@ vibehawk は **追加課金ゼロの PR 自動レビュー OSS プロダクト**
 | sequence diagram 自動生成 | 処理フローを図で表示 | 将来検討 |
 | linked issue 評価 | PR が紐づく Issue の要件を満たしているか確認 | 将来検討 |
 
+## アーキテクチャ
+
+> 永続的状態は GitHub リポジトリ自体を状態ストアとして使う。内部 DB / ベクタ DB / 専用サーバーは持たない（5 大方針 4 / `docs/POLICY.md` 参照）。
+
+### 状態管理（GitHub をストアとして使う）
+
+CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから読むか／どこに書くか:
+
+| 状態の種類 | CodeRabbit | vibehawk |
+|---|---|---|
+| 前回レビュー時点のコミット SHA | 内部 DB | PR サマリコメント末尾 HTML コメント |
+| PR 指摘の resolve 状態 | 内部 DB | GitHub の Resolved Conversation を直接読む |
+| PR 全体の review status | 内部 DB | gh pr review で都度発行（永続化不要） |
+| @mention チャット文脈 | 内部 DB | GitHub の comment スレッドを直接読む |
+| PR 間の学習 | ベクタ DB | ❌ 持たない・実装しない |
+
+### メタデータ仕様
+
+サマリコメントに識別マーカーと SHA マーカーを HTML コメントとして埋め込む。Markdown レンダラーが描画しないため UI 上は不可視。
+
+```markdown
+## 📝 PR レビューサマリ
+（本文）
+
+<!-- vibehawk:summary -->
+<!-- vibehawk:sha=abc123def456 -->
+```
+
+| マーカー | 役割 |
+|---|---|
+| `<!-- vibehawk:summary -->` | 種別マーカー（Bot の PR 全体サマリであることを示す） |
+| `<!-- vibehawk:sha=<HEAD_SHA> -->` | 状態マーカー（前回どのコミットまで見たか） |
+
+サマリコメントの一意特定: 投稿者 ID（`vibehawk[bot]`）+ 種別マーカーの **二重チェック** で誤検知・なりすましを排除する。
+
+```bash
+gh api repos/:owner/:repo/issues/:pr/comments --paginate \
+  | jq '[.[] | select(.user.login == "vibehawk[bot]") | select(.body | contains("<!-- vibehawk:summary -->"))]' \
+  | jq 'sort_by(.created_at) | last'
+```
+
+### マルチリポジトリ対応
+
+GitHub App `vibehawk[bot]` を 1 つだけ作って公開し、利用者は Org / 個人にインストールすれば配下の任意リポジトリで使える。
+
+```text
+vibehawk GitHub App（1 つだけ公開）
+  ├─ Org A にインストール
+  │    ├─ repo-1 で稼働
+  │    └─ repo-2 で稼働
+  ├─ User B にインストール
+  │    └─ repo-3 で稼働
+  └─ Org C にインストール
+       └─ repo-4, repo-5, ...
+```
+
+| 状態 | スコープ | 衝突リスク |
+|---|---|---|
+| サマリコメントの HTML メタデータ | PR 内（リポジトリ単位より狭い） | なし |
+| @mention チャット文脈 | コメントスレッド内（さらに狭い） | なし |
+| Cross-repository な状態 | 持たない（5 大方針 4） | 設計上発生しない |
+
+### インクリメンタルレビュー実装パターン
+
+サマリは **edit して 1 個に保つ**、inline は **append で履歴を残す**、解決済み指摘は **auto_resolve で resolved に倒す** の 3 段運用。
+
+```text
+[初回レビュー]
+  ├─ PR 冒頭にサマリコメント投稿（種別マーカー + SHA 埋め込み付き）
+  └─ 指摘箇所に inline comment 投稿
+
+[2 回目以降（push 後）]
+  ├─ サマリコメントを edit（更新）              ← コメント数は増えない
+  ├─ 新しい inline 指摘は append（追加）        ← 履歴が残る
+  └─ push で直った指摘は auto_resolve          ← Bot 自身の投稿のみ対象
+```
+
+**実装フロー**:
+
+```text
+[Step 1] PR の全コメントを gh api で取得
+[Step 2] 投稿者 ID + 種別マーカー (<!-- vibehawk:summary -->) で
+         自身の最新サマリコメントを一意に特定
+[Step 3] サマリコメント末尾の HTML メタデータから前回 SHA を抽出
+         <!-- vibehawk:sha=abc123def -->
+[Step 4] 前回 SHA が現ブランチに含まれているかチェック
+         ├─ 含まれている（通常 push）   → 前回 SHA から HEAD までの diff
+         └─ 含まれていない（force push）→ base ブランチからの完全再レビュー
+[Step 5] レビュー結果に応じて以下を発行:
+         ├─ サマリコメント: edit（HEAD SHA を埋め込み直して内容更新）
+         ├─ 新規指摘: 新しい inline comment を append
+         └─ 旧指摘で差分が消えたもの: 該当 conversation を resolve
+```
+
+**force push / rebase 検出**:
+
+```bash
+prev_sha=$(extract_sha_from_summary)
+
+if git merge-base --is-ancestor "$prev_sha" HEAD; then
+  range="$prev_sha..HEAD"
+else
+  base_sha=$(git merge-base origin/main HEAD)
+  range="$base_sha..HEAD"
+fi
+```
+
+> 注: GitHub Actions の shallow clone（`fetch-depth: 1` 等）では `$prev_sha` が履歴から欠落して `git merge-base --is-ancestor` が常に false を返し、意図せず force push 扱いになる場合がある。利用者の workflow では `actions/checkout` で `fetch-depth: 0` を指定するか、`git fetch --unshallow` でフォールバックすることを推奨する。
+
+### sticky review state
+
+未解決の指摘が残っていれば「直して」（request_changes）、全部解決していれば「OK」（approve）を毎回発行し直す。状態は GitHub 側にあるので Bot 側の永続化不要。
+
+```text
+[Step 1] gh api で PR の全 review thread を取得
+[Step 2] resolved / unresolved の数をカウント
+[Step 3] unresolved == 0 なら gh pr review --approve
+[Step 4] unresolved >= 1 なら gh pr review --request-changes
+```
+
+### @mention チャット応答
+
+応答のたびにスレッド全体を `gh api` で読み直して、全コメントを LLM コンテキストに渡す。会話状態は GitHub のスレッド自体が保持する。
+
+```text
+利用者が @vibehawk でメンション
+  ↓
+issue_comment イベントトリガーで workflow 起動
+  ↓
+gh api でスレッド全コメント取得
+  ↓
+全コメントを LLM コンテキストに含めて応答生成
+  ↓
+スレッドに新しいコメントとして応答を append
+```
+
+将来的にスレッド超肥大化に備え、`.vibehawk.yaml` で `chat.max_thread_comments`（デフォルト未設定 = 無制限）を後付け可能な構造にしておく。
+
 ## やらない範囲（明示的除外）
 
 vibehawk の責務範囲外として **実装しない** 機能、および vibecorp 側に残す機能を明示する。判断軸は `docs/POLICY.md` の「プロダクト方針（5 大方針）」を参照。
@@ -81,7 +219,14 @@ vibehawk の責務範囲外として **実装しない** 機能、および vibe
 
 ### パフォーマンス
 
-（応答時間、スループット等の要件を記載）
+- **ジョブタイムアウト**: GitHub Actions 標準の **6 時間**。LLM レビューには十分な余裕がある（実運用では数分〜数十分のオーダーで完了する想定）。
+- **並列実行制御**: 利用者の workflow ファイルで `concurrency:` を宣言する。新しい push が来たら古いレビューを中止する設計を推奨。
+
+```yaml
+concurrency:
+  group: vibehawk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+```
 
 ### セキュリティ
 
