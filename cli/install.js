@@ -14,6 +14,22 @@ function parseDryRun(argv) {
   return Array.isArray(argv) && argv.some((a) => a === '--dry-run');
 }
 
+function parseYes(argv) {
+  return Array.isArray(argv) && argv.some((a) => a === '--yes' || a === '-y');
+}
+
+function promptConsent({ rlFactory = () => readline.createInterface({ input: process.stdin, output: process.stdout }) } = {}) {
+  const rl = rlFactory();
+  return new Promise((resolve) => {
+    rl.question('上記内容で実行してよろしいですか？ [Y/n]: ', (answer) => {
+      rl.close();
+      const trimmed = (answer || '').trim();
+      // 空入力 / Y / y / Yes / yes は同意とみなす（[Y/n] の Y がデフォルト）
+      resolve(trimmed === '' || /^y(es)?$/i.test(trimmed));
+    });
+  });
+}
+
 function printPlan({ owner, appName, port, dryRun }) {
   console.log('=== 実行予定プレビュー ===');
   console.log(`オーナー名:        ${owner}`);
@@ -36,7 +52,7 @@ function printPlan({ owner, appName, port, dryRun }) {
   }
 }
 
-async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser, argv = process.argv.slice(3), readOwner = promptOwner } = {}) {
+async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser, argv = process.argv.slice(3), readOwner = promptOwner, readConsent = promptConsent } = {}) {
   let owner = parseOwnerArg(argv);
   if (!owner) {
     owner = await readOwner();
@@ -44,6 +60,7 @@ async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser, argv
   validateOwner(owner);
   const appName = buildAppName(owner);
   const dryRun = parseDryRun(argv);
+  const yes = parseYes(argv);
 
   console.log('vibehawk: GitHub App Manifest Flow を開始します');
   console.log('');
@@ -58,6 +75,18 @@ async function run({ port = DEFAULT_PORT, openBrowser = defaultOpenBrowser, argv
     console.log('vibehawk: --dry-run のため実際の操作はスキップしました。');
     return { dryRun: true, owner, appName };
   }
+
+  // Issue #28: 同意確認プロンプト（npm AUP 遵守）
+  if (!yes) {
+    const consent = await readConsent();
+    if (!consent) {
+      console.log('vibehawk: 同意が得られなかったためキャンセルしました。');
+      return { canceled: true, owner, appName };
+    }
+  } else {
+    console.log('vibehawk: --yes / -y フラグにより同意確認をスキップしました。');
+  }
+  console.log('');
 
   console.log('このコマンドは利用者の GitHub アカウントに App を作成します。');
   console.log('vibehawk 運営側のサーバーには一切通信しません（localhost のみで完結）。');
@@ -228,4 +257,4 @@ function defaultOpenBrowser(url) {
   child.unref();
 }
 
-module.exports = { run, waitForCallback, exchangeCode, parseDryRun, printPlan, DEFAULT_PORT };
+module.exports = { run, waitForCallback, exchangeCode, parseDryRun, parseYes, promptConsent, printPlan, DEFAULT_PORT };
