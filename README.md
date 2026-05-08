@@ -40,6 +40,23 @@ PR を作成すると `vibehawk-review.yml` が起動し、`github-actions[bot]`
 
 > `CLAUDE_CODE_OAUTH_TOKEN` 未設定の場合、workflow は起動してもプレースホルダコメントのみ投稿してスキップ動作になります。
 
+## CLI（オプション）
+
+`vibehawk-for-<owner>[bot]` 名義での投稿などブランド表示を希望する利用者は、`npx vibehawk install` で利用者自身の GitHub App を作成できます（v2 拡張ルート、Issue #25 以降で順次実装）。
+
+```bash
+npx vibehawk install
+```
+
+このコマンドは:
+
+- ローカルに一時 HTTP サーバー（localhost:8765）を起動
+- ブラウザで GitHub App Manifest Flow を開始
+- vibehawk 運営側のサーバーには一切通信しない（localhost のみで完結）
+- Private Key は CLI が画面に印字せず破棄（CISO Critical 条件）
+
+デフォルト導入手順（上記）では CLI は不要です。`secrets.GITHUB_TOKEN` で完結します。
+
 ## ステータス
 
-本リポジトリは **開発中**（Phase 1 基盤構築 + OSS 配布対応）です。Issue #7 で実行基盤を、Issue #22 で OSS 配布可能化を、Issue #8 以降で詳細レビュー機能（サマリコメント・inline コメント・severity 5 段階・@mention チャット応答）を順次積み上げます。
+本リポジトリは **開発中**（Phase 1 基盤構築 + OSS 配布対応）です。Issue #7 で実行基盤を、Issue #22 で OSS 配布可能化を、Issue #24 で `npx vibehawk install` 基盤を、Issue #8 以降で詳細レビュー機能（サマリコメント・inline コメント・severity 5 段階・@mention チャット応答）を順次積み上げます。

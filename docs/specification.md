@@ -249,6 +249,51 @@ vibehawk が投稿するレビューコメントの投稿者は **`github-action
 
 （稼働率、障害復旧等の要件を記載）
 
+## CLI 仕様
+
+vibehawk は npm パッケージとして CLI を提供する。利用者は `npx vibehawk install` で GitHub App Manifest Flow を起動できる。
+
+### 提供コマンド
+
+| コマンド | 用途 |
+|---|---|
+| `npx vibehawk install` | GitHub App Manifest Flow を起動して利用者の GitHub アカウントに vibehawk App を作成 |
+| `npx vibehawk help` | コマンド一覧を表示 |
+| `npx vibehawk version` | バージョンを表示 |
+
+### `install` コマンドの動作（Issue #24）
+
+1. ローカル HTTP サーバー（127.0.0.1:8765）を起動
+2. ブラウザで `http://localhost:8765/start` を自動オープン
+3. ブラウザが GitHub App Manifest Flow（`POST https://github.com/settings/apps/new`）に遷移
+4. 利用者が GitHub UI で「Create」ボタンを押下
+5. GitHub が `http://localhost:8765/callback?code=<code>` にリダイレクト
+6. CLI が `code` を `POST https://api.github.com/app-manifests/<code>/conversions` に渡し App credentials を取得
+7. App ID / Slug / HTML URL を画面表示し、Private Key は **意図的に画面に印字せず破棄** する（メモリ上の参照を `[REDACTED]` で上書き）
+8. 利用者は表示された URL から App をリポジトリにインストールする
+
+### セキュリティ要件（CISO Critical）
+
+- **localhost のみで完結**: vibehawk 運営側のサーバーには一切通信しない（`callback_urls` は localhost に固定）
+- **Private Key 非配布**: GitHub Manifest API が返却する Private Key を CLI が画面に印字・ファイル保存しない（メモリ上の参照は `[REDACTED]` で上書き）
+- **最小権限のみ要求**: `pull_requests: write` / `issues: write` / `contents: read`（`administration: write` / `secrets: write` / `workflows: write` / `id-token: write` は要求しない）
+- **App は public**: OSS として配布するため `public: true`
+
+### App 命名規則
+
+Issue #24 時点では暫定的に `vibehawk` という名前で App が作成される。Issue #25 で `vibehawk-for-<owner>` 形式の命名統制が実装される（GitHub Apps のグローバル名前ユニーク制約への対応）。
+
+### CLI が必要な場合
+
+利用者は以下のいずれかの利用形態を選択できる:
+
+| 利用形態 | App インストール | secret 設定 | 投稿者表示 |
+|---|---|---|---|
+| デフォルト（最短） | 不要 | `CLAUDE_CODE_OAUTH_TOKEN` のみ | `github-actions[bot]` |
+| 命名ブランド利用（v2 以降） | `npx vibehawk install` で作成した App をインストール | `CLAUDE_CODE_OAUTH_TOKEN` + App credentials | `vibehawk-for-<owner>[bot]`（Issue #25 で実装） |
+
+デフォルト経路は Issue #22 修正により `secrets.GITHUB_TOKEN` で完結し App 作成は不要。`npx vibehawk install` は将来のブランド利用ルート（v2）の前提機能として位置づけられる。
+
 ## 画面遷移・データフロー
 
 （画面遷移図やデータフローの概要を記載）
