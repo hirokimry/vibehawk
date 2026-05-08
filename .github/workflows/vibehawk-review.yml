@@ -12,6 +12,7 @@ permissions:
   pull-requests: write
   issues: write
   contents: read
+  id-token: write
 
 jobs:
   review:
@@ -60,5 +61,22 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app_token.outputs.token }}
           prompt: |
-            このPRをレビューしてください。
-            （詳細なレビュー仕様は Issue #8 以降で順次積み上げ予定）
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            🦅 vibehawk skeleton レビュー: この PR を簡潔にレビューしてサマリコメントを 1 個投稿してください。
+
+            **重要**: 本 workflow は Phase 1 skeleton 実装です。詳細なレビュー機能（severity 5 段階・inline comment・sticky review state）は Issue #8 以降で順次積み上げ予定。本 skeleton では PR 全体サマリ 1 個のみで完了とします。
+
+            フォーカス（簡潔に）:
+            - 変更内容の要約
+            - 明らかな問題があれば簡単に指摘
+
+            **投稿方法**:
+            - PR 全体サマリは `gh pr comment` で投稿してください
+            - inline comment や request_changes は使わないでください（Issue #9 で実装予定）
+            - レビュー本文を message として返さず、必ず GitHub コメントとして投稿してください
+
+            Note: PR ブランチは既にチェックアウト済みです。
+          claude_args: |
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
