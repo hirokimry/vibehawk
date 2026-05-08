@@ -44,6 +44,8 @@ PR を作成すると `vibehawk-review.yml` が起動し、`github-actions[bot]`
 
 `vibehawk-for-<owner>[bot]` 名義での投稿などブランド表示を希望する利用者は、`npx vibehawk install` で利用者自身の GitHub App を作成できます（v2 拡張ルート、Issue #25 以降で順次実装）。
 
+> **対応 OS**: macOS / Linux / Windows（PowerShell / CMD / Git Bash）。Windows では `cmd /c start` でブラウザを起動します。CI で windows-latest runner で全テスト通過を保証しています。
+
 ```bash
 npx vibehawk install --owner <your-github-username>
 ```
