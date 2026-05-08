@@ -41,6 +41,28 @@ if [[ -f "MVV.md" ]]; then
   fi
 fi
 
+# docs/specification.md に "vibehawk" が含まれる（Issue #5 反映確認）
+if [[ -f "docs/specification.md" ]]; then
+  if grep -F "vibehawk" docs/specification.md > /dev/null; then
+    pass "docs/specification.md に vibehawk 反映"
+  else
+    fail "docs/specification.md に vibehawk が反映されていない"
+  fi
+else
+  fail "docs/specification.md が存在しない"
+fi
+
+# docs/POLICY.md に「プロダクト方針（5 大方針）」見出しが含まれる
+if [[ -f "docs/POLICY.md" ]]; then
+  if grep -F "プロダクト方針（5 大方針）" docs/POLICY.md > /dev/null; then
+    pass "docs/POLICY.md に 5 大方針反映"
+  else
+    fail "docs/POLICY.md に 5 大方針が反映されていない"
+  fi
+else
+  fail "docs/POLICY.md が存在しない"
+fi
+
 # 後続テストは .claude/vibecorp.yml に依存するため、不在なら早期終了
 if [[ ! -f ".claude/vibecorp.yml" ]]; then
   echo "=== 結果: $PASSED passed, $FAILED failed ==="
