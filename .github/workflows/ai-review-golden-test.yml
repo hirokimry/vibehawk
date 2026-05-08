@@ -1,0 +1,62 @@
+name: AI Review Golden Test
+
+# claude-code-action のレビュー品質リグレッション検知
+# Issue #473: 既知 PR の期待結果と claude-action 再レビュー結果を比較する仕組み
+#
+# プロンプト・SoT が変わった PR でのみ走る（トークン消費とレイテンシー最小化）
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths:
+      - REVIEW.md
+      - templates/REVIEW.md.tpl
+      - .claude/rules/severity/**
+      - .claude/rules/review-handling.md
+      - .claude/rules/review-observations.md
+      - tests/golden/**
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ai-review-golden-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  golden-test:
+    name: claude-action レビュー出力リグレッション検知
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    timeout-minutes: 30
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Golden Test スクリプト実行
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [[ ! -d tests/golden ]]; then
+            echo "tests/golden ディレクトリが存在しません。golden データ未配置とみなしてスキップします。"
+            exit 0
+          fi
+          # _example.json 以外の JSON ファイルがあるかチェック
+          shopt -s nullglob
+          golden_files=(tests/golden/*.json)
+          actual_count=0
+          for f in "${golden_files[@]}"; do
+            base=$(basename "$f")
+            if [[ "$base" != "_example.json" ]]; then
+              actual_count=$((actual_count + 1))
+            fi
+          done
+          if [[ "$actual_count" -eq 0 ]]; then
+            echo "golden データが未配置です（_example.json のみ）。実機検証期間 (#475) で配置されるまでスキップします。"
+            exit 0
+          fi
+          bash scripts/run-golden-test.sh
