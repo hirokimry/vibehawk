@@ -26,11 +26,18 @@ jobs:
       - name: secrets 検証
         id: check_secrets
         env:
+          APP_ID: ${{ secrets.VIBEHAWK_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
           OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          if [[ -z "$OAUTH_TOKEN" ]]; then
+          missing=""
+          if [[ -z "$APP_ID" ]]; then missing="$missing VIBEHAWK_APP_ID"; fi
+          if [[ -z "$PRIVATE_KEY" ]]; then missing="$missing VIBEHAWK_PRIVATE_KEY"; fi
+          if [[ -z "$OAUTH_TOKEN" ]]; then missing="$missing CLAUDE_CODE_OAUTH_TOKEN"; fi
+          if [[ -n "$missing" ]]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::vibehawk: CLAUDE_CODE_OAUTH_TOKEN が未設定。secret を設定してください（README.md の利用者導入手順を参照）"
+            echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+            echo "::warning::vibehawk: 未設定 secret(s):$missing。Settings → Secrets and variables → Actions で設定してください（README.md / docs/secrets-handling.md 参照）"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
@@ -40,15 +47,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          MISSING: ${{ steps.check_secrets.outputs.missing }}
         run: |
-          gh pr comment "$PR_NUMBER" --body "🦅 vibehawk: \`CLAUDE_CODE_OAUTH_TOKEN\` 未設定のためレビューをスキップしました。リポジトリ Settings → Secrets and variables → Actions で設定してください（詳細は README.md）。"
+          gh pr comment "$PR_NUMBER" --body "🦅 vibehawk: 未設定 secret(s): \`$MISSING\` のためレビューをスキップしました。経路 2 必須化（Issue #61 確定）により以下 3 secrets を Settings → Secrets and variables → Actions で設定してください: \`VIBEHAWK_APP_ID\` / \`VIBEHAWK_PRIVATE_KEY\` / \`CLAUDE_CODE_OAUTH_TOKEN\`（詳細は README.md および docs/secrets-handling.md）。"
+
+      - name: vibehawk-for-<owner> App Installation Token を取得
+        id: app-token
+        if: steps.check_secrets.outputs.ready == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.VIBEHAWK_APP_ID }}
+          private-key: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
 
       - name: claude-code-action でレビュー実行
         if: steps.check_secrets.outputs.ready == 'true'
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -66,6 +82,6 @@ jobs:
             - inline comment や request_changes は使わないでください（Issue #9 で実装予定）
             - レビュー本文を message として返さず、必ず GitHub コメントとして投稿してください
 
-            Note: PR ブランチは既にチェックアウト済みです。投稿者は `github-actions[bot]` 名義になります（`vibehawk[bot]` ブランド表示は OSS 配布性とのトレードオフで Issue #22 にて妥協）。
+            Note: PR ブランチは既にチェックアウト済みです。投稿者は `vibehawk-for-<owner>[bot]` 名義（利用者本人の GitHub App `vibehawk-for-<owner>` の Installation Token で認証、経路 2 必須化 Issue #61 で確定）になります。
           claude_args: |
             --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"

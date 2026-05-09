@@ -77,24 +77,25 @@ for target in "${TARGETS[@]}"; do
     pass "$target に禁止トリガー 'pull_request_target' が含まれない"
   fi
 
-  # 禁止 secrets: VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY（Issue #22 で削除済み）
-  declare -a forbidden_secrets=(
+  # 経路 2 必須化（#59 / #61）: 利用者の 3 secrets が必ず参照される（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）
+  declare -a required_secrets=(
     "VIBEHAWK_APP_ID"
     "VIBEHAWK_PRIVATE_KEY"
+    "CLAUDE_CODE_OAUTH_TOKEN"
   )
-  for sec in "${forbidden_secrets[@]}"; do
+  for sec in "${required_secrets[@]}"; do
     if echo "$body" | grep -F "$sec" > /dev/null; then
-      fail "$target に禁止 secret '$sec' が混入（Issue #22 で削除済みのはず）"
+      pass "$target に必須 secret '$sec' が参照されている（経路 2）"
     else
-      pass "$target に禁止 secret '$sec' が含まれない"
+      fail "$target に必須 secret '$sec' が参照されていない（経路 2 必須化、#59）"
     fi
   done
 
-  # 禁止 Action: actions/create-github-app-token（Issue #22 で削除済み）
+  # 経路 2 必須化（#59）: actions/create-github-app-token@v2 が必須
   if echo "$body" | grep -F "actions/create-github-app-token" > /dev/null; then
-    fail "$target に actions/create-github-app-token が混入（Issue #22 で削除済みのはず）"
+    pass "$target に actions/create-github-app-token が含まれる（経路 2 App Installation Token）"
   else
-    pass "$target に actions/create-github-app-token が含まれない"
+    fail "$target に actions/create-github-app-token が含まれない（経路 2 必須化、#59）"
   fi
 done
 
