@@ -67,13 +67,19 @@ npx vibehawk install --owner alice --dry-run
 
 ### `setup-token` コマンド
 
-`CLAUDE_CODE_OAUTH_TOKEN` を対象リポジトリの GitHub Secrets に登録するヘルパー:
+`CLAUDE_CODE_OAUTH_TOKEN` の取得を補助し、GitHub Settings UI への登録手順を画面誘導するヘルパー:
 
 ```bash
 npx vibehawk setup-token --repo alice/my-repo
 ```
 
-別ターミナルで `claude setup-token` を実行してトークンを取得し、CLI のプロンプトに貼り付けます。vibehawk はトークンをローカルに保存せず、メモリ上のみで保持して `gh secret set` で登録します。
+別ターミナルで `claude setup-token` を実行してトークンを取得し、CLI のプロンプトに貼り付けます。CLI は受け取ったトークンを **GitHub Secrets に書き込みません**（Issue #72 決定、`docs/secrets-handling.md` 参照）。代わりに以下を行います:
+
+1. 利用者の明示同意を得てから OS ネイティブのクリップボード（macOS: `pbcopy` / Linux: `xclip` 等 / Windows: `clip`）に **stdin 経由で** トークンをコピー（プロセス引数・環境変数には出さない）
+2. 対象リポジトリの GitHub Settings URL（`Settings → Secrets and variables → Actions → New repository secret`）と登録手順を画面表示
+3. 利用者がブラウザでその URL を開いて手動登録する
+
+vibehawk はトークンをローカルファイルに保存せず、メモリ上のみで保持し、本プロセス終了と同時に消去します。
 
 デフォルト導入手順（上記）では CLI は不要です。`secrets.GITHUB_TOKEN` で完結します。
 
