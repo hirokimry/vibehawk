@@ -178,12 +178,14 @@ else
   fail "投稿コマンドが不足（PR / Issue 双方対応に必要）"
 fi
 
-# allowedTools
+# allowedTools（CodeRabbit PR #87 指摘: gh pr diff / jq の取りこぼしを防ぐため明示的に列挙）
 declare -a required_tools=(
   'cat:\*'
   'gh issue comment:\*'
   'gh pr comment:\*'
+  'gh pr diff:\*'
   'gh api:\*'
+  'jq:\*'
 )
 for tool in "${required_tools[@]}"; do
   if grep -E "Bash\(${tool}\)" "$CHAT_WORKFLOW" > /dev/null; then

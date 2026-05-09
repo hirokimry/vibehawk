@@ -78,18 +78,20 @@ jobs:
           # 5 大方針 4「専用 DB なし」: 状態は GitHub の thread 自体が保持
           history_file="/tmp/vibehawk-thread-${ISSUE_NUMBER}.json"
 
+          # --paginate は各ページごとに JSON 配列を出力するため、
+          # --jq '.[] | {...}' で各要素を改行区切りで出力 → jq -s で 1 配列に slurp する
+          # （CodeRabbit PR #87 指摘: 旧 .[0] + .[1] は 2 ページ前提でページ数 N 任意に対応できない）
           gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
-            --jq '[.[] | {user: .user.login, created_at, body}]' \
+            --jq '.[] | {user: .user.login, created_at, body}' \
+            | jq -s '.' \
             > "$history_file"
 
           # Issue 本文も含める（最初のコメントとして）
           issue_body="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
             --jq '{user: .user.login, created_at, body}')"
 
-          # 結合: [issue body] + [comments...]
-          jq -s '.[0] + .[1] | flatten' \
-            <(echo "[$issue_body]") \
-            "$history_file" \
+          # Issue 本文を最初に挿入: [issue_body, ...comments]
+          jq --argjson issue "$issue_body" '[$issue] + .' "$history_file" \
             > "${history_file}.combined"
           mv "${history_file}.combined" "$history_file"
 

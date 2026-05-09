@@ -117,7 +117,9 @@ for pair in "${SYNC_PAIRS[@]}"; do
     else
       fail "$src と $dst が乖離している（ドリフト検出）"
       echo "    差分:"
-      diff -u "$src" "$dst" | head -20 | sed 's/^/      /'
+      # set -euo pipefail 下では diff の SIGPIPE が pipefail で拾われるため `|| true` で吸収
+      # （CodeRabbit PR #87 指摘）
+      diff -u "$src" "$dst" | head -20 | sed 's/^/      /' || true
     fi
   fi
 done
