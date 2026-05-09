@@ -59,6 +59,71 @@ jobs:
           app-id: ${{ secrets.VIBEHAWK_APP_ID }}
           private-key: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
 
+      - name: 前回サマリコメントを取得（Issue #8 インクリメンタルレビュー判定）
+        id: prev_summary
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
+
+          # 投稿者 ID + 種別マーカーの二重チェックで vibehawk のサマリコメントを特定（仕様: docs/specification.md:83）
+          # null は jq で空文字に変換、複数ヒット時は created_at 最新を採用
+          summary_json="$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\") | select(.body | contains(\"<!-- vibehawk:summary -->\"))] | sort_by(.created_at) | last // empty")"
+
+          if [[ -z "${summary_json}" ]]; then
+            echo "vibehawk: 前回サマリ未検出 → 初回レビュー"
+            echo "incremental=false" >> "$GITHUB_OUTPUT"
+            echo "comment_id=" >> "$GITHUB_OUTPUT"
+            echo "prev_sha=" >> "$GITHUB_OUTPUT"
+            echo "review_range=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          comment_id="$(echo "${summary_json}" | jq -r '.id')"
+          body="$(echo "${summary_json}" | jq -r '.body')"
+          # SHA マーカー <!-- vibehawk:sha=<hex> --> から SHA を抽出
+          # （<!-- vibehawk:sha=abc123 --> から abc123 を取り出す）
+          prev_sha="$(echo "${body}" | grep -oE 'vibehawk:sha=[a-f0-9]+' | sed 's/vibehawk:sha=//' | head -1 || echo "")"
+
+          if [[ -z "${prev_sha}" ]]; then
+            echo "vibehawk: 既存サマリにマーカーがあるが SHA 抽出に失敗 → 完全再レビュー"
+            echo "incremental=false" >> "$GITHUB_OUTPUT"
+            echo "comment_id=${comment_id}" >> "$GITHUB_OUTPUT"
+            echo "prev_sha=" >> "$GITHUB_OUTPUT"
+            echo "review_range=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # force push / rebase 検出（仕様: docs/specification.md インクリメンタルレビュー実装パターン）
+          # 前回 SHA が現ブランチに含まれていれば通常 push、含まれていなければ完全再レビュー
+          if git cat-file -e "${prev_sha}^{commit}" 2>/dev/null && \
+             git merge-base --is-ancestor "${prev_sha}" HEAD 2>/dev/null; then
+            review_range="${prev_sha}..HEAD"
+            echo "vibehawk: 通常 push 検出 → 範囲: ${review_range}"
+            echo "incremental=true" >> "$GITHUB_OUTPUT"
+          else
+            base_sha="$(git merge-base "origin/${BASE_REF}" HEAD 2>/dev/null || echo "")"
+            if [[ -n "${base_sha}" ]]; then
+              review_range="${base_sha}..HEAD"
+              echo "vibehawk: force push / rebase 検出 → 完全再レビュー範囲: ${review_range}"
+            else
+              review_range=""
+              echo "vibehawk: base SHA 取得失敗 → range なし"
+            fi
+            echo "incremental=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "comment_id=${comment_id}" >> "$GITHUB_OUTPUT"
+          echo "prev_sha=${prev_sha}" >> "$GITHUB_OUTPUT"
+          echo "review_range=${review_range}" >> "$GITHUB_OUTPUT"
+
       - name: claude-code-action でレビュー実行
         if: steps.check_secrets.outputs.ready == 'true'
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
@@ -67,33 +132,56 @@ jobs:
           github_token: ${{ steps.app-token.outputs.token }}
           prompt: |
             REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
-            HEAD SHA: ${{ github.event.pull_request.head.sha }}
+            PR_NUMBER: ${{ github.event.pull_request.number }}
+            HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+            BASE_REF: ${{ github.base_ref }}
+            INCREMENTAL_MODE: ${{ steps.prev_summary.outputs.incremental }}
+            EXISTING_COMMENT_ID: ${{ steps.prev_summary.outputs.comment_id }}
+            PREV_SHA: ${{ steps.prev_summary.outputs.prev_sha }}
+            REVIEW_RANGE: ${{ steps.prev_summary.outputs.review_range }}
 
-            🦅 vibehawk skeleton レビュー: この PR を簡潔にレビューしてサマリコメントを 1 個投稿してください。
+            🦅 vibehawk PR レビュー（Issue #8 インクリメンタルレビュー対応版）。
 
-            **重要**: 本 workflow は Phase 1 skeleton 実装です。詳細なレビュー機能（severity 5 段階・inline comment・sticky review state）は Issue #8 以降で順次積み上げ予定。本 skeleton では PR 全体サマリ 1 個のみで完了とします。
+            ## レビュー範囲（INCREMENTAL_MODE 別）
 
-            フォーカス（簡潔に）:
-            - 変更内容の要約
-            - 明らかな問題があれば簡単に指摘
+            - INCREMENTAL_MODE=true（前回サマリあり、通常 push）: `git diff $REVIEW_RANGE` で前回レビュー以降の差分のみをレビュー
+            - INCREMENTAL_MODE=false かつ EXISTING_COMMENT_ID が空（初回レビュー）: PR 全体（base ブランチからの全差分 `git diff origin/$BASE_REF...HEAD`）をレビュー
+            - INCREMENTAL_MODE=false かつ EXISTING_COMMENT_ID が設定済（force push / rebase 検出）: PR 全体を **完全再レビュー**（前回サマリは古い SHA に紐づいているため棄却し、最新差分で書き直す）
 
-            **投稿方法**:
-            - PR 全体サマリは `gh pr comment` で投稿してください
-            - inline comment や request_changes は使わないでください（Issue #9 で実装予定）
-            - レビュー本文を message として返さず、必ず GitHub コメントとして投稿してください
+            ## 投稿方法（最重要）
 
-            **必須: コメント末尾に種別マーカーと SHA マーカーを注入してください（Issue #57 修正）**:
+            EXISTING_COMMENT_ID が空（初回）:
+            - `gh pr comment $PR_NUMBER --body "<サマリ本文>"` で新規投稿
 
-            投稿するコメント本文の **末尾に必ず** 以下 2 行を含めてください（HTML コメントなので画面表示はされませんが、vibehawk のインクリメンタルレビュー機能 #8 がコメントを一意特定するために必須です）:
+            EXISTING_COMMENT_ID が設定済（前回サマリあり、edit で更新）:
+            - `gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING_COMMENT_ID" -f body="<新サマリ本文>"` で edit
+            - 新規 `gh pr comment` を呼ばないこと（コメントが増えてしまう）
+
+            inline comment / request_changes は本 workflow では使わない（Issue #9 で対応予定）。
+
+            ## サマリ本文の必須要件
+
+            - PR 全体の変更内容の要約（簡潔に）
+            - 明らかな問題があれば簡単に指摘（severity 5 段階は Issue #9 で対応）
+            - **末尾に必ず以下 2 行を含める**（インクリメンタルレビューの一意特定に必須、Issue #57）:
 
             ```
             <!-- vibehawk:summary -->
             <!-- vibehawk:sha=${{ github.event.pull_request.head.sha }} -->
             ```
 
-            この 2 行が欠落していると、後続の push でレビューサマリが追加投稿される代わりに更新されなくなります。仕様の根拠は `docs/specification.md` の「サマリコメント一意特定」「インクリメンタルレビュー実装パターン」セクションを参照してください。
+            この 2 行が欠落すると、次回 push でサマリが update できず重複投稿になります。
 
-            Note: PR ブランチは既にチェックアウト済みです。投稿者は `vibehawk-for-<owner>[bot]` 名義（利用者本人の GitHub App `vibehawk-for-<owner>` の Installation Token で認証、経路 2 必須化 Issue #61 で確定）になります。
+            ## レビュー範囲を確認するコマンド例
+
+            INCREMENTAL_MODE=true:
+            - `git log --oneline $REVIEW_RANGE`（差分 commit 一覧）
+            - `git diff $REVIEW_RANGE`（コード差分）
+
+            INCREMENTAL_MODE=false:
+            - `git log --oneline origin/$BASE_REF..HEAD`（PR 全体の commit 一覧）
+            - `gh pr diff $PR_NUMBER`（PR 全体の差分）
+
+            Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります。
           claude_args: |
-            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*)"
