@@ -46,7 +46,7 @@ vibehawk の独立 App 設計は MVV Value 1（利用者の契約だけで完結
 GitHub の公式ドキュメント [Best practices for creating a GitHub App](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/best-practices-for-creating-a-github-app) は、CLI / native client の Private Key 取扱いに対し明示的な禁止事項を述べている。
 
 > "If your app is a native client, client-side app, or runs on a user device, you must never ship your private key with your app."
-
+>
 > "You should not generate installation access tokens since doing so requires a private key. Instead, you should generate user access tokens."
 
 vibehawk の独立 App 設計は、GitHub のガイドライン違反そのものには該当しない（CLI が key を「持つ」のではなく「仲介する」設計）。ただし精神的には同じ警戒対象であり、CLI が Private Key を一瞬でも touch する案 1 は GitHub の推奨方針から外れる。案 2 では CLI は Private Key を一切 touch しないため、ガイドラインに完全準拠する。
