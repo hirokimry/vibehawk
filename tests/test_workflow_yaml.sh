@@ -233,5 +233,70 @@ else
   fail "HEAD SHA が prompt に渡されていない（Issue #57、SHA マーカー埋込の前提）"
 fi
 
+# Issue #8: インクリメンタルレビュー判定ステップが存在する
+if grep -F 'id: prev_summary' "$WORKFLOW" > /dev/null; then
+  pass "インクリメンタルレビュー判定ステップ (prev_summary) が存在する（Issue #8）"
+else
+  fail "インクリメンタルレビュー判定ステップが存在しない（Issue #8 未実装）"
+fi
+
+# Issue #8: prev_summary ステップが投稿者 ID + 種別マーカーの二重チェックを実装
+# （workflow YAML 内では jq クエリ内のダブルクオートがバックスラッシュエスケープされるため、エスケープ無視で grep）
+if grep -F 'select(.user.login ==' "$WORKFLOW" > /dev/null && \
+   grep -F 'contains(' "$WORKFLOW" | grep -F '<!-- vibehawk:summary -->' > /dev/null; then
+  pass "prev_summary が投稿者 ID + 種別マーカーの二重チェックを実装（Issue #8）"
+else
+  fail "prev_summary の二重チェック実装が想定と異なる（Issue #8、なりすまし排除に必須）"
+fi
+
+# Issue #8: prev_summary ステップが SHA マーカーから前回 SHA を抽出
+if grep -E 'grep -oE.*vibehawk:sha=\[a-f0-9\]\+' "$WORKFLOW" > /dev/null; then
+  pass "prev_summary が SHA マーカーから前回 SHA を抽出（Issue #8）"
+else
+  fail "prev_summary が SHA マーカー抽出を実装していない（Issue #8）"
+fi
+
+# Issue #8: prev_summary ステップが force push / rebase 検出を実装（merge-base --is-ancestor）
+if grep -F 'merge-base --is-ancestor' "$WORKFLOW" > /dev/null; then
+  pass "prev_summary が force push / rebase 検出（merge-base --is-ancestor）を実装（Issue #8）"
+else
+  fail "prev_summary が force push / rebase 検出を実装していない（Issue #8）"
+fi
+
+# Issue #8: prev_summary が incremental / comment_id / prev_sha / review_range の 4 つを GITHUB_OUTPUT に出力
+for output in incremental comment_id prev_sha review_range; do
+  if grep -E "echo \"${output}=" "$WORKFLOW" > /dev/null; then
+    pass "prev_summary が GITHUB_OUTPUT に ${output} を出力（Issue #8）"
+  else
+    fail "prev_summary が GITHUB_OUTPUT に ${output} を出力していない（Issue #8）"
+  fi
+done
+
+# Issue #8: claude-code-action の prompt に INCREMENTAL_MODE / EXISTING_COMMENT_ID / PREV_SHA / REVIEW_RANGE が渡される
+for var in INCREMENTAL_MODE EXISTING_COMMENT_ID PREV_SHA REVIEW_RANGE; do
+  if grep -F "${var}: " "$WORKFLOW" > /dev/null; then
+    pass "prompt に ${var} が渡されている（Issue #8）"
+  else
+    fail "prompt に ${var} が渡されていない（Issue #8）"
+  fi
+done
+
+# Issue #8: prompt に PATCH endpoint（コメント edit）の指示が含まれる
+if grep -F 'gh api -X PATCH' "$WORKFLOW" > /dev/null && \
+   grep -F 'issues/comments/' "$WORKFLOW" > /dev/null; then
+  pass "prompt にコメント edit 指示（gh api -X PATCH issues/comments/）が含まれる（Issue #8）"
+else
+  fail "prompt にコメント edit 指示が含まれない（Issue #8、サマリ重複投稿の原因）"
+fi
+
+# Issue #8: allowedTools に gh api / git log / git diff が追加されている
+for tool in 'gh api:\*' 'git log:\*' 'git diff:\*'; do
+  if grep -E "Bash\(${tool}\)" "$WORKFLOW" > /dev/null; then
+    pass "allowedTools に Bash(${tool}) が含まれる（Issue #8）"
+  else
+    fail "allowedTools に Bash(${tool}) が含まれない（Issue #8、コメント edit / range 解析に必須）"
+  fi
+done
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
