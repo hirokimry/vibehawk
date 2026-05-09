@@ -195,7 +195,7 @@ else
   fail "parseOwnerArg の解析挙動が想定と異なる"
 fi
 
-# Issue #26: oauth.js が存在
+# Issue #26 / #74: oauth.js が存在
 if [[ -f cli/oauth.js ]]; then
   pass "cli/oauth.js が存在する"
 else
@@ -215,7 +215,7 @@ else
   fail "validateToken の挙動が想定と異なる"
 fi
 
-# Issue #26: parseRepoArg が --repo / --repo= 両形式を解析
+# Issue #26: parseRepoArg が --repo / --repo= 両形式を解析（URL 表示用に維持）
 if node -e '
 const { parseRepoArg } = require("./cli/oauth");
 if (parseRepoArg(["--repo=alice/bob"]) !== "alice/bob") process.exit(1);
@@ -234,64 +234,108 @@ else
   pass "oauth.js は外部 fetch を持たず claude setup-token に委譲"
 fi
 
-# Issue #26: oauth.js がトークンをファイル書き込みしないこと
+# Issue #26 / #74: oauth.js がトークンをファイル書き込みしないこと
 if grep -E "(writeFile|writeFileSync|fs\\.write)" cli/oauth.js > /dev/null; then
   fail "oauth.js がトークンをファイル書き込みしている可能性（メモリ上のみで保持すべき）"
 else
   pass "oauth.js はトークンをファイル書き込みしない（メモリ上のみで保持）"
 fi
 
-# Issue #26: setup-token は CLAUDE_CODE_OAUTH_TOKEN のみを書き込み、他 secret を書き込まないこと
-# - gh secret set 呼び出しが CLAUDE_CODE_OAUTH_TOKEN を含む
-# - その呼び出し以外に gh secret set が存在しない（他 secret を勝手に書かない）
+# Issue #74: oauth.js は gh secret set を呼び出さない（Issue #72 全手動方針）
+# Issue #26 で実装した自動登録を撤去し、利用者が GitHub Settings UI で手動登録する経路に変更
+if grep -E "secret['\"][[:space:]]*,[[:space:]]*['\"]set" cli/oauth.js > /dev/null; then
+  fail "oauth.js が gh secret set 呼び出しを残している（Issue #72 / #74 全手動方針違反）"
+else
+  pass "oauth.js は gh secret set を呼び出さない（Issue #72 / #74 全手動方針）"
+fi
+
+# Issue #74: setSecret 関数が export から削除されている
+if node -e '
+const oauth = require("./cli/oauth");
+process.exit(typeof oauth.setSecret === "undefined" ? 0 : 1);
+'; then
+  pass "oauth.js から setSecret が export されていない（撤去済み）"
+else
+  fail "oauth.js が setSecret を export している（Issue #74 撤去漏れ）"
+fi
+
+# Issue #74: buildSettingsUrl が正しい GitHub Settings URL を生成
+if node -e '
+const { buildSettingsUrl } = require("./cli/oauth");
+if (buildSettingsUrl("alice/bob") !== "https://github.com/alice/bob/settings/secrets/actions/new") process.exit(1);
+if (buildSettingsUrl(null) !== null) process.exit(1);
+if (buildSettingsUrl("invalid_no_slash") !== null) process.exit(1);
+if (buildSettingsUrl("a/b/c") !== null) process.exit(1);
+'; then
+  pass "buildSettingsUrl が正しい GitHub Settings URL を生成（不正入力も拒否）"
+else
+  fail "buildSettingsUrl の挙動が想定と異なる"
+fi
+
+# Issue #74: copyToClipboard が --body 等のプロセス引数に token を渡さないこと（stdin 経由のみ）
 if node -e '
 const fs = require("fs");
 const src = fs.readFileSync("cli/oauth.js", "utf8");
-// execFileSync("gh", ["secret", "set", "CLAUDE_CODE_OAUTH_TOKEN", ...]) パターンを検出
-const ok = /execFileSync\([^)]*["'"'"'`]gh["'"'"'`][^)]*["'"'"'`]secret["'"'"'`][^)]*["'"'"'`]set["'"'"'`][^)]*["'"'"'`]CLAUDE_CODE_OAUTH_TOKEN["'"'"'`]/.test(src);
-process.exit(ok ? 0 : 1);
+const m = src.match(/function copyToClipboard[\s\S]*?\n\}/);
+if (!m) process.exit(1);
+const body = m[0];
+if (!/spawnSync\([^)]*input:\s*token/.test(body)) process.exit(1);
+process.exit(0);
 '; then
-  pass "oauth.js が gh secret set CLAUDE_CODE_OAUTH_TOKEN を呼ぶ"
+  pass "copyToClipboard は stdin 経由（spawnSync input オプション）で token を渡す"
 else
-  fail "oauth.js に gh secret set CLAUDE_CODE_OAUTH_TOKEN の呼び出しがない"
+  fail "copyToClipboard が token をプロセス引数経由で渡す可能性（CISO Critical 条件違反）"
 fi
 
-# secret set 呼び出しの数: gh + secret + set + CLAUDE_CODE_OAUTH_TOKEN の組合せが 1 つだけであること
-# （他の secret を書く execFileSync が混入していないことを検証）
-secret_set_count=$(grep -cE "secret['\"][[:space:]]*,[[:space:]]*['\"]set" cli/oauth.js || true)
-if [[ "$secret_set_count" -eq 1 ]]; then
-  pass "oauth.js の secret set 呼び出しは 1 箇所のみ（他 secret を書かない）"
+# Issue #74: setupToken は consent プロンプトを呼び、拒否時に clipboard を呼ばない
+if node -e '
+const oauth = require("./cli/oauth");
+let consentCalled = false;
+let clipboardCalled = false;
+oauth.setupToken({
+  argv: ["--repo", "alice/bob"],
+  rlFactory: () => ({
+    question: (q, cb) => {
+      if (q.includes("貼り付けて")) cb("ABCDEFG_HIJKLMN-1234567890.+/=ABCDEFG");
+      else cb("");
+    },
+    close: () => {},
+  }),
+  clipboard: () => { clipboardCalled = true; return { success: true }; },
+  consent: async () => { consentCalled = true; return false; },
+}).then((result) => {
+  if (!consentCalled) { console.error("consent should be called"); process.exit(1); }
+  if (clipboardCalled) { console.error("clipboard should not be called when consent denied"); process.exit(1); }
+  if (result.repo !== "alice/bob") process.exit(1);
+  if (result.settingsUrl !== "https://github.com/alice/bob/settings/secrets/actions/new") process.exit(1);
+  if (result.clipboardCopied !== false) process.exit(1);
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "setupToken は consent プロンプトを呼び、拒否時に clipboard を呼ばない"
 else
-  fail "oauth.js の secret set 呼び出し数が想定外: $secret_set_count（1 箇所のみであるべき）"
+  fail "setupToken の consent プロンプト挙動が想定と異なる"
 fi
 
-# 念のため: CLAUDE_CODE_OAUTH_TOKEN 以外の secret 名が secret/set 引数列の近傍に出現しないこと
-if grep -E "secret['\"][[:space:]]*,[[:space:]]*['\"]set" cli/oauth.js | grep -v "CLAUDE_CODE_OAUTH_TOKEN" > /dev/null; then
-  fail "oauth.js が CLAUDE_CODE_OAUTH_TOKEN 以外の secret を書き込む可能性"
-else
-  pass "oauth.js は CLAUDE_CODE_OAUTH_TOKEN 以外の secret を書き込まない"
-fi
-
-# Issue #26: setSecret は --body フラグ経由でトークンを渡してはならない
-# （プロセス引数への露出を防ぐため、stdin/input オプション経由を要求）
-if grep -F "'--body'" cli/oauth.js > /dev/null || grep -F '"--body"' cli/oauth.js > /dev/null; then
-  fail "oauth.js が gh secret set に --body フラグを使用（プロセス引数にトークンが露出する）"
-else
-  pass "oauth.js は gh secret set に --body フラグを使わず stdin 経由でトークンを渡す"
-fi
-
-# Issue #26: setup-token コマンドが index.js に登録されている
+# Issue #26 / #74: setup-token コマンドが index.js に登録されている
 if grep -F "'setup-token':" cli/index.js > /dev/null; then
   pass "setup-token コマンドが index.js に登録されている"
 else
   fail "setup-token コマンドが index.js に登録されていない"
 fi
 
-# Issue #26: help に setup-token が含まれる
+# Issue #26 / #74: help に setup-token が含まれる
 if node cli/index.js help 2>&1 | grep -F "setup-token" > /dev/null; then
   pass "CLI help が setup-token コマンドを表示"
 else
   fail "CLI help が setup-token コマンドを表示しない"
+fi
+
+# Issue #74: help が「secret を書き込まない」旨を表示する
+if node cli/index.js help 2>&1 | grep -F "secret を書き込まない" > /dev/null; then
+  pass "CLI help が secret 非書込みを明示"
+else
+  fail "CLI help が secret 非書込みを明示していない"
 fi
 
 # Issue #27: parseDryRun が --dry-run を検出
