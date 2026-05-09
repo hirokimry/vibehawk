@@ -500,7 +500,13 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     { encoding: 'utf8' }
   );
   if (prResult.status !== 0) {
-    throw new Error(`vibehawk: PR 作成に失敗しました: ${prResult.stderr || ''}`);
+    // ブランチ削除でロールバック（CodeRabbit PR #82 指摘: PR 作成失敗時もブランチを残さない）
+    spawnSync(
+      'gh',
+      ['api', `repos/${repo}/git/refs/heads/${branchName}`, '--method', 'DELETE'],
+      { encoding: 'utf8' }
+    );
+    throw new Error(`vibehawk: PR 作成に失敗しました（ブランチ ${branchName} はロールバック削除済み）: ${prResult.stderr || ''}`);
   }
   const prUrl = (prResult.stdout || '').trim();
   return { url: prUrl, branch: branchName, defaultBranch };
