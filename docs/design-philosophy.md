@@ -56,6 +56,10 @@ vibehawk は専用データストアを持たない。状態はすべて GitHub 
 
 ## 認証経路の設計（OSS 配布版、Issue #22 修正後）
 
+> ⚠️ **更新予定**: 本セクションは Issue #22 修正後の **経路 1（`secrets.GITHUB_TOKEN` 1 系統）** を記述する。CEO 判断 (2026-05-09, Issue #72) により **経路 2 必須化 + 3 secrets 全手動登録** に移行する。本格的な記述更新は Issue #61 で実施予定。
+>
+> 配布方式（CLI 自動 vs 手動）の判断根拠の Source of Truth は [`docs/secrets-handling.md`](secrets-handling.md) を参照。
+
 vibehawk は **`CLAUDE_CODE_OAUTH_TOKEN` 1 系統** の認証経路に統合されている。CEO の GitHub App Private Key を利用者に配布する設計は OSS 配布不可能であるため Issue #22 で撤廃した。
 
 | 系統 | トークン | 役割 | 当事者 | 設定の必要性 |

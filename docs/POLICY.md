@@ -107,6 +107,10 @@ vibehawk は OSS として MIT ライセンスのもと提供される。LICENSE
 
 vibehawk は MVV の Value 1「利用者の契約だけで、完結させる」に従い、vibehawk 開発側のサーバー・課金・データ保存を一切持たない設計のため、利用者環境での動作はすべて GitHub の規約と利用者の運用責任の範囲内で完結する。
 
+#### 認証情報配布方式の方針（Issue #72 決定）
+
+CLI が利用者リポジトリの GitHub Secrets に書き込むかどうかについては、CEO 判断 (2026-05-09) により **CLI は secret を一切 touch せず、利用者が GitHub Settings UI で手動登録する方針**（案 2 採用）が確定している。判断根拠とメジャーサービス比較・GitHub 公式ガイドライン引用は [`docs/secrets-handling.md`](secrets-handling.md) を参照。
+
 ### vibehawk-for-<owner> 命名の商標使用許諾（Issue #33）
 
 `npx vibehawk install` で作成される GitHub App の名前は `vibehawk-for-<owner>` 形式に固定される（命名統制、Issue #25）。本命名規則の商標使用について以下を明示する。
