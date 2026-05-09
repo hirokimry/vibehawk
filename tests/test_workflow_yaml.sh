@@ -211,5 +211,27 @@ else
   fail "claude_code_oauth_token に secrets.CLAUDE_CODE_OAUTH_TOKEN が渡されていない（経路 2 必須化、#59）"
 fi
 
+# Issue #57 修正: prompt に種別マーカー <!-- vibehawk:summary --> 注入指示が含まれる
+# （prompt セクション末尾は HTML コメント形式の指示で、awk のコメント除外を回避するため WORKFLOW 全体を grep する）
+if grep -F '<!-- vibehawk:summary -->' "$WORKFLOW" > /dev/null; then
+  pass "prompt に種別マーカー <!-- vibehawk:summary --> 注入指示が含まれる（Issue #57）"
+else
+  fail "prompt に種別マーカー <!-- vibehawk:summary --> 注入指示が含まれない（Issue #57、インクリメンタルレビュー #8 の前提）"
+fi
+
+# Issue #57 修正: prompt に SHA マーカー <!-- vibehawk:sha=... --> 注入指示が含まれる
+if grep -F 'vibehawk:sha=' "$WORKFLOW" > /dev/null; then
+  pass "prompt に SHA マーカー <!-- vibehawk:sha=... --> 注入指示が含まれる（Issue #57）"
+else
+  fail "prompt に SHA マーカー <!-- vibehawk:sha=... --> 注入指示が含まれない（Issue #57、force push 検出の前提）"
+fi
+
+# Issue #57 修正: HEAD SHA を prompt に変数として渡している
+if grep -F 'github.event.pull_request.head.sha' "$WORKFLOW" > /dev/null; then
+  pass "HEAD SHA が github.event.pull_request.head.sha で prompt に渡されている（Issue #57）"
+else
+  fail "HEAD SHA が prompt に渡されていない（Issue #57、SHA マーカー埋込の前提）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

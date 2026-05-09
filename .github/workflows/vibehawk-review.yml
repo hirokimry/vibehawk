@@ -68,6 +68,7 @@ jobs:
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
+            HEAD SHA: ${{ github.event.pull_request.head.sha }}
 
             🦅 vibehawk skeleton レビュー: この PR を簡潔にレビューしてサマリコメントを 1 個投稿してください。
 
@@ -81,6 +82,17 @@ jobs:
             - PR 全体サマリは `gh pr comment` で投稿してください
             - inline comment や request_changes は使わないでください（Issue #9 で実装予定）
             - レビュー本文を message として返さず、必ず GitHub コメントとして投稿してください
+
+            **必須: コメント末尾に種別マーカーと SHA マーカーを注入してください（Issue #57 修正）**:
+
+            投稿するコメント本文の **末尾に必ず** 以下 2 行を含めてください（HTML コメントなので画面表示はされませんが、vibehawk のインクリメンタルレビュー機能 #8 がコメントを一意特定するために必須です）:
+
+            ```
+            <!-- vibehawk:summary -->
+            <!-- vibehawk:sha=${{ github.event.pull_request.head.sha }} -->
+            ```
+
+            この 2 行が欠落していると、後続の push でレビューサマリが追加投稿される代わりに更新されなくなります。仕様の根拠は `docs/specification.md` の「サマリコメント一意特定」「インクリメンタルレビュー実装パターン」セクションを参照してください。
 
             Note: PR ブランチは既にチェックアウト済みです。投稿者は `vibehawk-for-<owner>[bot]` 名義（利用者本人の GitHub App `vibehawk-for-<owner>` の Installation Token で認証、経路 2 必須化 Issue #61 で確定）になります。
           claude_args: |
