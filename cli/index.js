@@ -28,7 +28,7 @@ function printHelp() {
 
 usage:
   npx vibehawk install                      GitHub App Manifest Flow を起動して vibehawk App を作成
-  npx vibehawk setup-token --repo OWNER/REPO   Claude OAuth Token を取得してリポジトリ secrets に登録
+  npx vibehawk setup-token [--repo OWNER/REPO]   Claude OAuth Token を取得し GitHub Settings 登録手順を案内（CLI は secret を書き込まない）
   npx vibehawk help                         このヘルプを表示
   npx vibehawk version                      バージョンを表示
 
