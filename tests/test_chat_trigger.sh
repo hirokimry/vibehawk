@@ -51,6 +51,13 @@ else
   fail "cancel-in-progress: false が設定されていない（チャット応答が中断される可能性）"
 fi
 
+# CodeRabbit PR #87 Major 指摘: concurrency.group がスレッド単位（issue.number）であることを検証
+if grep -F 'group: vibehawk-chat-${{ github.event.issue.number }}' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "concurrency.group がスレッド単位 (vibehawk-chat-\${{ github.event.issue.number }}) で固定されている"
+else
+  fail "concurrency.group がスレッド単位で固定されていない（同一 PR/Issue 連投時の競合防止が崩れる）"
+fi
+
 # 起動条件: @vibehawk メンション + Bot 自身でない（無限ループ防止）
 if grep -F "contains(github.event.comment.body, '@vibehawk')" "$CHAT_WORKFLOW" > /dev/null; then
   pass "起動条件に @vibehawk メンション検出が含まれる"
@@ -92,6 +99,27 @@ for perm in "${forbidden_perms[@]}"; do
     pass "禁止権限 $perm が含まれない"
   fi
 done
+
+# CodeRabbit PR #87 Major 指摘: permissions 完全一致 whitelist 検証
+# 「禁止 + 必須」だけでは「他の *: write が追加された」を検出できないため、
+# permissions ブロック内に許可された 3 キー以外が存在しないことを確認
+permission_keys="$(awk '
+  /^[[:space:]]*permissions:/ { in_perm=1; next }
+  in_perm && /^[^[:space:]]/ { in_perm=0 }
+  in_perm && /^[[:space:]]+[a-z-]+:/ {
+    sub(/^[[:space:]]+/, "")
+    sub(/:.*/, "")
+    print
+  }
+' "$CHAT_WORKFLOW" | sort -u)"
+
+expected_permissions="$(printf '%s\n' contents issues pull-requests | sort -u)"
+
+if [[ "$permission_keys" == "$expected_permissions" ]]; then
+  pass "permissions は許可 3 キー (pull-requests / issues / contents) のみで完全一致（whitelist）"
+else
+  fail "permissions に許可外キーが存在 / 必要キーが不足: 実際=[$(echo "$permission_keys" | tr '\n' ',')], 期待=[pull-requests,issues,contents]"
+fi
 
 # 3 secrets 検証ステップ
 for sec in VIBEHAWK_APP_ID VIBEHAWK_PRIVATE_KEY CLAUDE_CODE_OAUTH_TOKEN; do
@@ -202,6 +230,16 @@ else
   fail "prompt に無限ループ防止指示が不足"
 fi
 
+# CodeRabbit PR #87 Major 指摘: TRIGGERING_USER 経由の二重ガードを検証
+# トリガー条件 if で弾かれているが、prompt 側でも TRIGGERING_USER が vibehawk-for-* なら何もしない指示を担保
+if grep -F 'TRIGGERING_USER' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'vibehawk-for-' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F '何もせず終了' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に TRIGGERING_USER が vibehawk-for-* なら何もせず終了する二重ガード指示が含まれる"
+else
+  fail "prompt に TRIGGERING_USER 経由の二重ガード指示が不足（トリガー if のみだとガード退行リスク）"
+fi
+
 # 5 大方針との整合（コード生成禁止 / 状態 GitHub 閉じる / メタデータ操作なし）
 # bash の set -u + 多バイト文字で loop 変数が壊れる現象を回避するため、明示的に列挙する
 if grep -F "5 大方針 2" "$CHAT_WORKFLOW" > /dev/null; then
@@ -246,6 +284,25 @@ for tool in "${required_tools[@]}"; do
     fail "allowedTools に Bash(${tool}) が含まれない"
   fi
 done
+
+# CodeRabbit PR #87 Major 指摘: allowedTools whitelist 完全一致検証
+# 必須項目の存在確認だけでは Bash(*) のような危険なツール追加が検出できないため、
+# allowedTools 文字列から Bash(...) パターンを抽出して許可リスト外を検出
+allowed_tools_line="$(grep -F -- '--allowedTools' "$CHAT_WORKFLOW" | head -1 || true)"
+unexpected_tools=()
+expected_set='|cat:*|gh issue comment:*|gh pr comment:*|gh pr diff:*|gh api:*|jq:*|'
+while IFS= read -r tool; do
+  # tool は "cat:*" のような Bash(...) 内の中身
+  if [[ -n "$tool" ]] && [[ "$expected_set" != *"|${tool}|"* ]]; then
+    unexpected_tools+=("$tool")
+  fi
+done < <(echo "$allowed_tools_line" | grep -oE 'Bash\([^)]+\)' | sed -E 's/^Bash\(//; s/\)$//')
+
+if [[ ${#unexpected_tools[@]} -eq 0 ]]; then
+  pass "allowedTools は許可 6 項目のみで構成（whitelist 完全一致、Bash(*) 等の危険な追加なし）"
+else
+  fail "allowedTools に許可外の項目: ${unexpected_tools[*]}"
+fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
