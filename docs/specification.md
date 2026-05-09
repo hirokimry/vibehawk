@@ -80,28 +80,33 @@ CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから
 | `<!-- vibehawk:summary -->` | 種別マーカー（Bot の PR 全体サマリであることを示す） |
 | `<!-- vibehawk:sha=<HEAD_SHA> -->` | 状態マーカー（前回どのコミットまで見たか） |
 
-サマリコメントの一意特定: 投稿者 ID（`github-actions[bot]`）+ 種別マーカーの **二重チェック** で誤検知・なりすましを排除する。投稿者 ID だけでは同一リポジトリの他 GitHub Actions ジョブが投稿したコメントと混在するため、種別マーカー (`<!-- vibehawk:summary -->`) との AND 条件で識別する。
+サマリコメントの一意特定: 投稿者 ID（`vibehawk-for-<owner>[bot]`）+ 種別マーカーの **二重チェック** で誤検知・なりすましを排除する。投稿者 ID だけでは同一リポジトリの他 GitHub Actions ジョブが投稿したコメントと混在するため、種別マーカー (`<!-- vibehawk:summary -->`) との AND 条件で識別する。`<owner>` は利用者本人の GitHub アカウント名であり、リポジトリの owner 名と一致する（命名統制 Issue #25）。
 
 ```bash
 gh api repos/:owner/:repo/issues/:pr/comments --paginate \
-  | jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- vibehawk:summary -->"))]' \
+  | jq --arg owner "<owner>" '[.[] | select(.user.login == "vibehawk-for-" + $owner + "[bot]") | select(.body | contains("<!-- vibehawk:summary -->"))]' \
   | jq 'sort_by(.created_at) | last'
 ```
 
-> 投稿者 ID は Issue #22 修正により `vibehawk[bot]` から `github-actions[bot]` に変更された（OSS 配布性とのトレードオフ、詳細は `docs/SECURITY.md`）。
+> 投稿者 ID は **利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token** で発行される `vibehawk-for-<owner>[bot]` 名義（経路 2 必須化、Issue #61 で確定）。CEO の GitHub App Private Key を利用者に配布する設計（Issue #22 で却下された旧設計）とは異なり、利用者自身の App の Private Key を **利用者本人が GitHub Settings UI で手動登録** する。判断根拠は `docs/secrets-handling.md` 参照。
 
 ### マルチリポジトリ対応
 
-Issue #22 修正後は GitHub App ベースの集中配布ではなく、**利用者リポジトリへの workflow ファイル配置 + `CLAUDE_CODE_OAUTH_TOKEN` 設定** によるリポジトリ単位の有効化方式となる。Org 配下の各リポジトリに `vibehawk-review.yml` をコピーし、Org または各リポジトリの secrets に `CLAUDE_CODE_OAUTH_TOKEN` を設定する。
+利用者リポジトリへの **workflow ファイル配置 + 3 secrets 手動登録** によるリポジトリ単位の有効化方式（経路 2 必須化、Issue #61）。Org 配下の各リポジトリに `vibehawk-review.yml` をコピーし、各リポジトリの secrets に 3 つを登録する。
 
 ```text
-利用者の Org / 個人
-  ├─ repo-1: .github/workflows/vibehawk-review.yml + CLAUDE_CODE_OAUTH_TOKEN
-  ├─ repo-2: .github/workflows/vibehawk-review.yml + CLAUDE_CODE_OAUTH_TOKEN
+利用者の Org / 個人（自身の vibehawk-for-<owner> App を 1 つ作成）
+  ├─ repo-1: .github/workflows/vibehawk-review.yml + 3 secrets
+  ├─ repo-2: .github/workflows/vibehawk-review.yml + 3 secrets
   └─ repo-N: ...
+
+3 secrets:
+  - VIBEHAWK_APP_ID         （利用者本人の App の ID）
+  - VIBEHAWK_PRIVATE_KEY    （利用者本人の App の Private Key）
+  - CLAUDE_CODE_OAUTH_TOKEN （利用者の Claude Pro / Max OAuth Token）
 ```
 
-> Org-level secret として `CLAUDE_CODE_OAUTH_TOKEN` を設定すれば配下の全リポジトリで同じトークンを共有できる（個別設定不要）。
+> Org-level secret として 3 つを設定すれば配下の全リポジトリで共有できる（個別設定不要）。Org 単位で 1 つの `vibehawk-for-<owner>` App を運用する形になる。
 
 | 状態 | スコープ | 衝突リスク |
 |---|---|---|
@@ -237,13 +242,13 @@ concurrency:
 
 詳細は `docs/SECURITY.md` を参照。本仕様書では特記事項のみ記述する。
 
-#### 投稿者表示（Issue #22 修正後）
+#### 投稿者表示（経路 2 必須化、Issue #61 で確定）
 
-vibehawk が投稿するレビューコメントの投稿者は **`github-actions[bot]`** 名義になる。これは Issue #22 の修正により、CEO の GitHub App Private Key を利用者に配布する設計を撤廃し、`secrets.GITHUB_TOKEN` 1 系統認証に統合したためである。
+vibehawk が投稿するレビューコメントの投稿者は **`vibehawk-for-<owner>[bot]`** 名義に固定される（命名統制 Issue #25）。利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token（`actions/create-github-app-token@v2` 経由）で認証される。
 
-`vibehawk[bot]` ブランドでの投稿者表示は OSS 配布性（Private Key 非配布）とのトレードオフで妥協された。Value 1「利用者の契約だけで、完結させる」を優先した結論であり、利用者は GitHub App インストール不要・Private Key 配布不要・1 secret 設定のみで導入できる利点を得る。
+CEO の GitHub App Private Key を利用者に配布する設計（Issue #22 の旧実装）と異なり、**利用者自身が GitHub App Manifest Flow で自前の App を作成** し、その App の Private Key を **利用者本人が GitHub Settings UI で対象リポジトリの Secrets に手動登録** する。Private Key の漏洩影響は利用者本人のリポジトリに限定される（独立 App の構造的利点、`docs/secrets-handling.md` § 7 参照）。
 
-将来 GitHub App 経路を再導入する場合の v2 拡張余地は `docs/SECURITY.md` を参照。
+経路 2 必須化の判断根拠（業界比較 / GitHub 公式ガイドライン / CodeRabbit 事件の教訓 / MVV Value 1 整合）は `docs/secrets-handling.md` を参照。CLI による secret 自動書込はせず、3 secrets すべて利用者が GitHub Settings UI で手動登録する全手動方針（Issue #72 決定）を採用している。
 
 ### 可用性
 
@@ -257,7 +262,8 @@ vibehawk は npm パッケージとして CLI を提供する。利用者は `np
 
 | コマンド | 用途 |
 |---|---|
-| `npx vibehawk install` | GitHub App Manifest Flow を起動して利用者の GitHub アカウントに vibehawk App を作成 |
+| `npx vibehawk install` | GitHub App Manifest Flow を起動して利用者の GitHub アカウントに `vibehawk-for-<owner>` App を作成（CLI は secret を書き込まない、利用者が GitHub Settings UI で App ID / Private Key を手動登録する） |
+| `npx vibehawk setup-token` | Claude OAuth Token の取得を補助し GitHub Settings 登録手順を画面誘導（CLI は secret を書き込まない、明示同意の上でクリップボードにコピー、Issue #74） |
 | `npx vibehawk help` | コマンド一覧を表示 |
 | `npx vibehawk version` | バージョンを表示 |
 
@@ -293,16 +299,20 @@ vibehawk は npm パッケージとして CLI を提供する。利用者は `np
 
 CLI 起動時に「⚠️ 命名統制」の旨を明示表示し、利用者がカスタマイズ不可であることを認識した上で進める運用とする。
 
-### CLI が必要な場合
+### CLI 利用フロー（経路 2 必須化、Issue #61 で確定）
 
-利用者は以下のいずれかの利用形態を選択できる:
+利用者の導入手順:
 
-| 利用形態 | App インストール | secret 設定 | 投稿者表示 |
-|---|---|---|---|
-| デフォルト（最短） | 不要 | `CLAUDE_CODE_OAUTH_TOKEN` のみ | `github-actions[bot]` |
-| 命名ブランド利用（v2 以降） | `npx vibehawk install` で作成した App をインストール | `CLAUDE_CODE_OAUTH_TOKEN` + App credentials | `vibehawk-for-<owner>[bot]`（Issue #25 で実装） |
+| ステップ | コマンド / 操作 | 結果 |
+|---|---|---|
+| 1 | `npx vibehawk install --owner <name>` | `vibehawk-for-<owner>` App が作成される。CLI は App ID と Settings URL を画面表示する（Private Key は印字せず破棄、CISO Critical 条件） |
+| 2 | GitHub Settings UI で `VIBEHAWK_APP_ID` を手動登録 | 利用者が CLI 表示の URL を開いてコピペ |
+| 3 | GitHub App Settings で Private Key を `.pem` ダウンロード → Settings UI で `VIBEHAWK_PRIVATE_KEY` を手動登録 | 利用者が GitHub UI 内で完結（CLI 経由しない） |
+| 4 | `npx vibehawk setup-token --repo <owner>/<repo>` → GitHub Settings UI で `CLAUDE_CODE_OAUTH_TOKEN` を手動登録 | CLI が `claude setup-token` 実行を案内 → 取得した token を明示同意の上クリップボードにコピー（stdin 経由） → 利用者が Settings UI で貼付 |
+| 5 | `vibehawk-review.yml` を `.github/workflows/` に配置 | App Installation Token 認証で workflow が動作 |
+| 6 | PR を作成 | `vibehawk-for-<owner>[bot]` 名義でレビューサマリ投稿 |
 
-デフォルト経路は Issue #22 修正により `secrets.GITHUB_TOKEN` で完結し App 作成は不要。`npx vibehawk install` は将来のブランド利用ルート（v2）の前提機能として位置づけられる。
+経路 1（`secrets.GITHUB_TOKEN` + `github-actions[bot]` 投稿）は Issue #22 修正時点の妥協経路だが、Issue #61 で OSS 利用者の標準経路として認めない方針に確定した（理由: ブランド統制 / 商標保護 / 利用者可視化）。
 
 ## 画面遷移・データフロー
 

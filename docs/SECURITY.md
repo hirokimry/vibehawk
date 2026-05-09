@@ -58,64 +58,53 @@ GitHub Actions 上で動作する claude-code-action には最小限の権限の
 - Fork PR で `pull_request_target` トリガーを使用しない
 - `administration: write` / `secrets: write` / `workflows: write` / `id-token: write` は付与しない（Issue #22 修正後、`id-token: write` も禁止権限に追加）
 
-### 認証経路の設計（旧方針: 経路 1、※ Issue #61 で経路 2 に置き換え予定）
+### 認証経路の設計（経路 2 必須化、Issue #61 で確定）
 
-> 🚨 **非推奨 / 廃止予定**: 本セクションは Issue #22 修正時点の **経路 1（`secrets.GITHUB_TOKEN` 1 系統）** を記述する。CEO 判断 (2026-05-09, Issue #72) により vibehawk は **経路 2 必須化（`vibehawk-for-<owner>[bot]` 名義投稿）+ 3 secrets（`CLAUDE_CODE_OAUTH_TOKEN` / `VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY`）全手動登録** に移行することが確定している。本セクションの記述は Issue #61 の docs 全面改訂で経路 2 版に書き換えられる。
->
-> **現行運用方針（Issue #72 決定以降）**:
->
-> - 利用者リポジトリには 3 secrets を **GitHub Settings UI で手動登録** する（CLI による `gh secret set` 自動書込は行わない）
-> - `vibehawk-review.yml` は `vibehawk-for-<owner>[bot]` 名義での投稿を必須とする（経路 2）
-> - 経路 1（`secrets.GITHUB_TOKEN` + `github-actions[bot]` 投稿）は OSS 利用者の標準経路として認めない
-> - 配布方式の判断根拠・メジャーサービス比較・GitHub 公式ガイドライン引用は [`docs/secrets-handling.md`](secrets-handling.md) を参照
->
-> 以下、本セクション末尾までの記述（経路 1 の手順表・投稿者表示の妥協・v2 拡張余地）は **旧方針時点の記録** である。新規利用者は本注記と `docs/secrets-handling.md` のみを参照し、本セクション内の旧手順は採用しないこと。
-
-vibehawk の認証経路は **`CLAUDE_CODE_OAUTH_TOKEN` 1 系統** に統合されている。CEO の GitHub App Private Key を利用者に配布する設計は OSS 配布不可能であるため Issue #22 で撤廃した。
+vibehawk は **利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token + Claude OAuth Token** の 2 系統 + 3 secrets 構成を採用する。配布方式（CLI 自動 vs 手動）の判断根拠は [`docs/secrets-handling.md`](secrets-handling.md) を参照。
 
 ```text
 利用者リポジトリの GitHub Actions
-   └─ ① Anthropic 認証（LLM 呼び出し）
-         └─ CLAUDE_CODE_OAUTH_TOKEN（利用者の Claude Pro / Max 枠）
-
-   GitHub コメント投稿は GitHub Actions 自動発行の
-   secrets.GITHUB_TOKEN（job permissions に scope 限定、短寿命）を使用
+   ├─ ① GitHub 認証（PR コメント投稿）
+   │    └─ App Installation Token（vibehawk-for-<owner>）
+   │       └─ VIBEHAWK_APP_ID + VIBEHAWK_PRIVATE_KEY（利用者本人の App）
+   │       → 投稿者: vibehawk-for-<owner>[bot]
+   │
+   └─ ② Anthropic 認証（LLM 呼び出し）
+        └─ CLAUDE_CODE_OAUTH_TOKEN（利用者の Claude Pro / Max 枠）
 ```
 
-| 系統 | トークン | 特性 |
+| 系統 | secret 名 | 役割 | 当事者 | 設定方法 |
+|---|---|---|---|---|
+| GitHub App ID | `VIBEHAWK_APP_ID` | App Installation Token 取得用 | 利用者本人の `vibehawk-for-<owner>` App | **利用者が GitHub Settings UI で手動登録** |
+| GitHub Private Key | `VIBEHAWK_PRIVATE_KEY` | App Installation Token 取得用 | 利用者本人の `vibehawk-for-<owner>` App | **利用者が GitHub Settings UI で手動登録** |
+| LLM 認証 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-code-action 経由の LLM 呼び出し | 利用者の Claude Pro / Max 契約 | **利用者が GitHub Settings UI で手動登録** |
+
+**設計判断**: 利用者ごとに独立 App を採用することで、Private Key 漏洩時の影響範囲が **利用者本人のリポジトリ群に限定** される（CodeRabbit 型の集中 SaaS App では 1 鍵漏洩で全利用者へ波及するが、vibehawk はその構造を回避）。CLI による secret 自動書込はせず利用者が GitHub Settings UI で 3 secrets を手動登録することで、CLI プロセスが secret を touch しない攻撃面ゼロの設計を実現する（Issue #72 決定）。
+
+#### 利用者準備手順（3 secrets 手動登録）
+
+| 手順 | 操作 | 結果 |
 |---|---|---|
-| LLM 認証 | `CLAUDE_CODE_OAUTH_TOKEN` | 利用者が GitHub Secrets に設定。利用者の Anthropic 契約に紐づく |
-| GitHub 認証 | `secrets.GITHUB_TOKEN` | GitHub Actions が自動発行。job 終了時に失効する短寿命トークン。利用者設定不要 |
+| 1 | `npx vibehawk install --owner <name>` | `vibehawk-for-<owner>` App 作成。CLI が App ID と Settings URL を画面表示（Private Key は印字せず破棄） |
+| 2 | GitHub Settings UI で `VIBEHAWK_APP_ID` を手動登録 | CLI 表示の URL から登録 |
+| 3 | GitHub App Settings ページで `.pem` ダウンロード → Settings UI で `VIBEHAWK_PRIVATE_KEY` を手動登録 | 利用者が GitHub UI 内で完結 |
+| 4 | `npx vibehawk setup-token --repo <owner>/<repo>` → GitHub Settings UI で `CLAUDE_CODE_OAUTH_TOKEN` を手動登録 | CLI が登録手順を画面誘導、明示同意の上でクリップボードコピー（stdin 経由） |
+| 5 | `.github/workflows/vibehawk-review.yml` を配置 | App Installation Token 認証で動作 |
+| 6 | PR 作成 | `vibehawk-for-<owner>[bot]` 名義でレビューサマリ投稿 |
 
-claude-code-action 公式 docs が `secrets.GITHUB_TOKEN` を推奨設定として明記している（auto-scope / 短寿命 / prompt injection 耐性）ため、本設計はベストプラクティスに準拠する。
+#### Issue #22 認識見直しの経緯記録
 
-#### 利用者準備手順（1 secret のみ）
+Issue #22（2026-05-08）では「CEO の GitHub App Private Key を利用者に配布する設計」が OSS 配布不可能と判定され、`secrets.GITHUB_TOKEN` 1 系統経路（経路 1）に妥協した。
 
-| 手順 | 内容 |
-|---|---|
-| 1 | リポジトリに `.github/workflows/vibehawk-review.yml` を配置（テンプレートからコピペ） |
-| 2 | Settings → Secrets and variables → Actions で `CLAUDE_CODE_OAUTH_TOKEN` を設定 |
-| 3 | PR を作成すると `github-actions[bot]` 名義でレビューサマリが投稿される |
+しかし 2026-05-09 の C*O 統合議論で、当時の判定が「**集中 1 個の App Private Key を全利用者に配布**」と「**利用者ごとに独立した App を利用者本人が作成・運用**」を区別していなかったことが判明した。後者では Private Key 漏洩の影響範囲が利用者本人に限定されるため、Value 1「利用者の契約だけで、完結させる」と整合する。
 
-#### 投稿者表示の妥協
-
-- 投稿者は `github-actions[bot]` 名義になる（`vibehawk[bot]` 名義ではない）
-- これは Value 1「利用者の契約だけで、完結させる」を優先した結論
-- ブランド表示は妥協されたが、利用者は GitHub App インストール不要・Private Key 配布不要・1 secret 設定のみで導入できる利点を得る
+CEO 判断（2026-05-09）により、経路 2（利用者ごと独立 App + 3 secrets 手動登録）が必須化された。Issue #22 の経路 1 妥協は撤回され、経路 1（`secrets.GITHUB_TOKEN` + `github-actions[bot]` 投稿）は OSS 利用者の標準経路として認めない方針に確定した。
 
 #### Fork PR の扱い
 
-- Fork PR からの起動時、`secrets.GITHUB_TOKEN` は read 限定権限となるため `gh pr comment` が失敗する可能性が高い
-- vibehawk は本シナリオを **対象外** として扱う（`pull_request_target` は `.claude/rules/autonomous-restrictions.md` §6 不可領域のため使用しない）
+- Fork PR からの起動時、`pull_request_target` は使用しない（`.claude/rules/autonomous-restrictions.md` §6 不可領域）
+- App Installation Token は base リポジトリのコンテキストで発行されるため Fork PR でも投稿は技術的に可能だが、Fork PR からの secrets 漏洩リスク回避を優先し、本シナリオを **対象外** として扱う
 - 同一リポジトリ内の通常 PR では正常に動作する
-
-#### v2 拡張余地（将来検討）
-
-GitHub App 経路を将来再導入する場合の条件:
-
-- 利用者自身が GitHub App を発行・設定するルート（vibehawk 開発側の Private Key を配布しない）
-- Anthropic 公式 `claude` App と同等の仕組み調査
-- v2 で再導入する場合も Issue #22 で確立した「1 secret のみ」の利用者体験を後退させない設計を最優先とする
 
 ### Claude OAuth Token の取得・登録（Issue #26 → Issue #74 で全手動化）
 

@@ -10,52 +10,65 @@ vibe シリーズ（vibecorp / vibemux / vibehawk）の一員として、CodeRab
 
 詳細は `MVV.md` / `docs/specification.md` / `docs/POLICY.md` を参照。
 
-## 利用者の導入手順（3 ステップ）
+## 利用者の導入手順
 
-利用者が設定する secret は **`CLAUDE_CODE_OAUTH_TOKEN` 1 個のみ**。CEO の GitHub App Private Key を配布する必要がない設計です。
+vibehawk は **利用者ごとに独立した GitHub App（`vibehawk-for-<owner>`）** を利用者本人が作成・運用する構造です。投稿者は `vibehawk-for-<owner>[bot]` 名義になります（命名統制 Issue #25）。
 
-### 1. workflow ファイルを配置
-
-リポジトリに `.github/workflows/vibehawk-review.yml` を配置します。本リポジトリの同名ファイルをコピーして利用してください。workflow は以下の **最小権限** のみ要求します（詳細は `docs/SECURITY.md`）:
-
-- `pull_requests: write`
-- `issues: write`
-- `contents: read`
-
-### 2. secret を 1 個だけ設定
-
-リポジトリ Settings → Secrets and variables → Actions で以下を設定します:
-
-| secret 名 | 内容 | 取得元 |
-|---|---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Pro / Max サブスクリプションの OAuth Token | claude-code-action 公式手順（`/install-github-app` 等） |
-
-`secrets.GITHUB_TOKEN` は GitHub Actions が自動発行するため、利用者が設定する必要はありません。
-
-### 3. PR を出す
-
-PR を作成すると `vibehawk-review.yml` が起動し、`github-actions[bot]` 名義でレビューサマリコメントを投稿します。
-
-> 投稿者表示について: 投稿者は `github-actions[bot]` になります。`vibehawk[bot]` ブランド表示は OSS 配布性（Private Key 非配布）とのトレードオフで Issue #22 にて妥協されました。詳細は `docs/SECURITY.md` の「認証経路の設計」セクションを参照。
-
-> `CLAUDE_CODE_OAUTH_TOKEN` 未設定の場合、workflow は起動してもプレースホルダコメントのみ投稿してスキップ動作になります。
-
-## CLI（オプション）
-
-`vibehawk-for-<owner>[bot]` 名義での投稿などブランド表示を希望する利用者は、`npx vibehawk install` で利用者自身の GitHub App を作成できます（v2 拡張ルート、Issue #25 以降で順次実装）。
+利用者リポジトリに登録する secrets は **3 つすべて利用者が GitHub Settings UI で手動登録** します（CEO 判断 Issue #72、CLI は secret を書き込みません。判断根拠は [`docs/secrets-handling.md`](docs/secrets-handling.md) 参照）。
 
 > **対応 OS**: macOS / Linux / Windows（PowerShell / CMD / Git Bash）。Windows では `cmd /c start` でブラウザを起動します。CI で windows-latest runner で全テスト通過を保証しています。
+
+### 1. App 作成 — `npx vibehawk install`
 
 ```bash
 npx vibehawk install --owner <your-github-username>
 ```
 
-このコマンドは:
+ローカルに一時 HTTP サーバー（127.0.0.1:8765）を起動し、ブラウザで GitHub App Manifest Flow を開始します。利用者が GitHub UI で「Create」を押すと `vibehawk-for-<owner>` 名の App が作成されます。CLI は完了後 App ID と Settings URL を画面表示します（Private Key は画面に印字せず破棄、CISO Critical 条件）。
 
-- ローカルに一時 HTTP サーバー（localhost:8765）を起動
-- ブラウザで GitHub App Manifest Flow を開始
-- vibehawk 運営側のサーバーには一切通信しない（localhost のみで完結）
-- Private Key は CLI が画面に印字せず破棄（CISO Critical 条件）
+vibehawk 運営側のサーバーには一切通信しません（localhost のみで完結）。
+
+### 2. App ID を Secrets に登録（GitHub UI）
+
+CLI が表示する URL（対象リポジトリの `Settings → Secrets and variables → Actions → New repository secret`）を開き、以下を登録します:
+
+| Secret 名 | 値 |
+|---|---|
+| `VIBEHAWK_APP_ID` | CLI 画面に表示された App ID（数値） |
+
+### 3. Private Key を Secrets に登録（GitHub UI）
+
+App Settings ページ（`https://github.com/settings/apps/vibehawk-for-<owner>`）で「Generate a private key」を押して `.pem` ファイルをダウンロードします。続けて対象リポジトリの Secrets 画面で以下を登録します:
+
+| Secret 名 | 値 |
+|---|---|
+| `VIBEHAWK_PRIVATE_KEY` | ダウンロードした `.pem` ファイルの **内容全文**（`-----BEGIN ... -----END` を含む） |
+
+### 4. OAuth Token を Secrets に登録 — `npx vibehawk setup-token`
+
+```bash
+npx vibehawk setup-token --repo <owner>/<repo>
+```
+
+CLI が `claude setup-token`（Anthropic 公式 CLI）の実行案内を表示します。別ターミナルで `claude setup-token` を実行してトークンを取得し、vibehawk CLI のプロンプトに貼り付けます。CLI は明示同意の上で OS ネイティブのクリップボードに stdin 経由でコピーし、対象リポジトリの GitHub Settings URL と登録手順を画面表示します。利用者がブラウザを開き以下を登録します:
+
+| Secret 名 | 値 |
+|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` で取得した OAuth Token |
+
+CLI は受け取ったトークンをローカルファイルに保存せず、メモリ上のみで保持し、本プロセス終了と同時に消去します。
+
+### 5. workflow を配置
+
+リポジトリに `.github/workflows/vibehawk-review.yml` を配置します。本リポジトリの同名ファイルをコピーして利用してください。workflow は以下の **最小権限** のみ要求します（詳細は [`docs/SECURITY.md`](docs/SECURITY.md)）:
+
+- `pull_requests: write`
+- `issues: write`
+- `contents: read`
+
+### 6. PR を出す
+
+PR を作成すると `vibehawk-review.yml` が起動し、`vibehawk-for-<owner>[bot]` 名義でレビューサマリコメントを投稿します。
 
 ### `--dry-run` モード
 
@@ -65,23 +78,9 @@ npx vibehawk install --owner <your-github-username>
 npx vibehawk install --owner alice --dry-run
 ```
 
-### `setup-token` コマンド
+### CLI が secret を書き込まない設計（Issue #72）
 
-`CLAUDE_CODE_OAUTH_TOKEN` の取得を補助し、GitHub Settings UI への登録手順を画面誘導するヘルパー:
-
-```bash
-npx vibehawk setup-token --repo alice/my-repo
-```
-
-別ターミナルで `claude setup-token` を実行してトークンを取得し、CLI のプロンプトに貼り付けます。CLI は受け取ったトークンを **GitHub Secrets に書き込みません**（Issue #72 決定、`docs/secrets-handling.md` 参照）。代わりに以下を行います:
-
-1. 利用者の明示同意を得てから OS ネイティブのクリップボード（macOS: `pbcopy` / Linux: `xclip` 等 / Windows: `clip`）に **stdin 経由で** トークンをコピー（プロセス引数・環境変数には出さない）
-2. 対象リポジトリの GitHub Settings URL（`Settings → Secrets and variables → Actions → New repository secret`）と登録手順を画面表示
-3. 利用者がブラウザでその URL を開いて手動登録する
-
-vibehawk はトークンをローカルファイルに保存せず、メモリ上のみで保持し、本プロセス終了と同時に消去します。
-
-デフォルト導入手順（上記）では CLI は不要です。`secrets.GITHUB_TOKEN` で完結します。
+vibehawk CLI は `gh secret set` を呼び出さず、利用者リポジトリの GitHub Secrets を直接書き換えません。CLI は登録手順の画面誘導と任意のクリップボードコピーまでを担当し、実際の secret 登録は利用者が GitHub Settings UI で実施します。判断根拠（メジャーサービス比較 / GitHub 公式ガイドライン / CodeRabbit 事件の教訓 / MVV 整合）は [`docs/secrets-handling.md`](docs/secrets-handling.md) を参照。
 
 ## ステータス
 
