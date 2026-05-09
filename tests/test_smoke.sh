@@ -63,12 +63,12 @@ else
   fail "docs/POLICY.md が存在しない"
 fi
 
-# docs/SECURITY.md に vibehawk[bot] が含まれる（Issue #6 反映確認）
+# docs/SECURITY.md に vibehawk-for-<owner>[bot] が含まれる（Issue #61 経路 2 必須化反映確認）
 if [[ -f "docs/SECURITY.md" ]]; then
-  if grep -F "vibehawk[bot]" docs/SECURITY.md > /dev/null; then
-    pass "docs/SECURITY.md に vibehawk[bot] 反映"
+  if grep -F "vibehawk-for-<owner>[bot]" docs/SECURITY.md > /dev/null; then
+    pass "docs/SECURITY.md に vibehawk-for-<owner>[bot] 反映"
   else
-    fail "docs/SECURITY.md に vibehawk[bot] が反映されていない"
+    fail "docs/SECURITY.md に vibehawk-for-<owner>[bot] が反映されていない"
   fi
 else
   fail "docs/SECURITY.md が存在しない"
