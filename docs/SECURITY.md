@@ -58,7 +58,18 @@ GitHub Actions 上で動作する claude-code-action には最小限の権限の
 - Fork PR で `pull_request_target` トリガーを使用しない
 - `administration: write` / `secrets: write` / `workflows: write` / `id-token: write` は付与しない（Issue #22 修正後、`id-token: write` も禁止権限に追加）
 
-### 認証経路の設計（OSS 配布版、Issue #22 修正後）
+### 認証経路の設計（旧方針: 経路 1、※ Issue #61 で経路 2 に置き換え予定）
+
+> 🚨 **非推奨 / 廃止予定**: 本セクションは Issue #22 修正時点の **経路 1（`secrets.GITHUB_TOKEN` 1 系統）** を記述する。CEO 判断 (2026-05-09, Issue #72) により vibehawk は **経路 2 必須化（`vibehawk-for-<owner>[bot]` 名義投稿）+ 3 secrets（`CLAUDE_CODE_OAUTH_TOKEN` / `VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY`）全手動登録** に移行することが確定している。本セクションの記述は Issue #61 の docs 全面改訂で経路 2 版に書き換えられる。
+>
+> **現行運用方針（Issue #72 決定以降）**:
+>
+> - 利用者リポジトリには 3 secrets を **GitHub Settings UI で手動登録** する（CLI による `gh secret set` 自動書込は行わない）
+> - `vibehawk-review.yml` は `vibehawk-for-<owner>[bot]` 名義での投稿を必須とする（経路 2）
+> - 経路 1（`secrets.GITHUB_TOKEN` + `github-actions[bot]` 投稿）は OSS 利用者の標準経路として認めない
+> - 配布方式の判断根拠・メジャーサービス比較・GitHub 公式ガイドライン引用は [`docs/secrets-handling.md`](secrets-handling.md) を参照
+>
+> 以下、本セクション末尾までの記述（経路 1 の手順表・投稿者表示の妥協・v2 拡張余地）は **旧方針時点の記録** である。新規利用者は本注記と `docs/secrets-handling.md` のみを参照し、本セクション内の旧手順は採用しないこと。
 
 vibehawk の認証経路は **`CLAUDE_CODE_OAUTH_TOKEN` 1 系統** に統合されている。CEO の GitHub App Private Key を利用者に配布する設計は OSS 配布不可能であるため Issue #22 で撤廃した。
 
