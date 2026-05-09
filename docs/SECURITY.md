@@ -106,6 +106,64 @@ CEO 判断（2026-05-09）により、経路 2（利用者ごと独立 App + 3 s
 - App Installation Token は base リポジトリのコンテキストで発行されるため Fork PR でも投稿は技術的に可能だが、Fork PR からの secrets 漏洩リスク回避を優先し、本シナリオを **対象外** として扱う
 - 同一リポジトリ内の通常 PR では正常に動作する
 
+#### Installation Token 権限スコープ（CISO 再承認 #62 / #81 で文書化）
+
+`vibehawk-for-<owner>` App の Installation Token は、`actions/create-github-app-token@v2` 経由で `cli/manifest.js` が App 作成時に要求した最小権限のみで発行される。
+
+| 権限 | スコープ | 用途 |
+|---|---|---|
+| `pull-requests` | `write` | PR コメント投稿、PR メタデータ読取 |
+| `issues` | `write` | issue_comment 投稿（`@mention` 応答 #11 等） |
+| `contents` | `read` | PR diff 取得、レビュー対象コードの読取 |
+
+**vibehawk が要求しない権限**（`.claude/rules/autonomous-restrictions.md` §6 連動の禁止権限と一致）:
+
+- `administration: write` — リポジトリ設定変更権限を持たない（自律実行不可領域）
+- `secrets: write` — GitHub Secrets 書込権限を持たない（CLI が touch しない方針 Issue #72 / #74 と整合）
+- `workflows: write` — workflow ファイル書換権限を持たない（PR 経由配置のみ Issue #58）
+- `id-token: write` — OIDC token 発行権限を持たない（`actions/create-github-app-token@v2` は OIDC 不要で動作）
+
+**設計意図**: PR レビュー投稿に必要な最小権限のみを App に持たせることで、Private Key 漏洩時の被害範囲を「PR コメント投稿 + Issue コメント投稿 + 読取」に限定する（リポジトリ設定変更・secrets 流出・workflow 改ざんは構造的に不可能）。Installation Token の寿命は GitHub 仕様により最大 1 時間。
+
+#### Private Key rotation 手順（CISO 再承認 #62 / #81 で文書化）
+
+`VIBEHAWK_PRIVATE_KEY` の漏洩を疑った場合、または定期的なキーローテーション運用で Private Key を更新する手順:
+
+##### 1. 旧 Private Key の無効化（GitHub UI）
+
+1. ブラウザで `https://github.com/settings/apps/vibehawk-for-<owner>` を開く
+2. ページ下部「Private keys」セクションで該当キーの **Delete private key** をクリック
+3. GitHub が即座に該当キーを無効化（以降このキーで Installation Token は発行できなくなる）
+
+##### 2. 新 Private Key の生成（GitHub UI）
+
+1. 同じページで **Generate a private key** をクリック
+2. 新しい `.pem` ファイルが自動ダウンロードされる
+3. ダウンロードした `.pem` ファイルの **内容全文**（`-----BEGIN ... -----END` を含む）をコピー
+
+##### 3. リポジトリ Secrets の更新（GitHub UI）
+
+1. 対象リポジトリの `Settings → Secrets and variables → Actions` を開く
+2. 既存の `VIBEHAWK_PRIVATE_KEY` の `Update secret` をクリック
+3. 新 `.pem` ファイル全文を貼付して保存
+
+##### 4. workflow 動作影響と過渡期の挙動
+
+- 旧 Private Key で発行された Installation Token は最大 1 時間有効（GitHub 仕様）
+- rotation 完了から 1 時間以内に発行された旧 token は引き続き動作する（PR コメント投稿等）
+- 新 Secret 更新後の workflow 起動からは新 Private Key で Installation Token が発行される
+- 漏洩疑いの場合は、rotation 完了から 1 時間後に旧 token も自動失効するため、「即時無害化」が達成される
+
+##### 5. 漏洩検証（推奨）
+
+- GitHub App Settings の `Recent deliveries` で異常な API 呼出が記録されていないか確認
+- 対象リポジトリの `Settings → Audit log` で想定外の操作が記録されていないか確認
+- 必要に応じて `gh api repos/<owner>/<repo>/issues/comments` で `vibehawk-for-<owner>[bot]` 名義の予期しないコメント投稿がないか確認
+
+##### 漏洩時の影響範囲（参考）
+
+vibehawk は **利用者ごとに独立 App** 設計のため、Private Key 漏洩の影響は **利用者本人のリポジトリ群に限定** される（CodeRabbit 型の集中 SaaS App では 1 鍵漏洩で全利用者へ波及するが、vibehawk はその構造を回避、[`docs/secrets-handling.md`](secrets-handling.md) § 5 参照）。攻撃者ができるのは上記「Installation Token 権限スコープ」の範囲内のみ。
+
 ### Claude OAuth Token の取得・登録（Issue #26 → Issue #74 で全手動化）
 
 `npx vibehawk setup-token` は利用者の `CLAUDE_CODE_OAUTH_TOKEN` の取得を補助し、**GitHub Settings UI への登録手順を画面誘導する**。CLI は GitHub Secrets に直接書き込まない（Issue #72 決定、Issue #74 で実装撤去）。配布方式の判断根拠は [`docs/secrets-handling.md`](secrets-handling.md) 参照。
