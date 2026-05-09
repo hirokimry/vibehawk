@@ -298,5 +298,85 @@ for tool in 'gh api:\*' 'git log:\*' 'git diff:\*'; do
   fi
 done
 
+# Issue #10: vibehawk_config ステップが存在
+if grep -F 'id: vibehawk_config' "$WORKFLOW" > /dev/null; then
+  pass "vibehawk_config ステップが存在する（Issue #10）"
+else
+  fail "vibehawk_config ステップが存在しない（Issue #10 未実装）"
+fi
+
+# Issue #10: .vibehawk.yaml 優先 / .coderabbit.yaml fallback
+if grep -F '.vibehawk.yaml' "$WORKFLOW" > /dev/null && \
+   grep -F '.coderabbit.yaml' "$WORKFLOW" > /dev/null; then
+  pass ".vibehawk.yaml / .coderabbit.yaml の両方が参照される（Issue #10）"
+else
+  fail "設定ファイル両形式の参照が不足（Issue #10）"
+fi
+
+# Issue #10: PyYAML 可用性確認 + フォールバック pip install
+if grep -F 'import yaml' "$WORKFLOW" > /dev/null && \
+   grep -F 'pip install' "$WORKFLOW" | grep -F 'pyyaml' > /dev/null; then
+  pass "PyYAML 可用性確認とフォールバック pip install が含まれる（Issue #10）"
+else
+  fail "PyYAML 可用性確認 / pip install フォールバックが不足（Issue #10、ubuntu-latest 以外で動作不能）"
+fi
+
+# Issue #10: depth 切替ロジック（4 段階）
+for depth in summary_only lightweight focused full; do
+  if grep -F "depth=\"$depth\"" "$WORKFLOW" > /dev/null || \
+     grep -F "depth=$depth" "$WORKFLOW" > /dev/null; then
+    pass "depth=$depth の出力が含まれる（Issue #10 段階的劣化）"
+  else
+    fail "depth=$depth の出力が不足（Issue #10）"
+  fi
+done
+
+# Issue #10: vibehawk_config が GITHUB_OUTPUT に config_source / language / files_count / depth / path_filters / path_instructions を出力
+for output in config_source language files_count depth path_filters path_instructions; do
+  if grep -E "echo \"${output}=" "$WORKFLOW" > /dev/null; then
+    pass "vibehawk_config が GITHUB_OUTPUT に ${output} を出力（Issue #10）"
+  else
+    fail "vibehawk_config が GITHUB_OUTPUT に ${output} を出力していない（Issue #10）"
+  fi
+done
+
+# Issue #10: prompt に CONFIG_SOURCE / LANGUAGE / DEPTH / PATH_FILTERS_JSON / PATH_INSTRUCTIONS_JSON が渡される
+for var in CONFIG_SOURCE LANGUAGE DEPTH PATH_FILTERS_JSON PATH_INSTRUCTIONS_JSON; do
+  if grep -F "${var}: " "$WORKFLOW" > /dev/null; then
+    pass "prompt に ${var} が渡される（Issue #10）"
+  else
+    fail "prompt に ${var} が渡されない（Issue #10）"
+  fi
+done
+
+# Issue #10: prompt に locale 指示（LANGUAGE=ja で日本語出力）
+if grep -F 'LANGUAGE=ja' "$WORKFLOW" > /dev/null && \
+   grep -F '日本語' "$WORKFLOW" > /dev/null; then
+  pass "prompt に locale (LANGUAGE=ja → 日本語出力) 指示が含まれる（Issue #10）"
+else
+  fail "prompt に locale 指示が不足（Issue #10）"
+fi
+
+# Issue #10: prompt に path_filters / path_instructions の処理指示が含まれる
+if grep -F 'path_filters' "$WORKFLOW" > /dev/null && \
+   grep -F 'path_instructions' "$WORKFLOW" > /dev/null; then
+  pass "prompt に path_filters / path_instructions の処理指示が含まれる（Issue #10）"
+else
+  fail "prompt に path_filters / path_instructions の処理指示が不足（Issue #10）"
+fi
+
+# Issue #10: depth 別の振る舞い説明（full / focused / lightweight / summary_only）が prompt に含まれる
+depth_desc_count=0
+for depth in full focused lightweight summary_only; do
+  if grep -F "$depth" "$WORKFLOW" > /dev/null; then
+    depth_desc_count=$((depth_desc_count + 1))
+  fi
+done
+if [[ "$depth_desc_count" -eq 4 ]]; then
+  pass "prompt に depth 4 段階の振る舞い説明が含まれる（Issue #10）"
+else
+  fail "prompt に depth 4 段階のすべての説明が含まれない（Issue #10、$depth_desc_count/4）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
