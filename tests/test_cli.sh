@@ -484,5 +484,103 @@ else
   fail "install.js が 127.0.0.1 を明示 listen していない（Windows で IPv6 にバインドされる可能性）"
 fi
 
+# Issue #58: parseOverwrite が --overwrite を検出
+if node -e '
+const { parseOverwrite } = require("./cli/install");
+if (parseOverwrite(["--overwrite"]) !== true) process.exit(1);
+if (parseOverwrite(["--owner", "alice", "--overwrite"]) !== true) process.exit(1);
+if (parseOverwrite(["--owner", "alice"]) !== false) process.exit(1);
+if (parseOverwrite([]) !== false) process.exit(1);
+'; then
+  pass "parseOverwrite が --overwrite を検出"
+else
+  fail "parseOverwrite の挙動が想定と異なる"
+fi
+
+# Issue #58: createWorkflowPr が export されている
+if node -e '
+const install = require("./cli/install");
+if (typeof install.createWorkflowPr !== "function") process.exit(1);
+if (install.WORKFLOW_PATH !== ".github/workflows/vibehawk-review.yml") process.exit(1);
+if (typeof install.WORKFLOW_BRANCH !== "string" || install.WORKFLOW_BRANCH.length === 0) process.exit(1);
+'; then
+  pass "createWorkflowPr / WORKFLOW_PATH / WORKFLOW_BRANCH が export されている"
+else
+  fail "Issue #58 の export が想定と異なる"
+fi
+
+# Issue #58: --repo 指定時の --dry-run 出力に workflow PR 作成計画が表示される
+dry_run_repo_output="$(node -e '
+const install = require("./cli/install");
+install.run({
+  argv: ["--owner", "alice", "--repo", "alice/test-repo", "--dry-run"],
+  openBrowser: () => {},
+  readOwner: async () => "alice",
+}).then(() => process.exit(0)).catch((e) => { console.error(e.message); process.exit(1); });
+' 2>&1)"
+
+if echo "$dry_run_repo_output" | grep -F "workflow PR 作成先: alice/test-repo" > /dev/null \
+  && echo "$dry_run_repo_output" | grep -F "vibehawk-review.yml 配置 PR を作成" > /dev/null \
+  && echo "$dry_run_repo_output" | grep -F "GitHub Secrets への書き込み: なし" > /dev/null; then
+  pass "--dry-run で --repo 指定時に workflow PR 作成計画が表示され、Secrets 非書込が明示される"
+else
+  fail "--dry-run + --repo の出力に必須要件（workflow PR 作成計画 / Secrets 非書込み宣言）が含まれない"
+fi
+
+# Issue #58: --repo 指定時の --dry-run でも実際の workflow PR 作成（gh CLI 呼出）が起きない
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const install = require("./cli/install");
+let workflowPlacerCalled = false;
+install.run({
+  argv: ["--owner", "alice", "--repo", "alice/test-repo", "--dry-run"],
+  openBrowser: () => {},
+  readOwner: async () => "alice",
+  workflowPlacer: () => { workflowPlacerCalled = true; return Promise.resolve({ url: "fake" }); },
+}).then(() => {
+  if (workflowPlacerCalled) { console.error("workflowPlacer should not run in dry-run"); process.exit(1); }
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "--dry-run で workflowPlacer が呼ばれない"
+else
+  fail "--dry-run で workflowPlacer が呼ばれる可能性"
+fi
+
+# Issue #58: createWorkflowPr が --repo 形式を検証する（不正入力を拒否）
+if node -e '
+const { createWorkflowPr } = require("./cli/install");
+createWorkflowPr({ repo: "invalid_no_slash" }).then(() => process.exit(1)).catch((e) => {
+  if (!/形式が正しくありません/.test(e.message)) process.exit(1);
+  process.exit(0);
+});
+'; then
+  pass "createWorkflowPr が --repo 形式不正を拒否"
+else
+  fail "createWorkflowPr が不正な --repo を受け付ける可能性"
+fi
+
+# Issue #58: install.js が外部 fetch する URL は GitHub 公式エンドポイントのみ
+# （vibehawk 運営側サーバーへの通信禁止 + actions/create-github-app-token 等 GitHub Apps 関連 URL のみ）
+if grep -E "fetch\\(['\"]https://[^'\"]*['\"]" cli/install.js | grep -v -E "github\\.com|githubusercontent\\.com" > /dev/null; then
+  fail "install.js に GitHub 公式以外の fetch URL が含まれる（vibehawk 運営側サーバー通信禁止違反の可能性）"
+else
+  pass "install.js の外部 fetch URL は GitHub 公式エンドポイントのみ"
+fi
+
+# Issue #58 / #74: install.js が gh secret set を呼び出さない（CLI は secret を一切 touch しない）
+if grep -E "gh.*secret.*set|secret['\"][[:space:]]*,[[:space:]]*['\"]set" cli/install.js > /dev/null; then
+  fail "install.js が gh secret set を呼び出している（Issue #72 / #74 全手動方針違反）"
+else
+  pass "install.js は gh secret set を呼び出さない（Issue #72 / #74 全手動方針）"
+fi
+
+# Issue #58: install help が --repo フラグを表示
+if node cli/index.js help 2>&1 | grep -F "install [--repo OWNER/REPO]" > /dev/null; then
+  pass "CLI help が install --repo フラグを表示"
+else
+  fail "CLI help が install --repo フラグを表示しない"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
