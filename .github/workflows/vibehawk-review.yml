@@ -157,12 +157,10 @@ jobs:
             - `gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING_COMMENT_ID" -f body="<新サマリ本文>"` で edit
             - 新規 `gh pr comment` を呼ばないこと（コメントが増えてしまう）
 
-            inline comment / request_changes は本 workflow では使わない（Issue #9 で対応予定）。
-
             ## サマリ本文の必須要件
 
             - PR 全体の変更内容の要約（簡潔に）
-            - 明らかな問題があれば簡単に指摘（severity 5 段階は Issue #9 で対応）
+            - 検出した指摘の合計件数を severity 別に表示
             - **末尾に必ず以下 2 行を含める**（インクリメンタルレビューの一意特定に必須、Issue #57）:
 
             ```
@@ -171,6 +169,73 @@ jobs:
             ```
 
             この 2 行が欠落すると、次回 push でサマリが update できず重複投稿になります。
+
+            ## inline comment 投稿（Issue #9 severity 5 段階）
+
+            指摘ごとに `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/comments` で inline comment を投稿してください（5 大方針 2「コード生成は絶対しない」厳守、ただし GitHub Suggestions 構文は OK）。
+
+            ### severity 5 段階分類（CodeRabbit 公式仕様、`.claude/rules/severity/coderabbit.md` 準拠）
+
+            | Marker | severity | 定義 |
+            |--------|---------|---------|
+            | 🔴 | Critical | システム障害、セキュリティ侵害、データ損失を引き起こす重大な問題 |
+            | 🟠 | Major | 機能・パフォーマンスに大きく影響する重要な問題 |
+            | 🟡 | Minor | 対応すべきだがシステムに致命的な影響はない問題 |
+            | 🔵 | Trivial | コード品質を高めるための軽微な提案 |
+            | ⚪ | Info | 情報提供のみ、対応不要 |
+
+            inline comment 本文の冒頭に必ず該当 severity の絵文字を 1 つ付ける（例: `🟠 **Major**: ...`）。重大度判定は本仕様（CodeRabbit 公式定義）に厳格に従う。
+
+            ### inline comment 必須フィールド（gh api -X POST 呼出）
+
+            ```bash
+            gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/comments" \
+              -f body="🟠 **Major**: 指摘内容..." \
+              -f commit_id="$HEAD_SHA" \
+              -f path="src/foo.ts" \
+              -f line=42 \
+              -f side=RIGHT
+            ```
+
+            複数行範囲指摘なら `start_line` / `start_side` / `line` / `side` を併用。
+
+            ### GitHub Suggestions 構文（修正案、利用者が 1 クリックで適用可）
+
+            必要に応じて inline comment 本文に GitHub Suggestions 構文を埋め込んでください。**Bot 自身は commit しない**（5 大方針 2 の例外として「Suggestions 構文の生成」は明示的に許可、Bot 自身が PR に commit を作る行為は禁止）:
+
+            ````
+            🟡 **Minor**: 変数名を意図がわかる名前に
+            ```suggestion
+            const userCount = users.length;
+            ```
+            ````
+
+            ## auto_resolve（push で直った旧指摘を resolved 化、Issue #9）
+
+            INCREMENTAL_MODE=true の場合、レビュー前に以下を実施:
+
+            1. `gh api repos/$REPO/pulls/$PR_NUMBER/comments --paginate` で既存 inline comments を取得
+            2. **投稿者 ID が `vibehawk-for-<owner>[bot]` のコメントのみ**フィルタ（他者・他 Bot のコメントは絶対に touch しない）
+            3. 各コメントの `path` + `line` の差分が今回の REVIEW_RANGE で消えている／類似度が著しく下がっているかを判定
+            4. 「直った」と判定したスレッドは GraphQL `resolveReviewThread` mutation で resolved 化（削除はしない）
+
+            ```bash
+            gh api graphql -f query='
+              mutation { resolveReviewThread(input: { threadId: "<thread_node_id>" }) { thread { isResolved } } }
+            '
+            ```
+
+            **重要制約**: 他者・他 Bot のレビュースレッドには **絶対に resolveReviewThread を呼ばない**（誤 resolve は信頼破壊）。投稿者 ID チェックを必ず実施。
+
+            ## sticky review state（Issue #9）
+
+            inline comment + auto_resolve 完了後、PR の review state を以下の規則で都度発行:
+
+            1. `gh api repos/$REPO/pulls/$PR_NUMBER --jq '.review_comments'` 等で全 review thread の resolved / unresolved 数をカウント（または GraphQL で reviewThreads 取得）
+            2. unresolved == 0 → `gh pr review $PR_NUMBER --approve --body "✅ vibehawk: 未解決指摘なし"`
+            3. unresolved >= 1 → `gh pr review $PR_NUMBER --request-changes --body "⚠️ vibehawk: 未解決指摘 N 件あり"`
+
+            状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。
 
             ## レビュー範囲を確認するコマンド例
 
@@ -182,6 +247,6 @@ jobs:
             - `git log --oneline origin/$BASE_REF..HEAD`（PR 全体の commit 一覧）
             - `gh pr diff $PR_NUMBER`（PR 全体の差分）
 
-            Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります。
+            Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります。コード生成（docstring 全文 / unit-test ファイル新設 / 自動 commit）は **絶対に禁止**（5 大方針 2）。
           claude_args: |
-            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*)"
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*)"
