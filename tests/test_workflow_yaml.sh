@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # vibehawk-review.yml workflow の最小要件検証
-# Issue #22 修正後: GITHUB_TOKEN 1 系統認証、id-token: write 削除、
-# VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / actions/create-github-app-token 廃止
+# Issue #59 経路 2 必須化: App Installation Token 認証、
+# 3 secrets（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）必須、
+# actions/create-github-app-token@v2 で `vibehawk-for-<owner>[bot]` 名義投稿を実現
+# Issue #22 妥協（GITHUB_TOKEN 1 系統）は #61 で撤回済み
 
 set -euo pipefail
 
@@ -111,23 +113,17 @@ for i in "${!forbidden_perms[@]}"; do
   fi
 done
 
-# 利用者が設定する secret は CLAUDE_CODE_OAUTH_TOKEN のみ（#22 修正完了条件）
-if echo "$WORKFLOW_BODY" | grep -F "CLAUDE_CODE_OAUTH_TOKEN" > /dev/null; then
-  pass "CLAUDE_CODE_OAUTH_TOKEN 参照がある"
-else
-  fail "CLAUDE_CODE_OAUTH_TOKEN 参照がない"
-fi
-
-# CEO の Private Key を利用者に配布する設計が完全に削除されていること
-declare -a forbidden_secrets=(
+# 経路 2 必須化（#59 / #61）: 利用者が設定する 3 secrets（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）が全て参照される
+declare -a required_secrets=(
+  "CLAUDE_CODE_OAUTH_TOKEN"
   "VIBEHAWK_APP_ID"
   "VIBEHAWK_PRIVATE_KEY"
 )
-for sec in "${forbidden_secrets[@]}"; do
+for sec in "${required_secrets[@]}"; do
   if echo "$WORKFLOW_BODY" | grep -F "$sec" > /dev/null; then
-    fail "$sec 参照が残っている（#22 で削除すべき）"
+    pass "$sec 参照がある（経路 2 必須化）"
   else
-    pass "$sec 参照が削除されている"
+    fail "$sec 参照がない（経路 2 必須化、#59）"
   fi
 done
 
@@ -138,11 +134,11 @@ else
   fail "anthropics/claude-code-action が呼ばれていない"
 fi
 
-# create-github-app-token は #22 で完全廃止
+# 経路 2 必須化（#59）: actions/create-github-app-token で App Installation Token を取得する
 if echo "$WORKFLOW_BODY" | grep -F "actions/create-github-app-token" > /dev/null; then
-  fail "actions/create-github-app-token が残っている（#22 で削除すべき）"
+  pass "actions/create-github-app-token が呼ばれる（経路 2 App Installation Token 認証）"
 else
-  pass "actions/create-github-app-token が削除されている"
+  fail "actions/create-github-app-token が呼ばれていない（経路 2 必須化、#59）"
 fi
 
 # サードパーティ Action SHA pin（CISO Major 指摘）
@@ -180,11 +176,39 @@ else
   fail "allowedTools に Bash(gh pr comment:*) が含まれない（claude-code-action がコメント投稿できない）"
 fi
 
-# #22 修正完了条件: github_token に secrets.GITHUB_TOKEN を渡している
-if echo "$WORKFLOW_BODY" | grep -E "github_token:[[:space:]]*\\\$\\{\\{[[:space:]]*secrets\\.GITHUB_TOKEN[[:space:]]*\\}\\}" > /dev/null; then
-  pass "github_token に secrets.GITHUB_TOKEN が渡されている"
+# 経路 2 必須化（#59）: claude-code-action の github_token に App Installation Token (steps.app-token.outputs.token) を渡している
+if echo "$WORKFLOW_BODY" | grep -E "github_token:[[:space:]]*\\\$\\{\\{[[:space:]]*steps\\.app-token\\.outputs\\.token[[:space:]]*\\}\\}" > /dev/null; then
+  pass "github_token に App Installation Token (steps.app-token.outputs.token) が渡されている（経路 2）"
 else
-  fail "github_token に secrets.GITHUB_TOKEN が渡されていない"
+  fail "github_token に App Installation Token が渡されていない（経路 2 必須化、#59）"
+fi
+
+# 経路 2 必須化（#59）: app-token ステップが actions/create-github-app-token@v2 を使う
+if echo "$WORKFLOW_BODY" | grep -E "actions/create-github-app-token@v2" > /dev/null; then
+  pass "actions/create-github-app-token@v2 を使用している"
+else
+  fail "actions/create-github-app-token@v2 が使われていない（経路 2 必須化、#59）"
+fi
+
+# 経路 2 必須化（#59）: app-token ステップが secrets.VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY を参照する
+if echo "$WORKFLOW_BODY" | grep -E "app-id:[[:space:]]*\\\$\\{\\{[[:space:]]*secrets\\.VIBEHAWK_APP_ID[[:space:]]*\\}\\}" > /dev/null; then
+  pass "app-token ステップが app-id: secrets.VIBEHAWK_APP_ID を参照している"
+else
+  fail "app-token ステップが app-id: secrets.VIBEHAWK_APP_ID を参照していない（経路 2 必須化、#59）"
+fi
+
+if echo "$WORKFLOW_BODY" | grep -E "private-key:[[:space:]]*\\\$\\{\\{[[:space:]]*secrets\\.VIBEHAWK_PRIVATE_KEY[[:space:]]*\\}\\}" > /dev/null; then
+  pass "app-token ステップが private-key: secrets.VIBEHAWK_PRIVATE_KEY を参照している"
+else
+  fail "app-token ステップが private-key: secrets.VIBEHAWK_PRIVATE_KEY を参照していない（経路 2 必須化、#59）"
+fi
+
+# 経路 2 必須化（#59）: claude-code-action の claude_code_oauth_token に secrets.CLAUDE_CODE_OAUTH_TOKEN を渡している
+# （required_secrets ループの substring 検索は false positive 可能なため、明示的な参照形式を別途検証）
+if echo "$WORKFLOW_BODY" | grep -E "claude_code_oauth_token:[[:space:]]*\\\$\\{\\{[[:space:]]*secrets\\.CLAUDE_CODE_OAUTH_TOKEN[[:space:]]*\\}\\}" > /dev/null; then
+  pass "claude_code_oauth_token に secrets.CLAUDE_CODE_OAUTH_TOKEN が渡されている"
+else
+  fail "claude_code_oauth_token に secrets.CLAUDE_CODE_OAUTH_TOKEN が渡されていない（経路 2 必須化、#59）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
