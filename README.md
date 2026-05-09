@@ -80,3 +80,4 @@ npx vibehawk setup-token --repo alice/my-repo
 ## ステータス
 
 本リポジトリは **開発中**（Phase 1 基盤構築 + OSS 配布対応）です。Issue #7 で実行基盤を、Issue #22 で OSS 配布可能化を、Issue #24 で `npx vibehawk install` 基盤を、Issue #8 以降で詳細レビュー機能（サマリコメント・inline コメント・severity 5 段階・@mention チャット応答）を順次積み上げます。
+ # 末尾に空行追加（最も影響が少ない変更）
