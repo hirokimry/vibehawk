@@ -40,18 +40,18 @@ if [[ ! -f cli/install.js || ! -f cli/manifest.js || ! -f package.json ]]; then
   exit 1
 fi
 
-# package.json の bin 定義
-if node -e 'const p = require("./package.json"); if (p.bin && p.bin.vibehawk) { process.exit(0); } else { process.exit(1); }'; then
-  pass "package.json に bin.vibehawk が定義されている"
+# package.json の bin.vibehawk が ./cli/index.js を指すこと（要件厳格化、誤設定を通さない）
+if node -e 'const p = require("./package.json"); process.exit(p.bin && p.bin.vibehawk === "./cli/index.js" ? 0 : 1);'; then
+  pass "package.json bin.vibehawk が ./cli/index.js を指す"
 else
-  fail "package.json に bin.vibehawk が定義されていない"
+  fail "package.json bin.vibehawk が ./cli/index.js を指していない"
 fi
 
-# Node.js engine 要件
-if node -e 'const p = require("./package.json"); const e = p.engines && p.engines.node; if (e && /\d/.test(e)) { process.exit(0); } else { process.exit(1); }'; then
-  pass "package.json に engines.node が定義されている"
+# Node.js engine が >=18 を要求すること（要件厳格化）
+if node -e 'const p = require("./package.json"); const e = p.engines && p.engines.node; process.exit(e && /^>=\s*18\b/.test(e) ? 0 : 1);'; then
+  pass "package.json engines.node が >=18 を満たす"
 else
-  fail "package.json に engines.node が定義されていない"
+  fail "package.json engines.node が >=18 を満たさない"
 fi
 
 # CLI index が executable
@@ -107,11 +107,19 @@ else
   fail "manifest.js が public: true ではない"
 fi
 
-# install.js が vibehawk 運営側サーバーへ通信しないこと（github.com/api.github.com 以外の HTTP 呼び出しが無い）
-if grep -E "fetch\\(['\"]" cli/install.js | grep -vE "(api\\.github\\.com|github\\.com)" > /dev/null; then
-  fail "install.js が vibehawk 運営側サーバーに通信する fetch を含む"
+# install.js が GitHub 公式 manifest conversion エンドポイントのみを呼ぶこと
+# - シングル/ダブル/バッククォート 3 形式の fetch 呼び出しを拾う
+# - 許可: api.github.com/app-manifests/<code>/conversions のみ
+fetch_calls="$(grep -nE "fetch\\([\"'\\\`]" cli/install.js || true)"
+if [[ -z "$fetch_calls" ]]; then
+  fail "install.js に fetch 呼び出しがない（manifest conversion が必要）"
 else
-  pass "install.js は localhost / github.com 以外への外部通信を含まない"
+  # 許可されたエンドポイント以外への fetch を検出すれば fail
+  if echo "$fetch_calls" | grep -vE "api\\.github\\.com/app-manifests/[^/\"'\\\`]+/conversions" > /dev/null; then
+    fail "install.js に manifest conversion 以外のエンドポイントへの fetch が含まれる"
+  else
+    pass "install.js の fetch は GitHub 公式 manifest conversion エンドポイントのみ"
+  fi
 fi
 
 # Private Key 取扱: install.js が PEM を REDACTED 化すること
@@ -233,6 +241,45 @@ else
   pass "oauth.js はトークンをファイル書き込みしない（メモリ上のみで保持）"
 fi
 
+# Issue #26: setup-token は CLAUDE_CODE_OAUTH_TOKEN のみを書き込み、他 secret を書き込まないこと
+# - gh secret set 呼び出しが CLAUDE_CODE_OAUTH_TOKEN を含む
+# - その呼び出し以外に gh secret set が存在しない（他 secret を勝手に書かない）
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/oauth.js", "utf8");
+// execFileSync("gh", ["secret", "set", "CLAUDE_CODE_OAUTH_TOKEN", ...]) パターンを検出
+const ok = /execFileSync\([^)]*["'"'"'`]gh["'"'"'`][^)]*["'"'"'`]secret["'"'"'`][^)]*["'"'"'`]set["'"'"'`][^)]*["'"'"'`]CLAUDE_CODE_OAUTH_TOKEN["'"'"'`]/.test(src);
+process.exit(ok ? 0 : 1);
+'; then
+  pass "oauth.js が gh secret set CLAUDE_CODE_OAUTH_TOKEN を呼ぶ"
+else
+  fail "oauth.js に gh secret set CLAUDE_CODE_OAUTH_TOKEN の呼び出しがない"
+fi
+
+# secret set 呼び出しの数: gh + secret + set + CLAUDE_CODE_OAUTH_TOKEN の組合せが 1 つだけであること
+# （他の secret を書く execFileSync が混入していないことを検証）
+secret_set_count=$(grep -cE "secret['\"][[:space:]]*,[[:space:]]*['\"]set" cli/oauth.js || true)
+if [[ "$secret_set_count" -eq 1 ]]; then
+  pass "oauth.js の secret set 呼び出しは 1 箇所のみ（他 secret を書かない）"
+else
+  fail "oauth.js の secret set 呼び出し数が想定外: $secret_set_count（1 箇所のみであるべき）"
+fi
+
+# 念のため: CLAUDE_CODE_OAUTH_TOKEN 以外の secret 名が secret/set 引数列の近傍に出現しないこと
+if grep -E "secret['\"][[:space:]]*,[[:space:]]*['\"]set" cli/oauth.js | grep -v "CLAUDE_CODE_OAUTH_TOKEN" > /dev/null; then
+  fail "oauth.js が CLAUDE_CODE_OAUTH_TOKEN 以外の secret を書き込む可能性"
+else
+  pass "oauth.js は CLAUDE_CODE_OAUTH_TOKEN 以外の secret を書き込まない"
+fi
+
+# Issue #26: setSecret は --body フラグ経由でトークンを渡してはならない
+# （プロセス引数への露出を防ぐため、stdin/input オプション経由を要求）
+if grep -F "'--body'" cli/oauth.js > /dev/null || grep -F '"--body"' cli/oauth.js > /dev/null; then
+  fail "oauth.js が gh secret set に --body フラグを使用（プロセス引数にトークンが露出する）"
+else
+  pass "oauth.js は gh secret set に --body フラグを使わず stdin 経由でトークンを渡す"
+fi
+
 # Issue #26: setup-token コマンドが index.js に登録されている
 if grep -F "'setup-token':" cli/index.js > /dev/null; then
   pass "setup-token コマンドが index.js に登録されている"
@@ -287,6 +334,27 @@ install.run({
   pass "--dry-run で HTTP server / browser / fetch が起動しない"
 else
   fail "--dry-run で実際の操作が走る可能性"
+fi
+
+# Issue #27: --dry-run 出力に「実行計画 / 通信先 / 書き込み範囲」が表示されること
+# （README.md / docs/POLICY.md の必須要件: 実変更なしで実行計画/通信先/書き込み範囲だけ表示）
+dry_run_output="$(node -e '
+const install = require("./cli/install");
+install.run({
+  argv: ["--owner", "alice", "--dry-run"],
+  openBrowser: () => {},
+  readOwner: async () => "alice",
+}).then(() => process.exit(0)).catch((e) => { console.error(e.message); process.exit(1); });
+' 2>&1)"
+
+if echo "$dry_run_output" | grep -F "実行予定プレビュー" > /dev/null \
+  && echo "$dry_run_output" | grep -F "localhost" > /dev/null \
+  && echo "$dry_run_output" | grep -F "vibehawk 運営側サーバーへの通信" > /dev/null \
+  && echo "$dry_run_output" | grep -F "ローカルファイルへの書き込み" > /dev/null \
+  && echo "$dry_run_output" | grep -F "vibehawk-for-alice" > /dev/null; then
+  pass "--dry-run 出力に実行計画・通信先・書き込み範囲・App 名が表示される"
+else
+  fail "--dry-run 出力に必須要件（実行計画・通信先・書き込み範囲・App 名）が含まれない"
 fi
 
 # Issue #28: parseYes が --yes / -y を検出

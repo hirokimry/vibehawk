@@ -7,7 +7,10 @@
 const command = process.argv[2];
 
 const commands = {
-  install: () => require('./install').run(),
+  install: () => require('./install').run().catch((e) => {
+    console.error(e.message || e);
+    process.exit(1);
+  }),
   'setup-token': () => require('./oauth').setupToken().catch((e) => {
     console.error(e.message || e);
     process.exit(1);

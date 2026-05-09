@@ -110,10 +110,12 @@ function setSecret(repo, token) {
   if (!repo) {
     throw new Error('vibehawk: --repo が指定されていないため secret 登録をスキップします');
   }
-  // execFileSync は引数を直接渡すため shell injection 耐性がある
-  // stdio で stdin に token を渡し、コマンドラインから token を漏らさない
-  execFileSync('gh', ['secret', 'set', 'CLAUDE_CODE_OAUTH_TOKEN', '--repo', repo, '--body', token], {
-    stdio: ['ignore', 'inherit', 'inherit'],
+  // input オプション経由で stdin に token を渡し、プロセス引数（ps aux / /proc/<pid>/cmdline）への
+  // 露出を避ける。--body フラグは使用しない（CISO Critical 条件: トークン非露出）。
+  execFileSync('gh', ['secret', 'set', 'CLAUDE_CODE_OAUTH_TOKEN', '--repo', repo], {
+    input: token,
+    encoding: 'utf8',
+    stdio: ['pipe', 'inherit', 'inherit'],
   });
 }
 
