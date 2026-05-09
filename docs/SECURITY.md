@@ -116,12 +116,15 @@ CEO 判断（2026-05-09）により、経路 2（利用者ごと独立 App + 3 s
 | `issues` | `write` | issue_comment 投稿（`@mention` 応答 #11 等） |
 | `contents` | `read` | PR diff 取得、レビュー対象コードの読取 |
 
-**vibehawk が要求しない権限**（`.claude/rules/autonomous-restrictions.md` §6 連動の禁止権限と一致）:
+**`vibehawk-for-<owner>` App が要求しない権限**（GitHub App permissions、`.claude/rules/autonomous-restrictions.md` §6 連動の禁止権限と一致）:
 
 - `administration: write` — リポジトリ設定変更権限を持たない（自律実行不可領域）
 - `secrets: write` — GitHub Secrets 書込権限を持たない（CLI が touch しない方針 Issue #72 / #74 と整合）
 - `workflows: write` — workflow ファイル書換権限を持たない（PR 経由配置のみ Issue #58）
-- `id-token: write` — OIDC token 発行権限を持たない（`actions/create-github-app-token@v2` は OIDC 不要で動作）
+
+**`vibehawk-review.yml` workflow が要求しない権限**（GitHub Actions workflow/job permissions、上記 App permissions とは別の制約軸）:
+
+- `id-token: write` — Actions OIDC token 発行権限を付与しない（`actions/create-github-app-token@v2` は App Private Key からローカル JWT 生成 → API exchange で動作するため OIDC 不要）
 
 **設計意図**: PR レビュー投稿に必要な最小権限のみを App に持たせることで、Private Key 漏洩時の被害範囲を「PR コメント投稿 + Issue コメント投稿 + 読取」に限定する（リポジトリ設定変更・secrets 流出・workflow 改ざんは構造的に不可能）。Installation Token の寿命は GitHub 仕様により最大 1 時間。
 
@@ -152,7 +155,7 @@ CEO 判断（2026-05-09）により、経路 2（利用者ごと独立 App + 3 s
 - 旧 Private Key で発行された Installation Token は最大 1 時間有効（GitHub 仕様）
 - rotation 完了から 1 時間以内に発行された旧 token は引き続き動作する（PR コメント投稿等）
 - 新 Secret 更新後の workflow 起動からは新 Private Key で Installation Token が発行される
-- 漏洩疑いの場合は、rotation 完了から 1 時間後に旧 token も自動失効するため、「即時無害化」が達成される
+- 漏洩疑いの場合は、rotation 完了後 **最大 1 時間で旧 token も自動失効** し、無害化が完了する（GitHub Installation Token 寿命に依存、即時ではない点に注意）
 
 ##### 5. 漏洩検証（推奨）
 
