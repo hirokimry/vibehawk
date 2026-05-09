@@ -30,7 +30,7 @@
 |---|---|
 | 評価日 | 2026-05-08（PR #50 マージ時点） |
 | SHA | `12310e4` (`12310e4417c3473095c957cb311b3cf59a38d659`) |
-| 上流リリース | `v0.x` (Issue #50 マージ時点の最新) |
+| 上流リリース | `v1`（`anthropics/claude-code-action` リリースタグ、CodeRabbit 検証 `git tag --contains 12310e4417c3473095c957cb311b3cf59a38d659` で確認） |
 | トークン消費差分 | baseline（比較対象なし） |
 | breaking change | n/a |
 | セキュリティパッチ | n/a |
