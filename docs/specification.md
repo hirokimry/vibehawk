@@ -80,11 +80,11 @@ CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから
 | `<!-- vibehawk:summary -->` | 種別マーカー（Bot の PR 全体サマリであることを示す） |
 | `<!-- vibehawk:sha=<HEAD_SHA> -->` | 状態マーカー（前回どのコミットまで見たか） |
 
-サマリコメントの一意特定: 投稿者 ID（`github-actions[bot]`）+ 種別マーカーの **二重チェック** で誤検知・なりすましを排除する。投稿者 ID だけでは同一リポジトリの他 GitHub Actions ジョブが投稿したコメントと混在するため、種別マーカー (`<!-- vibehawk:summary -->`) との AND 条件で識別する。
+サマリコメントの一意特定: 投稿者 ID（`vibehawk-for-<owner>[bot]`）+ 種別マーカーの **二重チェック** で誤検知・なりすましを排除する。投稿者 ID だけでは同一リポジトリの他 GitHub Actions ジョブが投稿したコメントと混在するため、種別マーカー (`<!-- vibehawk:summary -->`) との AND 条件で識別する。`<owner>` は利用者本人の GitHub アカウント名であり、リポジトリの owner 名と一致する（命名統制 Issue #25）。
 
 ```bash
 gh api repos/:owner/:repo/issues/:pr/comments --paginate \
-  | jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- vibehawk:summary -->"))]' \
+  | jq --arg owner "<owner>" '[.[] | select(.user.login == "vibehawk-for-" + $owner + "[bot]") | select(.body | contains("<!-- vibehawk:summary -->"))]' \
   | jq 'sort_by(.created_at) | last'
 ```
 
