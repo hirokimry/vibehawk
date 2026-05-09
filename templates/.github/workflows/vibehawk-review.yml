@@ -124,6 +124,71 @@ jobs:
           echo "prev_sha=${prev_sha}" >> "$GITHUB_OUTPUT"
           echo "review_range=${review_range}" >> "$GITHUB_OUTPUT"
 
+      - name: vibehawk 設定読み込み（Issue #10 .vibehawk.yaml / .coderabbit.yaml fallback）
+        id: vibehawk_config
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          FILES_COUNT: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+
+          # 設定ファイル選択（.vibehawk.yaml 優先、.coderabbit.yaml フォールバック、Issue #10）
+          config_file=""
+          source_label="default"
+          if [[ -f ".vibehawk.yaml" ]]; then
+            config_file=".vibehawk.yaml"
+            source_label="vibehawk"
+          elif [[ -f ".coderabbit.yaml" ]]; then
+            config_file=".coderabbit.yaml"
+            source_label="coderabbit"
+          fi
+
+          # デフォルト値（CodeRabbit 互換、docs/cost-analysis.md 段階的劣化型）
+          language="en"
+          full_review_files=30
+          focused_review_files=80
+          skip_inline_files=3000
+          path_filters="[]"
+          path_instructions="[]"
+
+          if [[ -n "$config_file" ]]; then
+            # PyYAML 可用性確認（ubuntu-latest はプリインストール、念のため pip install フォールバック）
+            python3 -c "import yaml" 2>/dev/null || pip install --user --quiet pyyaml
+
+            # YAML → JSON 変換
+            config_json="$(python3 -c "import yaml,json; print(json.dumps(yaml.safe_load(open('$config_file')) or {}))")"
+
+            # キーマッピング（.vibehawk.yaml と .coderabbit.yaml で同じスキーマを使用）
+            language="$(echo "$config_json" | jq -r '.language // "en"')"
+            full_review_files="$(echo "$config_json" | jq -r '.reviews.size_limits.full_review_files // 30')"
+            focused_review_files="$(echo "$config_json" | jq -r '.reviews.size_limits.focused_review_files // 80')"
+            skip_inline_files="$(echo "$config_json" | jq -r '.reviews.size_limits.skip_inline_files // 3000')"
+            path_filters="$(echo "$config_json" | jq -c '.reviews.path_filters // []')"
+            path_instructions="$(echo "$config_json" | jq -c '.reviews.path_instructions // []')"
+          fi
+
+          # depth 決定（PR 変更ファイル数 → 段階的劣化、docs/cost-analysis.md 仕様）
+          fc="${FILES_COUNT:-0}"
+          if [[ "$fc" -ge "$skip_inline_files" ]]; then
+            depth="summary_only"
+          elif [[ "$fc" -ge "$focused_review_files" ]]; then
+            depth="lightweight"
+          elif [[ "$fc" -ge "$full_review_files" ]]; then
+            depth="focused"
+          else
+            depth="full"
+          fi
+
+          echo "vibehawk: 設定ソース=${source_label}, 言語=${language}, ファイル数=${fc}, depth=${depth}"
+
+          echo "config_source=$source_label" >> "$GITHUB_OUTPUT"
+          echo "language=$language" >> "$GITHUB_OUTPUT"
+          echo "files_count=$fc" >> "$GITHUB_OUTPUT"
+          echo "depth=$depth" >> "$GITHUB_OUTPUT"
+          # 多行 JSON はそのままだと GITHUB_OUTPUT で破損するため、jq -c で 1 行化済
+          echo "path_filters=$path_filters" >> "$GITHUB_OUTPUT"
+          echo "path_instructions=$path_instructions" >> "$GITHUB_OUTPUT"
+
       - name: claude-code-action でレビュー実行
         if: steps.check_secrets.outputs.ready == 'true'
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
@@ -139,8 +204,14 @@ jobs:
             EXISTING_COMMENT_ID: ${{ steps.prev_summary.outputs.comment_id }}
             PREV_SHA: ${{ steps.prev_summary.outputs.prev_sha }}
             REVIEW_RANGE: ${{ steps.prev_summary.outputs.review_range }}
+            CONFIG_SOURCE: ${{ steps.vibehawk_config.outputs.config_source }}
+            LANGUAGE: ${{ steps.vibehawk_config.outputs.language }}
+            FILES_COUNT: ${{ steps.vibehawk_config.outputs.files_count }}
+            DEPTH: ${{ steps.vibehawk_config.outputs.depth }}
+            PATH_FILTERS_JSON: ${{ steps.vibehawk_config.outputs.path_filters }}
+            PATH_INSTRUCTIONS_JSON: ${{ steps.vibehawk_config.outputs.path_instructions }}
 
-            🦅 vibehawk PR レビュー（Issue #8 インクリメンタルレビュー対応版）。
+            🦅 vibehawk PR レビュー（Issue #8 / #9 / #10 対応版）。
 
             ## レビュー範囲（INCREMENTAL_MODE 別）
 
@@ -236,6 +307,36 @@ jobs:
             3. unresolved >= 1 → `gh pr review $PR_NUMBER --request-changes --body "⚠️ vibehawk: 未解決指摘 N 件あり"`
 
             状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。
+
+            ## .vibehawk.yaml 設定の反映（Issue #10）
+
+            ### 言語 locale（LANGUAGE）
+
+            - `LANGUAGE=ja`: レビューサマリ・inline comment を **日本語** で出力
+            - `LANGUAGE=en` または未設定: 英語で出力（デフォルト）
+
+            ### path_filters（除外パス、PATH_FILTERS_JSON）
+
+            PATH_FILTERS_JSON は JSON 配列（例: `["node_modules/**","dist/**"]`）。これらの glob パターンに該当するファイルは **レビュー対象から除外** してください（diff には含まれていても指摘しない）。
+
+            ### path_instructions（パス別カスタム指示、PATH_INSTRUCTIONS_JSON）
+
+            PATH_INSTRUCTIONS_JSON は JSON 配列（例: `[{"path":"src/auth/**","instructions":"認証フローの観点で見て"}]`）。該当パスのファイルを指摘する際は、対応する instructions を **追加観点として** プロンプト文脈に含めて評価してください（5 大方針 1: カスタムは外から注入）。
+
+            ### depth（PR サイズによる段階的劣化、DEPTH）
+
+            DEPTH の値で本レビューの粒度を切り替える（`docs/cost-analysis.md` 仕様）:
+
+            - `full` (FILES_COUNT < 30): フル品質レビュー。severity 全段階の inline 指摘 + 詳細サマリ
+            - `focused` (30 ≤ FILES_COUNT < 80): 主要ファイル優先。Critical / Major のみ inline、Minor 以下はサマリで言及
+            - `lightweight` (80 ≤ FILES_COUNT < 3000): 各ファイル軽量レビュー。Critical のみ inline、それ以外はサマリで件数表示
+            - `summary_only` (FILES_COUNT ≥ 3000): サマリのみ、inline は完全スキップ
+
+            利用者は `.vibehawk.yaml` の `reviews.size_limits` で閾値を上書き可能。
+
+            ### 設定ソース表示
+
+            CONFIG_SOURCE が `vibehawk` / `coderabbit` / `default` のいずれかを示す。サマリ本文の冒頭に「使用設定: $CONFIG_SOURCE」を 1 行表示してください（利用者が設定の反映を確認できるよう透明化）。
 
             ## レビュー範囲を確認するコマンド例
 
