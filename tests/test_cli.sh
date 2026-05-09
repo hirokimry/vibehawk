@@ -520,11 +520,13 @@ install.run({
 ' 2>&1)"
 
 if echo "$dry_run_repo_output" | grep -F "workflow PR 作成先: alice/test-repo" > /dev/null \
-  && echo "$dry_run_repo_output" | grep -F "vibehawk-review.yml 配置 PR を作成" > /dev/null \
+  && echo "$dry_run_repo_output" | grep -F "workflow ファイル配置 PR を作成" > /dev/null \
+  && echo "$dry_run_repo_output" | grep -F "vibehawk-review.yml" > /dev/null \
+  && echo "$dry_run_repo_output" | grep -F "vibehawk-chat.yml" > /dev/null \
   && echo "$dry_run_repo_output" | grep -F "GitHub Secrets への書き込み: なし" > /dev/null; then
-  pass "--dry-run で --repo 指定時に workflow PR 作成計画が表示され、Secrets 非書込が明示される"
+  pass "--dry-run で --repo 指定時に 2 つの workflow PR 作成計画 (review + chat) と Secrets 非書込が表示される"
 else
-  fail "--dry-run + --repo の出力に必須要件（workflow PR 作成計画 / Secrets 非書込み宣言）が含まれない"
+  fail "--dry-run + --repo の出力に必須要件（review + chat 両方 / Secrets 非書込み宣言）が含まれない"
 fi
 
 # Issue #58: --repo 指定時の --dry-run でも実際の workflow PR 作成（gh CLI 呼出）が起きない

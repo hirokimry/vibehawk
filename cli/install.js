@@ -14,6 +14,11 @@ const DEFAULT_PORT = 8765;
 const TIMEOUT_MS = 5 * 60 * 1000;
 const WORKFLOW_BRANCH = 'vibehawk/install-workflow';
 const WORKFLOW_PATH = '.github/workflows/vibehawk-review.yml';
+// Issue #11: チャット応答 workflow も同時配置
+const WORKFLOWS = [
+  '.github/workflows/vibehawk-review.yml',
+  '.github/workflows/vibehawk-chat.yml',
+];
 
 function parseDryRun(argv) {
   return Array.isArray(argv) && argv.some((a) => a === '--dry-run');
@@ -55,7 +60,10 @@ function printPlan({ owner, appName, port, dryRun, repo }) {
   console.log(`  4. localhost:${port}/callback で App 作成完了を検知`);
   console.log('  5. GitHub API で App credentials を取得（Private Key は画面に印字せず破棄）');
   if (repo) {
-    console.log(`  6. ${repo} に .github/workflows/vibehawk-review.yml 配置 PR を作成`);
+    console.log(`  6. ${repo} に以下 2 つの workflow ファイル配置 PR を作成:`);
+    for (const wf of WORKFLOWS) {
+      console.log(`     - ${wf}`);
+    }
     console.log('     （利用者の gh CLI 認証で操作、CLI は GitHub Secrets を一切 touch しない）');
   }
   console.log('');
@@ -133,11 +141,16 @@ async function run({
       workflowPr = await workflowPlacer({ repo, overwrite });
       if (workflowPr.skipped) {
         console.log('');
-        console.log(`⚠️ vibehawk: ${repo} に既存の ${WORKFLOW_PATH} を検出したため PR 作成をスキップしました。`);
+        const existing = (workflowPr.existingFiles || []).join(', ');
+        console.log(`⚠️ vibehawk: ${repo} に既存の workflow ファイルを検出したため PR 作成をスキップしました: ${existing}`);
         console.log('   既存ファイルを上書きするには --overwrite フラグを付けて再実行してください。');
       } else if (workflowPr.url) {
         console.log('');
         console.log(`✅ vibehawk: workflow PR を作成しました: ${workflowPr.url}`);
+        console.log('   配置される workflow:');
+        for (const wf of (workflowPr.workflows || WORKFLOWS)) {
+          console.log(`     - ${wf}`);
+        }
         console.log('   PR をマージしてから対象リポジトリで PR を作成すると、vibehawk-for-<owner>[bot] 名義でレビューが投稿されます。');
       }
     } catch (e) {
@@ -343,11 +356,13 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     throw new Error(`vibehawk: --repo の形式が正しくありません: ${repo}`);
   }
 
-  const templatePath = path.join(__dirname, '..', 'templates', '.github', 'workflows', 'vibehawk-review.yml');
-  if (!fs.existsSync(templatePath)) {
-    throw new Error(`vibehawk: workflow テンプレートが見つかりません: ${templatePath}`);
+  // テンプレートファイル存在確認（Issue #11: review + chat 両方）
+  for (const wf of WORKFLOWS) {
+    const tp = path.join(__dirname, '..', 'templates', wf);
+    if (!fs.existsSync(tp)) {
+      throw new Error(`vibehawk: workflow テンプレートが見つかりません: ${tp}`);
+    }
   }
-  const content = fs.readFileSync(templatePath, 'utf8');
 
   // gh CLI 存在 / 認証確認
   const ghCheck = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' });
@@ -355,14 +370,14 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     throw new Error('vibehawk: gh CLI が認証されていません。`gh auth login` を実行してから再試行してください。');
   }
 
-  // 既存ファイル検出
-  const exists = spawnSync(
-    'gh',
-    ['api', `repos/${repo}/contents/${WORKFLOW_PATH}`, '--silent'],
-    { encoding: 'utf8' }
-  );
-  if (exists.status === 0 && !overwrite) {
-    return { skipped: true, reason: 'existing-file' };
+  // 既存ファイル検出（いずれか 1 つでも存在 + !overwrite なら skip）
+  const existingFiles = [];
+  for (const wf of WORKFLOWS) {
+    const r = spawnSync('gh', ['api', `repos/${repo}/contents/${wf}`, '--silent'], { encoding: 'utf8' });
+    if (r.status === 0) existingFiles.push(wf);
+  }
+  if (existingFiles.length > 0 && !overwrite) {
+    return { skipped: true, reason: 'existing-files', existingFiles };
   }
 
   // default branch 取得
@@ -410,55 +425,71 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     }
   }
 
-  // 既存ファイルの sha を取得（上書き時）
-  let existingFileSha = null;
-  if (exists.status === 0 && overwrite) {
-    const shaResult = spawnSync(
-      'gh',
-      ['api', `repos/${repo}/contents/${WORKFLOW_PATH}`, '--jq', '.sha'],
-      { encoding: 'utf8' }
-    );
-    if (shaResult.status === 0) {
-      existingFileSha = (shaResult.stdout || '').trim() || null;
-    }
-  }
-
-  // ファイルを新ブランチに commit
-  const contentBase64 = Buffer.from(content, 'utf8').toString('base64');
-  const commitMessage = overwrite
-    ? `chore: vibehawk PR auto-review workflow を更新（経路 2 App Installation Token 認証版）`
-    : `chore: vibehawk PR auto-review workflow を配置（経路 2 App Installation Token 認証版）`;
-  const commitArgs = [
-    'api',
-    `repos/${repo}/contents/${WORKFLOW_PATH}`,
-    '--method',
-    'PUT',
-    '-f',
-    `message=${commitMessage}`,
-    '-f',
-    `content=${contentBase64}`,
-    '-f',
-    `branch=${branchName}`,
-  ];
-  if (existingFileSha) {
-    commitArgs.push('-f', `sha=${existingFileSha}`);
-  }
-  const commitResult = spawnSync('gh', commitArgs, { encoding: 'utf8' });
-  if (commitResult.status !== 0) {
-    // ブランチ削除でロールバック
+  // ロールバック関数（branch 削除）— commit / PR 作成失敗時に呼ぶ
+  const rollbackBranch = () => {
     spawnSync('gh', ['api', `repos/${repo}/git/refs/heads/${branchName}`, '--method', 'DELETE'], { encoding: 'utf8' });
-    throw new Error(`vibehawk: workflow ファイルの commit に失敗しました: ${commitResult.stderr || ''}`);
+  };
+
+  // 各 workflow ファイルを順次 commit
+  for (const wf of WORKFLOWS) {
+    const tp = path.join(__dirname, '..', 'templates', wf);
+    const content = fs.readFileSync(tp, 'utf8');
+    const contentBase64 = Buffer.from(content, 'utf8').toString('base64');
+
+    // 既存ファイルの sha を取得（上書き時）
+    let existingFileSha = null;
+    if (existingFiles.includes(wf) && overwrite) {
+      const shaResult = spawnSync(
+        'gh',
+        ['api', `repos/${repo}/contents/${wf}`, '--jq', '.sha'],
+        { encoding: 'utf8' }
+      );
+      if (shaResult.status === 0) {
+        existingFileSha = (shaResult.stdout || '').trim() || null;
+      }
+    }
+
+    const wfBaseName = path.basename(wf);
+    const commitMessage = overwrite
+      ? `chore: vibehawk ${wfBaseName} を更新（経路 2 App Installation Token 認証版）`
+      : `chore: vibehawk ${wfBaseName} を配置（経路 2 App Installation Token 認証版）`;
+    const commitArgs = [
+      'api',
+      `repos/${repo}/contents/${wf}`,
+      '--method',
+      'PUT',
+      '-f',
+      `message=${commitMessage}`,
+      '-f',
+      `content=${contentBase64}`,
+      '-f',
+      `branch=${branchName}`,
+    ];
+    if (existingFileSha) {
+      commitArgs.push('-f', `sha=${existingFileSha}`);
+    }
+    const commitResult = spawnSync('gh', commitArgs, { encoding: 'utf8' });
+    if (commitResult.status !== 0) {
+      rollbackBranch();
+      throw new Error(`vibehawk: ${wf} の commit に失敗しました（ブランチ ${branchName} はロールバック削除済み）: ${commitResult.stderr || ''}`);
+    }
   }
 
   // PR 作成
   const prBody = [
-    '## vibehawk PR auto-review workflow を配置',
+    '## vibehawk workflow を配置（PR auto-review + @mention chat）',
     '',
     '`npx vibehawk install` により本 PR を自動作成しました。',
     '',
+    '### 配置されるファイル',
+    '',
+    '- `.github/workflows/vibehawk-review.yml` — PR auto-review（`pull_request` イベントで起動）',
+    '- `.github/workflows/vibehawk-chat.yml` — `@vibehawk` メンションチャット応答（`issue_comment` イベントで起動、Issue #11）',
+    '',
     '### このファイルが行うこと',
     '',
-    '`pull_request` イベントで `claude-code-action` を呼び出し、`vibehawk-for-<owner>[bot]` 名義で PR レビューサマリを投稿します。',
+    '- **review**: PR が立つと `claude-code-action` を呼び出し、`vibehawk-for-<owner>[bot]` 名義で PR レビューサマリを投稿。severity 5 段階の inline comment / auto_resolve / sticky review state も実装（Issue #8 / #9 / #10）。`.vibehawk.yaml` で path_filters / path_instructions / size_limits / language を制御可能',
+    '- **chat**: PR / Issue で `@vibehawk` をメンションすると、スレッド全体を読んで応答（Issue #11）',
     '',
     '### マージ後の必須セットアップ（CLI は secrets を書き込みません、Issue #72 / #74）',
     '',
@@ -468,9 +499,30 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     '- `VIBEHAWK_PRIVATE_KEY` — GitHub App Settings ページで生成した `.pem` ファイル全文',
     '- `CLAUDE_CODE_OAUTH_TOKEN` — `npx vibehawk setup-token` で取得した Claude OAuth Token',
     '',
+    '### オプション設定（`.vibehawk.yaml`）',
+    '',
+    'リポジトリのルートに `.vibehawk.yaml` を置くと、レビュー観点 / コスト制御 / 日本語 locale を制御できます（CodeRabbit 互換、`.coderabbit.yaml` も読み込み可）:',
+    '',
+    '```yaml',
+    'reviews:',
+    '  path_filters:',
+    '    - "node_modules/**"',
+    '    - "dist/**"',
+    '  path_instructions:',
+    '    - path: "src/auth/**"',
+    '      instructions: "認証フローの観点で見て"',
+    '  size_limits:',
+    '    full_review_files: 30',
+    '    focused_review_files: 80',
+    '    skip_inline_files: 3000',
+    'language: ja',
+    '```',
+    '',
     '### 動作確認',
     '',
-    '本 PR をマージ → 任意の PR を作成 → `vibehawk-for-<owner>[bot]` 名義でレビューサマリが投稿されることを確認',
+    '1. 本 PR をマージ',
+    '2. 任意の PR を作成 → `vibehawk-for-<owner>[bot]` 名義でレビューサマリが投稿されることを確認',
+    '3. PR コメントで `@vibehawk` メンション → 応答が投稿されることを確認',
     '',
     '### 関連',
     '',
@@ -501,15 +553,11 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
   );
   if (prResult.status !== 0) {
     // ブランチ削除でロールバック（CodeRabbit PR #82 指摘: PR 作成失敗時もブランチを残さない）
-    spawnSync(
-      'gh',
-      ['api', `repos/${repo}/git/refs/heads/${branchName}`, '--method', 'DELETE'],
-      { encoding: 'utf8' }
-    );
+    rollbackBranch();
     throw new Error(`vibehawk: PR 作成に失敗しました（ブランチ ${branchName} はロールバック削除済み）: ${prResult.stderr || ''}`);
   }
   const prUrl = (prResult.stdout || '').trim();
-  return { url: prUrl, branch: branchName, defaultBranch };
+  return { url: prUrl, branch: branchName, defaultBranch, workflows: WORKFLOWS };
 }
 
 module.exports = {
@@ -525,4 +573,5 @@ module.exports = {
   DEFAULT_PORT,
   WORKFLOW_BRANCH,
   WORKFLOW_PATH,
+  WORKFLOWS,
 };
