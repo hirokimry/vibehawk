@@ -1,0 +1,71 @@
+name: release
+
+# vibehawk CLI を npm registry に公開する workflow（Issue #30）
+#
+# CISO Critical 条件:
+# - GitHub Actions OIDC 経由の publish のみ許可（手動 publish 禁止）
+# - npm provenance 署名で改ざん検知（npm publish --provenance）
+# - npm publish アカウントの 2FA 必須（npmjs.com Settings 側で設定）
+#
+# トリガー: GitHub Release 作成時のみ。push / PR では発火しない（誤 publish 防止）。
+
+on:
+  release:
+    types: [published]
+
+# 最小権限（autonomous-restrictions.md §6 例外: id-token: write は npm provenance 用 OIDC token 発行に必須）
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Node.js セットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          # OIDC publish: NODE_AUTH_TOKEN 不要（id-token: write で provenance 署名）
+
+      - name: テスト実行
+        run: |
+          shopt -s nullglob
+          files=(tests/test_*.sh)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "テストファイルが見つかりません"
+            exit 1
+          fi
+          failed=0
+          for f in "${files[@]}"; do
+            echo "=== $f ==="
+            bash "$f" || failed=1
+          done
+          exit "$failed"
+
+      - name: tag と package.json version の整合確認
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version="$(node -p 'require("./package.json").version')"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::tag ($tag_version) と package.json version ($pkg_version) が不一致"
+            exit 1
+          fi
+          echo "tag と version の整合確認 OK: $tag_version"
+
+      - name: npm publish (provenance 付き、OIDC 経由)
+        env:
+          # NODE_AUTH_TOKEN は GitHub Actions OIDC が自動発行する短寿命 token を使用
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
