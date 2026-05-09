@@ -1,18 +1,18 @@
 'use strict';
 
 const readline = require('readline');
-const { execFileSync, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 
-// CLAUDE_CODE_OAUTH_TOKEN の取得・登録（Issue #26）
+// CLAUDE_CODE_OAUTH_TOKEN の取得・登録誘導
 //
 // 設計判断:
 // - Anthropic OAuth client_id を vibehawk が保有することは非推奨（Value 4「公式の道を、迂回せず歩く」）
 // - 公式 `claude setup-token` フローに委譲し、利用者がトークンを取得した後に貼り付けてもらう
-// - vibehawk は受け取ったトークンを `gh secret set` で対象リポジトリに登録する
-// - ローカルにトークンを永続化しない（メモリ上のみ）
+// - 受け取ったトークンを vibehawk CLI が GitHub Secrets に書き込むことはしない（Issue #72 決定）
+// - 利用者が GitHub Settings UI で手動登録する。CLI は登録手順の画面誘導のみを行う
+// - 任意で OS ネイティブのクリップボードに置く（明示同意の上、stdin 経由）
+// - ローカルファイル・vibehawk 運営側サーバーへの送信は一切しない（メモリ上のみで保持）
 
-// CLAUDE_CODE_OAUTH_TOKEN は Claude OAuth から発行される長い文字列
-// 公開仕様で形式は完全には公表されていないが、最低限の長さ・文字種を検証する
 const TOKEN_PATTERN = /^[A-Za-z0-9_\-.+\/=]{32,}$/;
 
 function validateToken(token) {
@@ -25,6 +25,10 @@ function validateToken(token) {
     );
   }
   return true;
+}
+
+function defaultRlFactory() {
+  return readline.createInterface({ input: process.stdin, output: process.stdout });
 }
 
 async function promptToken({ rlFactory = defaultRlFactory } = {}) {
@@ -51,10 +55,6 @@ async function promptToken({ rlFactory = defaultRlFactory } = {}) {
   });
 }
 
-function defaultRlFactory() {
-  return readline.createInterface({ input: process.stdin, output: process.stdout });
-}
-
 function parseRepoArg(argv) {
   if (!Array.isArray(argv)) return null;
   for (let i = 0; i < argv.length; i++) {
@@ -72,7 +72,7 @@ function parseRepoArg(argv) {
 async function promptRepo({ rlFactory = defaultRlFactory } = {}) {
   const rl = rlFactory();
   return new Promise((resolve) => {
-    rl.question('対象リポジトリ（owner/repo 形式、空欄でスキップ）: ', (answer) => {
+    rl.question('対象リポジトリ（owner/repo 形式、空欄で URL 表示をスキップ）: ', (answer) => {
       rl.close();
       const repo = (answer || '').trim();
       resolve(repo || null);
@@ -80,48 +80,98 @@ async function promptRepo({ rlFactory = defaultRlFactory } = {}) {
   });
 }
 
-function checkSecretExists(repo) {
-  if (!repo) return false;
-  const r = spawnSync('gh', ['secret', 'list', '--repo', repo, '--json', 'name'], {
-    encoding: 'utf8',
-  });
-  if (r.status !== 0) {
-    return false;
-  }
-  try {
-    const list = JSON.parse(r.stdout || '[]');
-    return Array.isArray(list) && list.some((s) => s && s.name === 'CLAUDE_CODE_OAUTH_TOKEN');
-  } catch (_) {
-    return false;
-  }
+function buildSettingsUrl(repo) {
+  if (!repo) return null;
+  if (!/^[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-]+$/.test(repo)) return null;
+  return `https://github.com/${repo}/settings/secrets/actions/new`;
 }
 
-async function confirmOverwrite({ rlFactory = defaultRlFactory } = {}) {
+async function confirmClipboard({ rlFactory = defaultRlFactory } = {}) {
   const rl = rlFactory();
   return new Promise((resolve) => {
-    rl.question('既存の CLAUDE_CODE_OAUTH_TOKEN を上書きしますか？ [y/N]: ', (answer) => {
-      rl.close();
-      resolve(/^y(es)?$/i.test((answer || '').trim()));
-    });
+    rl.question(
+      'OAuth Token をクリップボードにコピーしますか？（GitHub Settings に貼付しやすくなります）[Y/n]: ',
+      (answer) => {
+        rl.close();
+        const trimmed = (answer || '').trim();
+        resolve(trimmed === '' || /^y(es)?$/i.test(trimmed));
+      }
+    );
   });
 }
 
-function setSecret(repo, token) {
-  if (!repo) {
-    throw new Error('vibehawk: --repo が指定されていないため secret 登録をスキップします');
+function detectClipboardCommand() {
+  const platform = process.platform;
+  if (platform === 'darwin') {
+    return { cmd: 'pbcopy', args: [] };
   }
-  // input オプション経由で stdin に token を渡し、プロセス引数（ps aux / /proc/<pid>/cmdline）への
-  // 露出を避ける。--body フラグは使用しない（CISO Critical 条件: トークン非露出）。
-  execFileSync('gh', ['secret', 'set', 'CLAUDE_CODE_OAUTH_TOKEN', '--repo', repo], {
-    input: token,
-    encoding: 'utf8',
-    stdio: ['pipe', 'inherit', 'inherit'],
-  });
+  if (platform === 'win32') {
+    return { cmd: 'clip', args: [] };
+  }
+  // Linux / その他: xclip → xsel → wl-copy の順で探索
+  if (spawnSync('which', ['xclip']).status === 0) {
+    return { cmd: 'xclip', args: ['-selection', 'clipboard'] };
+  }
+  if (spawnSync('which', ['xsel']).status === 0) {
+    return { cmd: 'xsel', args: ['--clipboard', '--input'] };
+  }
+  if (spawnSync('which', ['wl-copy']).status === 0) {
+    return { cmd: 'wl-copy', args: [] };
+  }
+  return null;
+}
+
+function copyToClipboard(token) {
+  const tool = detectClipboardCommand();
+  if (!tool) {
+    return {
+      success: false,
+      reason: 'クリップボードツールが見つかりません（macOS は pbcopy, Linux は xclip/xsel/wl-copy, Windows は clip）',
+    };
+  }
+  // CISO 条件: token は stdin 経由のみで渡す（プロセス引数 / 環境変数に出さない）
+  const r = spawnSync(tool.cmd, tool.args, { input: token, encoding: 'utf8' });
+  if (r.status !== 0) {
+    return {
+      success: false,
+      reason: `${tool.cmd} がエラー終了しました（exit code ${r.status}）`,
+    };
+  }
+  return { success: true };
+}
+
+function printRegistrationInstructions(repo, clipboardCopied) {
+  const settingsUrl = buildSettingsUrl(repo);
+  console.log('');
+  console.log('=== 次の手順: GitHub Settings で手動登録 ===');
+  console.log('');
+  if (settingsUrl) {
+    console.log('1. ブラウザで以下を開く:');
+    console.log(`   ${settingsUrl}`);
+  } else {
+    console.log('1. ブラウザで対象リポジトリの Settings → Secrets and variables → Actions → New repository secret を開く');
+  }
+  console.log('');
+  console.log('2. Name フィールドに以下を入力:');
+  console.log('   CLAUDE_CODE_OAUTH_TOKEN');
+  console.log('');
+  if (clipboardCopied) {
+    console.log('3. Secret フィールドに Cmd+V / Ctrl+V で貼付');
+  } else {
+    console.log('3. Secret フィールドにトークンを貼付（再取得が必要な場合は `claude setup-token` を再実行）');
+  }
+  console.log('');
+  console.log('4. 「Add secret」をクリック');
+  console.log('');
+  console.log('💡 vibehawk CLI は secret を書き込みません（Issue #72 決定）。');
+  console.log('   トークンはメモリ上のみに存在し、本プロセス終了と同時に消去されます。');
 }
 
 async function setupToken({
   argv = process.argv.slice(3),
   rlFactory = defaultRlFactory,
+  clipboard = copyToClipboard,
+  consent = confirmClipboard,
 } = {}) {
   let repo = parseRepoArg(argv);
   if (!repo) {
@@ -129,24 +179,25 @@ async function setupToken({
   }
   const token = await promptToken({ rlFactory });
 
-  if (!repo) {
-    console.log('');
-    console.log('⚠️ --repo 指定なしのため secret 登録はスキップしました。');
-    console.log('  手動で `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner/repo>` を実行してください。');
-    return { token, repo: null, skipped: true };
-  }
-
-  if (checkSecretExists(repo)) {
-    const ok = await confirmOverwrite({ rlFactory });
-    if (!ok) {
-      console.log('vibehawk: 既存 secret を保持しました（上書きキャンセル）。');
-      return { token, repo, skipped: true };
+  const wantClipboard = await consent({ rlFactory });
+  let clipboardResult = { success: false, skipped: !wantClipboard };
+  if (wantClipboard) {
+    clipboardResult = clipboard(token);
+    if (clipboardResult.success) {
+      console.log('✅ クリップボードにコピーしました。');
+    } else {
+      console.log(`⚠️ クリップボードコピーに失敗: ${clipboardResult.reason}`);
+      console.log('   GitHub Settings にトークンを直接貼付してください。');
     }
   }
 
-  setSecret(repo, token);
-  console.log(`vibehawk: ${repo} に CLAUDE_CODE_OAUTH_TOKEN を登録しました。`);
-  return { token, repo, skipped: false };
+  printRegistrationInstructions(repo, clipboardResult.success === true);
+
+  return {
+    repo: repo || null,
+    settingsUrl: buildSettingsUrl(repo),
+    clipboardCopied: clipboardResult.success === true,
+  };
 }
 
 module.exports = {
@@ -154,9 +205,11 @@ module.exports = {
   parseRepoArg,
   promptToken,
   promptRepo,
-  checkSecretExists,
-  confirmOverwrite,
-  setSecret,
+  buildSettingsUrl,
+  confirmClipboard,
+  copyToClipboard,
+  detectClipboardCommand,
+  printRegistrationInstructions,
   setupToken,
   TOKEN_PATTERN,
 };
