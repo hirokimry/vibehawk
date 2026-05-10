@@ -82,6 +82,8 @@ Issue #22（2026-05-08）では「CEO の GitHub App Private Key を利用者に
 
 ## localhost callback 採用根拠（Issue #37 追記）
 
+> **CTO sign-off**: 本セクションの設計根拠（POLICY.md 大方針 4 / GitHub App Manifest Flow 仕様 / Value 1 整合の 3 点）は CTO レビュー (Issue #37 / PR #96) で承認済み。命名統制理由は本セクション後半の `### 技術選定理由（Issue #37 追記）` に記載。
+
 `npx vibehawk install` は GitHub App Manifest Flow のコールバック先として **利用者ローカルの一時 HTTP サーバー（`127.0.0.1:8765`）** を使う。vibehawk 運営側は webhook 受信サーバーを持たない。CLI 実装は `cli/manifest.js` に閉じ、`callback_urls` / `redirect_url` は localhost に固定される。
 
 ### 設計根拠
