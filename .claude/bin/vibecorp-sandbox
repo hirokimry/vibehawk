@@ -12,10 +12,17 @@
 #
 # 挙動:
 #   - Darwin: sandbox-exec -f <profile> -D ... env VIBECORP_SANDBOXED=1 "$@"
-#   - Linux:  stderr に Phase 2 未実装メッセージを出して exit 2
+#   - Linux:  stderr に Phase 2 未実装メッセージを出して exit 69（EX_UNAVAILABLE）
 #   - その他: 同上
 #
-# 参照: #293 / #309
+# 終了コード規約（sysexits.h 準拠）:
+#   - 0:  正常終了
+#   - 1:  入力 / 環境バリデーション失敗（HOME / WORKTREE / TMPDIR の絶対パス検査等）
+#   - 64: 引数エラー（EX_USAGE。引数不足等の使い方違反）
+#   - 69: 当該 OS 未対応（EX_UNAVAILABLE。Linux の Phase 2 未実装、その他 OS 全般）
+#         「引数エラー（64）」と区別することで、呼び出し側は OS 不一致を引数誤りと誤認しない
+#
+# 参照: #293 / #309 / #514
 
 set -euo pipefail
 
@@ -145,11 +152,15 @@ case "$OS" in
       env VIBECORP_SANDBOXED=1 "$@"
     ;;
   Linux)
+    # exit 69 (EX_UNAVAILABLE): 当該 OS 向け実装が未提供であることを示す。
+    # 引数エラー（exit 64 / EX_USAGE）と区別することで、呼び出し側が OS 不一致を
+    # 引数誤りと誤認するのを防ぐ。
     echo "vibecorp-sandbox: Linux 向け実装は Phase 2 で追加されます（bwrap を使用予定）。" >&2
-    exit 2
+    exit 69
     ;;
   *)
+    # exit 69 (EX_UNAVAILABLE): 当該 OS 向け実装が未提供。引数エラー（64）とは別軸。
     echo "vibecorp-sandbox: 未対応 OS: $OS（Phase 2 以降で検討）。" >&2
-    exit 2
+    exit 69
     ;;
 esac
