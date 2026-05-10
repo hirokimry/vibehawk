@@ -584,5 +584,25 @@ else
   fail "CLI help が install --repo フラグを表示しない"
 fi
 
+# Issue #61: install --dry-run の同意プレビューに Anthropic 送信通知が含まれること
+# (POLICY.md データ取扱い方針との整合 + GDPR / 個人情報保護法対応の利用者事前告知)
+anthropic_notice_output="$(node -e '
+const install = require("./cli/install");
+install.run({
+  argv: ["--owner", "alice", "--dry-run"],
+  openBrowser: () => {},
+  readOwner: async () => "alice",
+}).then(() => process.exit(0)).catch((e) => { console.error(e.message); process.exit(1); });
+' 2>&1)"
+
+if echo "$anthropic_notice_output" | grep -F "Anthropic への送信について" > /dev/null \
+  && echo "$anthropic_notice_output" | grep -F "claude-code-action" > /dev/null \
+  && echo "$anthropic_notice_output" | grep -F "利用者の Anthropic 契約" > /dev/null \
+  && echo "$anthropic_notice_output" | grep -F "docs/POLICY.md" > /dev/null; then
+  pass "install --dry-run の同意プレビューに Anthropic 送信通知が含まれる（Issue #61）"
+else
+  fail "install --dry-run の同意プレビューに Anthropic 送信通知が含まれない"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

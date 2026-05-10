@@ -10,6 +10,28 @@ vibe シリーズ（vibecorp / vibemux / vibehawk）の一員として、CodeRab
 
 詳細は `MVV.md` / `docs/specification.md` / `docs/POLICY.md` を参照。
 
+## 「追加課金ゼロ」の適用範囲
+
+vibehawk が訴求する「追加課金ゼロ」は以下の条件下で成立します。vibehawk 開発者は GitHub Actions / Anthropic 双方の料金体系を制御できないため、対象外ケースの追加課金について責任を負いません（詳細は [`docs/POLICY.md`](docs/POLICY.md) 免責条項参照）。
+
+### 対象（追加課金ゼロが成立）
+
+| 条件 | 内容 |
+|------|------|
+| ✅ リポジトリ種別 | **Public リポジトリ** |
+| ✅ Anthropic 契約 | **Claude Pro / Max（既存サブスクリプション枠内）** |
+| ✅ GitHub Actions | **Public リポは無制限の無料枠** |
+
+### 対象外（追加課金が発生する可能性）
+
+| ケース | 発生する追加コスト |
+|------|----------------|
+| Private リポジトリでの利用 | GitHub Actions minutes が従量課金（個人プラン: 月 2,000 分まで無料、超過時 GitHub の公式料金表に従って課金） |
+| Anthropic API Key（従量制）での利用 | claude-code-action は OAuth 経路のみサポート、API Key 経路は vibehawk のサポート外 |
+| Pro/Max サブスクの解約・値上げ | Anthropic 契約内容に従う |
+
+GitHub / Anthropic の課金体系変更（料金プラン改定・無料枠縮小・有料化等）により利用者に追加課金が発生した場合、vibehawk 開発者は責任を負いません。
+
 ## 利用者の導入手順
 
 vibehawk は **利用者ごとに独立した GitHub App（`vibehawk-for-<owner>`）** を利用者本人が作成・運用する構造です。投稿者は `vibehawk-for-<owner>[bot]` 名義になります（命名統制 Issue #25）。
@@ -81,6 +103,25 @@ npx vibehawk install --owner alice --dry-run
 ### CLI が secret を書き込まない設計（Issue #72）
 
 vibehawk CLI は `gh secret set` を呼び出さず、利用者リポジトリの GitHub Secrets を直接書き換えません。CLI は登録手順の画面誘導と任意のクリップボードコピーまでを担当し、実際の secret 登録は利用者が GitHub Settings UI で実施します。判断根拠（メジャーサービス比較 / GitHub 公式ガイドライン / CodeRabbit 事件の教訓 / MVV 整合）は [`docs/secrets-handling.md`](docs/secrets-handling.md) を参照。
+
+## なぜ経路 2（利用者ごと独立 App）を必須化するのか
+
+vibehawk は OSS 利用者の標準導入経路として **経路 2（利用者ごとに独立した `vibehawk-for-<owner>` App + 3 secrets 手動登録）** のみを認め、経路 1（`secrets.GITHUB_TOKEN` + `github-actions[bot]` 投稿）を OSS 利用者の標準経路として認めません（CEO 判断、Issue #61 / #72 / #74 で確定）。
+
+### Why 経路 2 必須化
+
+| 観点 | 理由 |
+|------|------|
+| Private Key 漏洩影響の構造的限定 | 利用者ごと独立 App 設計のため、Private Key 漏洩の影響範囲は **利用者本人のリポジトリ群に限定**。集中 SaaS App（CodeRabbit 等）が抱える「1 鍵漏洩で全利用者波及」の構造リスクを回避する |
+| Value 1「利用者の契約だけで、完結させる」純度 | 利用者本人の契約・本人の App・本人の手動登録で完結する。CEO のサーバー / Private Key / API キーが介在しない |
+| 命名統制 #25 との一貫性 | `vibehawk-for-<owner>[bot]` 名義投稿により利用者リポジトリ上で「vibehawk が動いている」ことが視認できる。命名統制 #25 はこの経路でのみ機能する |
+| ブランド統制 | 全 bot 名に `vibehawk` を必ず含むため、利用者・第三者から「これは vibehawk のレビューだ」と認識できる |
+
+### 命名統制の非対称性（率直な開示）
+
+`vibehawk-for-<owner>` 命名統制は **運営側ブランド都合の比重が大きく、利用者メリットが相対的に薄い** 構造です。利用者にとって直接的なメリットは「自分のリポで動いている bot を視認できる」程度で、運営側の「ブランド一貫性 + 商標保護 + 経路統合」の比重に比べると非対称です。
+
+vibehawk はこの非対称性を隠さず、`npx vibehawk install` 実行時に「⚠️ 命名統制」を明示告知します（利用者は導入前にこの統制を認識した上で進める）。詳細は [`docs/design-philosophy.md`](docs/design-philosophy.md) 「命名統制」セクション参照。
 
 ## ステータス
 
