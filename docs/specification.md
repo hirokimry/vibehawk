@@ -211,7 +211,15 @@ gh api でスレッド全コメント取得
 スレッドに新しいコメントとして応答を append
 ```
 
+経路 2 必須化（Issue #61）に伴い、`issue_comment` トリガーの workflow も `vibehawk-review.yml` と同一の認証経路で動作する:
+
+- 投稿主体: `vibehawk-for-<owner>[bot]` 名義（App Installation Token 認証）
+- 起動条件: `@vibehawk` を含み、かつ投稿者が `vibehawk-for-` で始まる Bot 自身ではないこと（無限ループ防止）
+- 必要 secrets: `VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`（レビュー workflow と同一）
+
 将来的にスレッド超肥大化に備え、`.vibehawk.yaml` で `chat.max_thread_comments`（デフォルト未設定 = 無制限）を後付け可能な構造にしておく。
+
+経路 2 必須化が本機能および Issue #8 / #9 / #10 / #11 の設計に与えた影響の詳細評価は `docs/route2-impact-analysis.md` を参照。
 
 ## やらない範囲（明示的除外）
 
