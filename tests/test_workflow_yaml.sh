@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# vibehawk-review.yml workflow の最小要件検証
+# vibehawk-review.yml workflow テンプレートの最小要件検証
+# 検証対象: `templates/.github/workflows/vibehawk-review.yml`（npm 配布される
+# テンプレート本体）。`.github/workflows/vibehawk-review.yml`（dogfooding 用
+# デプロイコピー）は templates と完全一致することを test_workflow_template_snapshot.sh
+# で別途検証するため、本テストでは templates のみを検査する。
+# Issue #56 dogfooding teardown で `.github/` 配下が一時削除されても、本テストは
+# templates を見るため影響を受けない。
+#
 # Issue #59 経路 2 必須化: App Installation Token 認証、
 # 3 secrets（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）必須、
 # actions/create-github-app-token@v2 で `vibehawk-for-<owner>[bot]` 名義投稿を実現
@@ -23,15 +30,15 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-WORKFLOW="${REPO_ROOT}/.github/workflows/vibehawk-review.yml"
+WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
 
-echo "=== vibehawk-review.yml workflow 検証 ==="
+echo "=== templates/.github/workflows/vibehawk-review.yml 検証 ==="
 
 # ファイル存在（前提: 不在なら全後続テスト無意味）
 if [[ -f "$WORKFLOW" ]]; then
-  pass "vibehawk-review.yml が存在する"
+  pass "templates/.github/workflows/vibehawk-review.yml が存在する"
 else
-  fail "vibehawk-review.yml が存在しない"
+  fail "templates/.github/workflows/vibehawk-review.yml が存在しない"
   echo "=== 結果: $PASSED passed, $FAILED failed ==="
   exit 1
 fi
