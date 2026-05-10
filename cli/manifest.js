@@ -4,6 +4,10 @@
 // https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
 
 const VIBEHAWK_REPO_URL = 'https://github.com/hirokimry/vibehawk';
+// hook_attributes.url は GitHub manifest 仕様で必須だが、active: false で実送信を抑止する。
+// .invalid は RFC 2606 で名前解決不可と定められた reserved TLD で、active が将来誤って
+// true に変更されても DNS 解決段階で失敗するため、外部到達は二重に防がれる。
+const NEVER_RESOLVED_WEBHOOK_URL = 'https://example.invalid/webhook';
 
 // callback URL は localhost に固定（vibehawk 運営側サーバーには一切送信しない）
 function buildManifest({ port, name }) {
@@ -16,7 +20,7 @@ function buildManifest({ port, name }) {
   return {
     name,
     url: VIBEHAWK_REPO_URL,
-    hook_attributes: { active: false },
+    hook_attributes: { url: NEVER_RESOLVED_WEBHOOK_URL, active: false },
     redirect_url: `http://localhost:${port}/callback`,
     callback_urls: [`http://localhost:${port}/callback`],
     public: true,
@@ -29,4 +33,4 @@ function buildManifest({ port, name }) {
   };
 }
 
-module.exports = { buildManifest, VIBEHAWK_REPO_URL };
+module.exports = { buildManifest, VIBEHAWK_REPO_URL, NEVER_RESOLVED_WEBHOOK_URL };
