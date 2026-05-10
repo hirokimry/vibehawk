@@ -73,10 +73,14 @@ gh api repos/hirokimry/vibehawk/issues/<本PR>/comments --paginate \
 
 #### 4-2. CLI が `gh secret set` を呼ばないことの grep 証跡
 
+`grep -rn "gh secret set" cli/` 自体は cli/setup.js と cli/verify.js の冒頭コメント 2 件にヒットするため、awk で「行本文（grep 出力の `:` 第 3 フィールド以降）が `//` または `/*` で始まる行」を除外して実呼び出しのみを残す:
+
 ```bash
-$ grep -rn "gh secret set" cli/ | grep -v "^[^:]*://" | grep -v "^[^:]*:[0-9]*://" | grep -vE "^[^:]+:[0-9]+:\s*//"
-✅ コメント以外で gh secret set の呼び出しなし（CISO 条件遵守の証跡）
+$ grep -rn "gh secret set" cli/ | awk -F: '$3 !~ /^[[:space:]]*(\/\/|\/\*)/ {print}'
+# 出力なし（コメント行のみ grep にヒットし、awk で全て除外される）
 ```
+
+✅ コメント以外で `gh secret set` の呼び出しなし（CISO 条件遵守の証跡）。
 
 `cli/setup.js` および `cli/verify.js` の冒頭コメントには「CLI は secret を一切 touch しない」と明記されており、grep でも実呼び出し 0 件を確認。`docs/secrets-handling.md` 案 2「全手動方針」が dogfooding 実機検証で担保された。
 
