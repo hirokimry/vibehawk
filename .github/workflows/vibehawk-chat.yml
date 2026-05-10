@@ -1,0 +1,182 @@
+name: vibehawk @mention chat
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  # 同一 Issue / PR スレッドへの連投時は順次処理（cancel-in-progress: false）
+  group: vibehawk-chat-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
+jobs:
+  chat:
+    runs-on: ubuntu-latest
+    # 起動条件:
+    # - コメント本文に @vibehawk を含む
+    # - 投稿者が vibehawk-for-* Bot 自身ではない（無限ループ防止）
+    if: |
+      contains(github.event.comment.body, '@vibehawk') &&
+      !startsWith(github.event.comment.user.login, 'vibehawk-for-')
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: secrets 検証
+        id: check_secrets
+        env:
+          APP_ID: ${{ secrets.VIBEHAWK_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
+          OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          missing=""
+          if [[ -z "$APP_ID" ]]; then missing="$missing VIBEHAWK_APP_ID"; fi
+          if [[ -z "$PRIVATE_KEY" ]]; then missing="$missing VIBEHAWK_PRIVATE_KEY"; fi
+          if [[ -z "$OAUTH_TOKEN" ]]; then missing="$missing CLAUDE_CODE_OAUTH_TOKEN"; fi
+          if [[ -n "$missing" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+            echo "::warning::vibehawk chat: 未設定 secret(s):$missing。レビュー workflow と同じ 3 secrets を設定してください（README.md / docs/secrets-handling.md 参照）"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: secrets 未設定時のプレースホルダ投稿
+        if: steps.check_secrets.outputs.ready != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MISSING: ${{ steps.check_secrets.outputs.missing }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "🦅 vibehawk chat: 未設定 secret(s): \`$MISSING\` のため応答をスキップしました。3 secrets（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）を Settings で設定してください。"
+
+      - name: vibehawk-for-<owner> App Installation Token を取得
+        id: app-token
+        if: steps.check_secrets.outputs.ready == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.VIBEHAWK_APP_ID }}
+          private-key: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
+
+      - name: スレッド全コメント取得（Issue #11、状態は GitHub に閉じる）
+        id: thread_history
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          # スレッド全コメント取得（時系列、--paginate で全件）
+          # 5 大方針 4「専用 DB なし」: 状態は GitHub の thread 自体が保持
+          history_file="/tmp/vibehawk-thread-${ISSUE_NUMBER}.json"
+
+          # --paginate は各ページごとに JSON 配列を出力するため、
+          # --jq '.[] | {...}' で各要素を改行区切りで出力 → jq -s で 1 配列に slurp する
+          # （CodeRabbit PR #87 指摘: 旧 .[0] + .[1] は 2 ページ前提でページ数 N 任意に対応できない）
+          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
+            --jq '.[] | {user: .user.login, created_at, body}' \
+            | jq -s '.' \
+            > "$history_file"
+
+          # Issue 本文も含める（最初のコメントとして）
+          issue_body="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
+            --jq '{user: .user.login, created_at, body}')"
+
+          # Issue 本文を最初に挿入: [issue_body, ...comments]
+          jq --argjson issue "$issue_body" '[$issue] + .' "$history_file" \
+            > "${history_file}.combined"
+          mv "${history_file}.combined" "$history_file"
+
+          comment_count="$(jq 'length' "$history_file")"
+          echo "vibehawk chat: スレッド ${comment_count} コメント取得 → ${history_file}"
+
+          echo "history_file=$history_file" >> "$GITHUB_OUTPUT"
+          echo "comment_count=$comment_count" >> "$GITHUB_OUTPUT"
+
+      - name: vibehawk 設定読み込み（locale 等）
+        id: vibehawk_config
+        if: steps.check_secrets.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          config_file=""
+          if [[ -f ".vibehawk.yaml" ]]; then
+            config_file=".vibehawk.yaml"
+          elif [[ -f ".coderabbit.yaml" ]]; then
+            config_file=".coderabbit.yaml"
+          fi
+
+          language="en"
+          if [[ -n "$config_file" ]]; then
+            python3 -c "import yaml" 2>/dev/null || pip install --user --quiet pyyaml
+            config_json="$(python3 -c "import yaml,json; print(json.dumps(yaml.safe_load(open('$config_file')) or {}))")"
+            language="$(echo "$config_json" | jq -r '.language // "en"')"
+          fi
+
+          echo "language=$language" >> "$GITHUB_OUTPUT"
+
+      - name: claude-code-action でチャット応答
+        if: steps.check_secrets.outputs.ready == 'true'
+        uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            ISSUE_NUMBER: ${{ github.event.issue.number }}
+            IS_PR: ${{ github.event.issue.pull_request != null }}
+            TRIGGERING_USER: ${{ github.event.comment.user.login }}
+            TRIGGERING_COMMENT_ID: ${{ github.event.comment.id }}
+            COMMENT_COUNT: ${{ steps.thread_history.outputs.comment_count }}
+            THREAD_HISTORY_FILE: ${{ steps.thread_history.outputs.history_file }}
+            LANGUAGE: ${{ steps.vibehawk_config.outputs.language }}
+
+            🦅 vibehawk @mention チャット応答（Issue #11）
+
+            利用者が `@vibehawk` でメンションしました。スレッド全体を読んで応答してください。
+
+            ## スレッド履歴の取得（最重要）
+
+            まず以下のコマンドでスレッド全コメント（Issue 本文 + 全コメント、時系列）を読み込んでください:
+
+            ```bash
+            cat $THREAD_HISTORY_FILE
+            ```
+
+            JSON 形式で `[{user, created_at, body}, ...]` の配列が得られます。これが **会話の全文脈** です。
+
+            ## 応答方針
+
+            - 過去のやり取りを **すべて踏まえた** 自然な多ターン会話
+            - 短く端的な応答が基本（必要に応じて詳細展開）
+            - スレッドが PR (`IS_PR=true`) なら PR diff も参考にしてよい（`gh pr diff $ISSUE_NUMBER`）
+            - スレッドが Issue (`IS_PR=false`) なら Issue 本文（履歴の最初の要素）を中心に応答
+            - LANGUAGE=ja の場合は日本語で応答、それ以外は英語
+
+            ## 投稿方法
+
+            ```bash
+            gh issue comment $ISSUE_NUMBER --body "<応答本文>"
+            # または PR の場合:
+            # gh pr comment $ISSUE_NUMBER --body "<応答本文>"
+            ```
+
+            ## 無限ループ防止（最重要）
+
+            - **応答本文に `@vibehawk` を含めないこと**（次回起動の if 条件で弾かれるが、念のため）
+            - **vibehawk-for-* Bot 自身のメンションには反応しない**: トリガー条件側で弾かれているのでここまで来ないが、TRIGGERING_USER が `vibehawk-for-` で始まる場合は **何もせず終了** すること
+
+            ## 5 大方針との整合
+
+            - 5 大方針 2「コード生成は絶対しない」: 応答に **例示コード断片** や **GitHub Suggestions 構文** は OK だが、**Bot 自身が PR に commit を作らない** / docstring 全文生成しない / unit-test ファイル新設しない
+            - 5 大方針 4「専用 DB なし」: 過去要約は作らない、スレッド全文を毎回読み込む（Phase 1 では `chat.max_thread_comments` 制限なし）
+            - 5 大方針 5「PR メタデータ操作なし」: label / milestone / description を変更しない
+          claude_args: |
+            --allowedTools "Bash(cat:*),Bash(gh issue comment:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(jq:*)"

@@ -27,10 +27,12 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-# 検証対象ファイル
+# 検証対象ファイル（review + chat 両方、Issue #11）
 TARGETS=(
   "templates/.github/workflows/vibehawk-review.yml"
   ".github/workflows/vibehawk-review.yml"
+  "templates/.github/workflows/vibehawk-chat.yml"
+  ".github/workflows/vibehawk-chat.yml"
 )
 
 echo "=== vibehawk workflow テンプレート スナップショット検証 ==="
@@ -101,15 +103,26 @@ done
 
 # templates/ と .github/ のテンプレートが完全一致していることを検証（snapshot 等価性）
 # dogfooding 用 workflow は配布用テンプレートと同一でなければならない（ドリフト防止）
-if [[ -f "${TARGETS[0]}" && -f "${TARGETS[1]}" ]]; then
-  if diff -u "${TARGETS[0]}" "${TARGETS[1]}" > /dev/null; then
-    pass "templates/.github/workflows/vibehawk-review.yml と .github/workflows/vibehawk-review.yml が完全一致"
-  else
-    fail "templates/.github/workflows/vibehawk-review.yml と .github/workflows/vibehawk-review.yml が乖離している（ドリフト検出）"
-    echo "    差分:"
-    diff -u "${TARGETS[0]}" "${TARGETS[1]}" | head -20 | sed 's/^/      /'
+declare -a SYNC_PAIRS=(
+  "templates/.github/workflows/vibehawk-review.yml|.github/workflows/vibehawk-review.yml"
+  "templates/.github/workflows/vibehawk-chat.yml|.github/workflows/vibehawk-chat.yml"
+)
+
+for pair in "${SYNC_PAIRS[@]}"; do
+  src="${pair%|*}"
+  dst="${pair#*|}"
+  if [[ -f "$src" && -f "$dst" ]]; then
+    if diff -u "$src" "$dst" > /dev/null; then
+      pass "$src と $dst が完全一致"
+    else
+      fail "$src と $dst が乖離している（ドリフト検出）"
+      echo "    差分:"
+      # set -euo pipefail 下では diff の SIGPIPE が pipefail で拾われるため `|| true` で吸収
+      # （CodeRabbit PR #87 指摘）
+      diff -u "$src" "$dst" | head -20 | sed 's/^/      /' || true
+    fi
   fi
-fi
+done
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
