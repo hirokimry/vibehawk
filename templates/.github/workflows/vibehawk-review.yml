@@ -22,6 +22,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # PR の HEAD SHA を明示 check out（actions/checkout デフォルトの synthetic merge commit ではなく）
+          # Issue #57 の <!-- vibehawk:sha=${{ github.event.pull_request.head.sha }} --> マーカーと
+          # チェックアウト内容が同一 commit を指すようにし、prev_summary の SHA 比較が正しく動くようにする
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: secrets 検証
         id: check_secrets

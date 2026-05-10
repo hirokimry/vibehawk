@@ -179,4 +179,4 @@ jobs:
             - 5 大方針 4「専用 DB なし」: 過去要約は作らない、スレッド全文を毎回読み込む（Phase 1 では `chat.max_thread_comments` 制限なし）
             - 5 大方針 5「PR メタデータ操作なし」: label / milestone / description を変更しない
           claude_args: |
-            --allowedTools "Bash(cat:*),Bash(gh issue comment:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(jq:*)"
+            --allowedTools "Bash(cat:*),Bash(gh issue comment:*),Bash(gh pr comment:*),Bash(gh pr diff:*)"
