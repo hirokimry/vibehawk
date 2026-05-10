@@ -153,12 +153,52 @@ else
   fail "secrets 欠落時のプレースホルダコメント投稿ステップが不足（運用時の失敗動作見逃しリスク）"
 fi
 
-# 後続ステップ（app-token / thread_history / claude-code-action）が ready=true 時のみ実行
-ready_true_count="$(grep -c "if: steps.check_secrets.outputs.ready == 'true'" "$CHAT_WORKFLOW" || true)"
-if [[ "$ready_true_count" -ge 4 ]]; then
-  pass "後続ステップが ready=true 条件でガードされている（${ready_true_count} 件）"
+# CodeRabbit PR #87 第 4 ラウンド指摘: 件数依存ではなく step 単位で完全走査
+# check_secrets の後にある全 step の name を抽出し、プレースホルダ投稿（例外）以外は
+# 全て `if: steps.check_secrets.outputs.ready == 'true'` ガードを持つことを保証する
+unguarded_steps=()
+state="before_check_secrets"
+current_step=""
+current_step_has_ready_guard=0
+current_step_is_placeholder=0
+
+while IFS= read -r line; do
+  # ステップ name 行を検出（- name: で始まる）
+  if [[ "$line" =~ ^[[:space:]]+-[[:space:]]+name:[[:space:]] ]]; then
+    # 前のステップの判定: check_secrets 後のステップで、プレースホルダ例外でなく、ready ガードがない場合は記録
+    if [[ "$state" == "after_check_secrets" ]] && [[ "$current_step_is_placeholder" == "0" ]] && [[ "$current_step_has_ready_guard" == "0" ]] && [[ -n "$current_step" ]]; then
+      unguarded_steps+=("$current_step")
+    fi
+    # 新しいステップ開始
+    current_step="$(echo "$line" | sed -E 's/^[[:space:]]+-[[:space:]]+name:[[:space:]]+//; s/[[:space:]]+$//')"
+    current_step_has_ready_guard=0
+    current_step_is_placeholder=0
+    if [[ "$current_step" == *"secrets 検証"* ]]; then
+      state="check_secrets"
+    elif [[ "$state" == "check_secrets" ]] || [[ "$state" == "after_check_secrets" ]]; then
+      state="after_check_secrets"
+    fi
+    # プレースホルダ投稿ステップは例外（ready != 'true' で実行される設計）
+    if [[ "$current_step" == *"プレースホルダ"* ]] || [[ "$current_step" == *"placeholder"* ]]; then
+      current_step_is_placeholder=1
+    fi
+    continue
+  fi
+  # ガード行を検出
+  if [[ "$line" == *"if: steps.check_secrets.outputs.ready == 'true'"* ]]; then
+    current_step_has_ready_guard=1
+  fi
+done < "$CHAT_WORKFLOW"
+
+# 最後のステップの判定
+if [[ "$state" == "after_check_secrets" ]] && [[ "$current_step_is_placeholder" == "0" ]] && [[ "$current_step_has_ready_guard" == "0" ]] && [[ -n "$current_step" ]]; then
+  unguarded_steps+=("$current_step")
+fi
+
+if [[ ${#unguarded_steps[@]} -eq 0 ]]; then
+  pass "check_secrets 後の全 step が ready=true ガードを持つ（プレースホルダ投稿を除く、step 単位走査）"
 else
-  fail "後続ステップの ready=true ガードが不足（${ready_true_count} 件、最低 4 件必要: app-token / thread_history / vibehawk_config / claude-code-action）"
+  fail "check_secrets 後に ready=true ガードのない step: ${unguarded_steps[*]}"
 fi
 
 # App Installation Token を Use（review.yml と同じ仕組み）
@@ -285,10 +325,11 @@ for tool in "${required_tools[@]}"; do
   fi
 done
 
-# CodeRabbit PR #87 Major 指摘: allowedTools whitelist 完全一致検証
-# 必須項目の存在確認だけでは Bash(*) のような危険なツール追加が検出できないため、
-# allowedTools 文字列から Bash(...) パターンを抽出して許可リスト外を検出
-allowed_tools_line="$(grep -F -- '--allowedTools' "$CHAT_WORKFLOW" | head -1 || true)"
+# CodeRabbit PR #87 第 3+4 ラウンド Major 指摘: allowedTools whitelist 完全一致検証
+# 第 3 ラウンドの head -1 限定では複数行 allowedTools を回避可能だったため、
+# claude_args 全体（複数行 YAML literal block scalar）から Bash(...) パターンを全部抽出
+# claude_args ブロック検出: claude_args: の次の `|` 行から、インデントが下がるまで
+# シンプルに全ファイルから Bash(...) を抽出（workflow 内に Bash(...) は claude_args 内のみのはず）
 unexpected_tools=()
 expected_set='|cat:*|gh issue comment:*|gh pr comment:*|gh pr diff:*|gh api:*|jq:*|'
 while IFS= read -r tool; do
@@ -296,10 +337,10 @@ while IFS= read -r tool; do
   if [[ -n "$tool" ]] && [[ "$expected_set" != *"|${tool}|"* ]]; then
     unexpected_tools+=("$tool")
   fi
-done < <(echo "$allowed_tools_line" | grep -oE 'Bash\([^)]+\)' | sed -E 's/^Bash\(//; s/\)$//')
+done < <(grep -oE 'Bash\([^)]+\)' "$CHAT_WORKFLOW" | sed -E 's/^Bash\(//; s/\)$//')
 
 if [[ ${#unexpected_tools[@]} -eq 0 ]]; then
-  pass "allowedTools は許可 6 項目のみで構成（whitelist 完全一致、Bash(*) 等の危険な追加なし）"
+  pass "allowedTools は許可 6 項目のみで構成（claude_args 全体走査、Bash(*) 等の危険な追加なし）"
 else
   fail "allowedTools に許可外の項目: ${unexpected_tools[*]}"
 fi
