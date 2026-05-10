@@ -37,7 +37,14 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
           # OIDC publish: NODE_AUTH_TOKEN 不要（id-token: write で provenance 署名）
+
+      - name: 依存パッケージのインストール
+        # Issue #91: tests/test_setup_wizard.sh が @clack/prompts を require するため
+        # CI runner でも node_modules を構築する。npm ci は package-lock.json と完全一致を要求するため、
+        # CI 再現性の担保にも寄与する。
+        run: npm ci
 
       - name: テスト実行
         run: |
