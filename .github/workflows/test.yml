@@ -27,6 +27,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+
+      - name: 依存パッケージのインストール
+        # Issue #91: tests/test_setup_wizard.sh が @clack/prompts を require するため
+        # CI runner でも node_modules を構築する。npm ci は package-lock.json と完全一致を要求するため、
+        # CI 再現性の担保にも寄与する。
+        run: npm ci
 
       - name: jq の確認
         run: jq --version
