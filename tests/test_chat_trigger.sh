@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# Issue #11: vibehawk-chat.yml の起動条件と無限ループ防止ロジックの検証
+# Issue #11: vibehawk-chat.yml テンプレートの起動条件と無限ループ防止ロジックの検証
+#
+# 検証対象: `templates/.github/workflows/vibehawk-chat.yml`（npm 配布される
+# テンプレート本体）。`.github/workflows/vibehawk-chat.yml`（dogfooding 用デプロイコピー）
+# は test_workflow_template_snapshot.sh で templates と完全一致が検証される。
+# Issue #56 dogfooding teardown で `.github/` 配下が一時削除されても、本テストは
+# templates を見るため影響を受けない。
 
 set -euo pipefail
 
@@ -19,7 +25,7 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-CHAT_WORKFLOW="${REPO_ROOT}/.github/workflows/vibehawk-chat.yml"
+CHAT_WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-chat.yml"
 
 echo "=== vibehawk-chat.yml 構造検証（Issue #11） ==="
 

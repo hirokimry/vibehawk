@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Issue #9: vibehawk-review.yml の prompt に含まれる severity 5 段階分類規則の検証
+# Issue #9: vibehawk-review.yml テンプレートの prompt に含まれる severity 5 段階分類規則の検証
 #
-# 検証対象:
+# 検証対象: `templates/.github/workflows/vibehawk-review.yml`（npm 配布される
+# テンプレート本体）。`.github/workflows/vibehawk-review.yml`（dogfooding 用デプロイコピー）
+# は test_workflow_template_snapshot.sh で templates と完全一致が検証される。
+# Issue #56 dogfooding teardown で `.github/` 配下が一時削除されても、本テストは
+# templates を見るため影響を受けない。
+#
+# 検証項目:
 # - severity 5 段階の絵文字（🔴/🟠/🟡/🔵/⚪）が prompt に含まれる
 # - CodeRabbit 公式仕様（.claude/rules/severity/coderabbit.md）に従った定義
 # - inline comment 本文に severity 絵文字を冒頭付与する指示がある
@@ -25,7 +31,7 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-WORKFLOW="${REPO_ROOT}/.github/workflows/vibehawk-review.yml"
+WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
 
 echo "=== severity 5 段階絵文字（Issue #9） ==="
 

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # vibehawk workflow テンプレートのスナップショット検証（Issue #29）
 #
-# 目的: `templates/.github/workflows/vibehawk-review.yml` および
-#      `.github/workflows/vibehawk-review.yml`（dogfooding 用）が
-#      `.claude/rules/autonomous-restrictions.md` §6 で禁止された
-#      権限・トリガー・条件削除を含まないことを CI で機械検証する。
+# 目的: `templates/.github/workflows/vibehawk-{review,chat}.yml`（npm 配布される
+#      テンプレート本体）が `.claude/rules/autonomous-restrictions.md` §6 で
+#      禁止された権限・トリガー・条件削除を含まないことを CI で機械検証する。
+#
+# `.github/workflows/vibehawk-{review,chat}.yml`（dogfooding 用デプロイコピー）は
+# 存在する場合のみ追加検査する。dogfooding teardown（Issue #56）等で一時的に
+# 削除されるケースを許容するため、不在は failure 扱いしない。
 #
 # CISO Major 条件: 自動化があってこそ permissions 固定の実効性が高い。
 # CI 必須実行（required check）として位置づける。
@@ -27,17 +30,29 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-# 検証対象ファイル（review + chat 両方、Issue #11）
-TARGETS=(
+# 必須検証対象（npm 配布されるテンプレート本体、review + chat 両方、Issue #11）
+REQUIRED_TARGETS=(
   "templates/.github/workflows/vibehawk-review.yml"
-  ".github/workflows/vibehawk-review.yml"
   "templates/.github/workflows/vibehawk-chat.yml"
+)
+
+# 任意検証対象（dogfooding 用デプロイコピー、不在は許容、Issue #56 teardown 経路）
+OPTIONAL_TARGETS=(
+  ".github/workflows/vibehawk-review.yml"
   ".github/workflows/vibehawk-chat.yml"
 )
 
+# 必須 + 存在する任意対象を結合して検査ループに渡す
+TARGETS=("${REQUIRED_TARGETS[@]}")
+for opt in "${OPTIONAL_TARGETS[@]}"; do
+  if [[ -f "$opt" ]]; then
+    TARGETS+=("$opt")
+  fi
+done
+
 echo "=== vibehawk workflow テンプレート スナップショット検証 ==="
 
-# 各対象ファイルが存在し、forbidden パターンを含まないこと
+# 必須対象は不在で fail、任意対象（OPTIONAL_TARGETS）は事前に存在チェック済みで TARGETS に含まれる
 for target in "${TARGETS[@]}"; do
   if [[ ! -f "$target" ]]; then
     fail "$target が存在しない（テンプレートとして必須）"
