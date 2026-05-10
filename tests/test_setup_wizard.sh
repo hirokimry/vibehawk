@@ -144,31 +144,54 @@ else
   fail "classifyGhError の分類が想定と異なる"
 fi
 
-# verify.js: matchInstallation が app_id 一致を抽出（モックレスポンス）
+# verify.js: matchInstallation が installation オブジェクトを返す（pure 関数、gh api 呼び出しなし）
 if node -e '
 const v = require("./cli/verify");
-// 一致 + repository_selection: all
-const j1 = JSON.stringify({ installations: [{ app_id: 12345, repository_selection: "all" }] });
-if (!v.matchInstallation(j1, "12345", "alice/bob")) process.exit(1);
+// 一致 → installation オブジェクトを返す
+const j1 = JSON.stringify({ installations: [{ id: 1, app_id: 12345, repository_selection: "all" }] });
+const inst1 = v.matchInstallation(j1, "12345");
+if (!inst1 || inst1.app_id !== 12345 || inst1.repository_selection !== "all") process.exit(1);
 // 一致 + selected
-const j2 = JSON.stringify({ installations: [{ app_id: 99999, repository_selection: "selected" }] });
-if (!v.matchInstallation(j2, "99999", "alice/bob")) process.exit(1);
-// 不一致
-const j3 = JSON.stringify({ installations: [{ app_id: 11111, repository_selection: "all" }] });
-if (v.matchInstallation(j3, "12345", "alice/bob")) process.exit(1);
-// 空配列
-if (v.matchInstallation(JSON.stringify({ installations: [] }), "12345", "alice/bob")) process.exit(1);
-// 配列形式（/orgs/X/installations の場合）
-const j4 = JSON.stringify([{ app_id: 12345, repository_selection: "all" }]);
-if (!v.matchInstallation(j4, "12345", "alice/bob")) process.exit(1);
-// 不正な JSON
-if (v.matchInstallation("not json", "12345", "alice/bob")) process.exit(1);
-// 空文字
-if (v.matchInstallation("", "12345", "alice/bob")) process.exit(1);
+const j2 = JSON.stringify({ installations: [{ id: 2, app_id: 99999, repository_selection: "selected" }] });
+const inst2 = v.matchInstallation(j2, "99999");
+if (!inst2 || inst2.app_id !== 99999) process.exit(1);
+// 不一致 → null
+const j3 = JSON.stringify({ installations: [{ id: 3, app_id: 11111, repository_selection: "all" }] });
+if (v.matchInstallation(j3, "12345") !== null) process.exit(1);
+// 空配列 → null
+if (v.matchInstallation(JSON.stringify({ installations: [] }), "12345") !== null) process.exit(1);
+// 配列形式（/orgs/X/installations の場合） → installation を返す
+const j4 = JSON.stringify([{ id: 4, app_id: 12345, repository_selection: "all" }]);
+const inst4 = v.matchInstallation(j4, "12345");
+if (!inst4 || inst4.id !== 4) process.exit(1);
+// 不正な JSON → null
+if (v.matchInstallation("not json", "12345") !== null) process.exit(1);
+// 空文字 → null
+if (v.matchInstallation("", "12345") !== null) process.exit(1);
 '; then
-  pass "matchInstallation が一致/不一致/空配列/不正 JSON を正しく判定"
+  pass "matchInstallation が installation オブジェクト or null を返す（pure 関数）"
 else
-  fail "matchInstallation の判定が想定と異なる"
+  fail "matchInstallation の挙動が想定と異なる"
+fi
+
+# verify.js: verifyRepoIncluded が repository_selection に基づき判定（CISO 修正必須 1）
+if node -e '
+const v = require("./cli/verify");
+// repository_selection: all → ok
+const r1 = v.verifyRepoIncluded({ id: 1, app_id: 12345, repository_selection: "all" }, "alice/bob");
+if (!r1.ok || r1.reason !== "all") process.exit(1);
+// 不正な installation → ng
+const r2 = v.verifyRepoIncluded(null, "alice/bob");
+if (r2.ok || r2.reason !== "invalid_installation") process.exit(1);
+const r3 = v.verifyRepoIncluded({ id: 1, app_id: 12345, repository_selection: "unknown" }, "alice/bob");
+if (r3.ok || r3.reason !== "verify_api_failed") process.exit(1);
+// selected + installation.id が非整数 → invalid_installation
+const r4 = v.verifyRepoIncluded({ id: "abc", app_id: 12345, repository_selection: "selected" }, "alice/bob");
+if (r4.ok || r4.reason !== "invalid_installation") process.exit(1);
+'; then
+  pass "verifyRepoIncluded が all / 不正入力 / unknown を正しく判定（CISO 修正必須 1）"
+else
+  fail "verifyRepoIncluded の挙動が想定と異なる"
 fi
 
 # verify.js: verifyAppInstallation が appId 非整数を TypeError で拒否（CISO 入力検証）
@@ -419,6 +442,37 @@ setup.run({ argv: ["--owner", "alice", "--repo", "alice/bob", "--dry-run"] }).th
   pass "setup --dry-run で spawnSync / fetch が呼ばれない"
 else
   fail "setup --dry-run で spawnSync / fetch が呼ばれる可能性"
+fi
+
+# CISO 修正必須 2: executeStep の run フェーズが for ループで MAX_RETRY 上限を持つ
+# （無限再帰防止）
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/setup.js", "utf8");
+const m = src.match(/async function executeStep[\s\S]*?\n\}/);
+if (!m) { console.error("executeStep not found"); process.exit(1); }
+const body = m[0];
+// run フェーズで return executeStep(...) の再帰呼び出しがないこと
+if (/return executeStep\(/.test(body)) { console.error("recursive executeStep call still exists"); process.exit(1); }
+// run フェーズに for ループが存在し、MAX_RETRY を参照すること
+if (!/for\s*\(\s*let\s+attempt\s*=\s*0\s*;\s*attempt\s*<\s*MAX_RETRY/.test(body)) { console.error("MAX_RETRY for-loop not found"); process.exit(1); }
+'; then
+  pass "executeStep の run フェーズが MAX_RETRY 上限の for ループに変換されている（CISO 修正必須 2、無限再帰防止）"
+else
+  fail "executeStep の run フェーズが再帰のまま（CISO 修正必須 2 未対応）"
+fi
+
+# CISO 修正必須 3: step.verify(state) が await されている
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/setup.js", "utf8");
+// `v = step.verify(state);` ではなく `v = await step.verify(state);` であること
+if (/v\s*=\s*step\.verify\(state\);/.test(src)) { console.error("step.verify() not awaited"); process.exit(1); }
+if (!/v\s*=\s*await\s+step\.verify\(state\)/.test(src)) { console.error("await step.verify(state) not found"); process.exit(1); }
+'; then
+  pass "step.verify(state) が await されている（CISO 修正必須 3、将来非同期化対応）"
+else
+  fail "step.verify(state) が await されていない（CISO 修正必須 3 未対応）"
 fi
 
 # CLO 条件 4: docs/external-dependency-audit.md に @clack/prompts が含まれる

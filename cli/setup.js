@@ -198,33 +198,47 @@ async function executeStep(step, state, summary, dryRun) {
   }
 
   // run フェーズ（ある場合）
+  // CISO 修正必須 2: 再帰呼び出しを MAX_RETRY 上限の for ループに置換し、無限再帰を防止
   if (step.run) {
-    const s = clack.spinner();
-    s.start('実行中...');
-    try {
-      const r = await step.run(state);
-      if (!r.ok) {
-        s.stop(`❌ ${r.hint || '失敗'}`);
-        // run 失敗もリトライ判定にかける
-        const action = await chooseRetryAction();
-        if (action === 'cancel' || clack.isCancel(action)) {
-          throw new CancelError(step.id);
-        }
-        if (action === 'skip') {
-          summary.push({ id: step.id, label: step.label, status: 'skipped' });
-          return;
-        }
-        // retry: 再実行
-        return executeStep(step, state, summary, dryRun);
+    let runOk = false;
+    let runResult = null;
+    let runEarlyExit = false;
+    for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
+      const s = clack.spinner();
+      s.start('実行中...');
+      let r;
+      try {
+        r = await step.run(state);
+      } catch (e) {
+        s.stop(`❌ ${e.message}`);
+        throw e;
       }
-      s.stop(`✅ ${r.info || '完了'}`);
-      if (r.skipped) {
+      if (r.ok) {
+        s.stop(`✅ ${r.info || '完了'}`);
+        runResult = r;
+        runOk = true;
+        break;
+      }
+      s.stop(`❌ ${r.hint || '失敗'}`);
+      const action = await chooseRetryAction();
+      if (action === 'cancel' || clack.isCancel(action)) {
+        throw new CancelError(step.id);
+      }
+      if (action === 'skip') {
         summary.push({ id: step.id, label: step.label, status: 'skipped' });
-        return;
+        runEarlyExit = true;
+        break;
       }
-    } catch (e) {
-      s.stop(`❌ ${e.message}`);
-      throw e;
+      // retry: 次のループで再実行
+    }
+    if (runEarlyExit) return;
+    if (!runOk) {
+      summary.push({ id: step.id, label: step.label, status: 'skipped', hint: 'run フェーズが最大リトライ回数に到達' });
+      return;
+    }
+    if (runResult && runResult.skipped) {
+      summary.push({ id: step.id, label: step.label, status: 'skipped' });
+      return;
     }
   }
 
@@ -260,23 +274,27 @@ async function executeStep(step, state, summary, dryRun) {
       s.start('検証中...');
       let v;
       try {
-        v = step.verify(state);
+        // CISO 修正必須 3: step.verify は将来非同期化される可能性があるため await を付与
+        // 同期実装でも await は値をそのまま返すため互換
+        v = await step.verify(state);
       } catch (e) {
         s.stop(`❌ 検証実行エラー: ${e.message}`);
         v = { ok: false, hint: e.message };
       }
-      if (v.ok) {
+      if (v && v.ok) {
         s.stop(`✅ 検証 OK`);
         summary.push({ id: step.id, label: step.label, status: 'completed' });
         return;
       }
-      s.stop(`❌ ${v.hint || v.reason || '検証失敗'}`);
+      // v が null/undefined を返した場合のガード（TypeError 防止）
+      const hint = (v && (v.hint || v.reason)) || '検証失敗';
+      s.stop(`❌ ${hint}`);
       const action = await chooseRetryAction();
       if (action === 'cancel' || clack.isCancel(action)) {
         throw new CancelError(step.id);
       }
       if (action === 'skip') {
-        summary.push({ id: step.id, label: step.label, status: 'skipped', hint: v.hint });
+        summary.push({ id: step.id, label: step.label, status: 'skipped', hint });
         return;
       }
       // retry: 次のループで再検証

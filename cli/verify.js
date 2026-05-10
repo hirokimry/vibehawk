@@ -96,15 +96,37 @@ function verifyAppInstallation(repo, appId) {
   // ① /user/installations を試す（個人アカウントのインストール一覧、利用者 PAT で呼べる）
   const userResult = runGhApi(['/user/installations', '--paginate']);
   if (userResult.status === 0) {
-    const matched = matchInstallation(userResult.stdout, targetAppIdStr, repo);
-    if (matched) return { ok: true, reason: 'installed_via_user', hint: '' };
+    const inst = matchInstallation(userResult.stdout, targetAppIdStr);
+    if (inst) {
+      const v = verifyRepoIncluded(inst, repo);
+      if (v.ok) return { ok: true, reason: 'installed_via_user', hint: '' };
+      // selected 状態で対象 repo 未包含が判明した場合は明確な hint を返す
+      if (v.reason === 'repo_not_in_selection') {
+        return {
+          ok: false,
+          reason: 'repo_not_in_selection',
+          hint: `vibehawk App (id=${targetAppIdStr}) はインストール済みですが、${repo} がインストール対象に含まれていません。GitHub の App Settings ページで対象リポジトリを追加してください`,
+        };
+      }
+      // 検証 API 失敗時はフォールバック（後段の verifySecret で実質検出される）
+    }
   }
 
   // ② /orgs/<owner>/installations を試す（組織アカウント向け）
   const orgResult = runGhApi([`/orgs/${owner}/installations`, '--paginate']);
   if (orgResult.status === 0) {
-    const matched = matchInstallation(orgResult.stdout, targetAppIdStr, repo);
-    if (matched) return { ok: true, reason: 'installed_via_org', hint: '' };
+    const inst = matchInstallation(orgResult.stdout, targetAppIdStr);
+    if (inst) {
+      const v = verifyRepoIncluded(inst, repo);
+      if (v.ok) return { ok: true, reason: 'installed_via_org', hint: '' };
+      if (v.reason === 'repo_not_in_selection') {
+        return {
+          ok: false,
+          reason: 'repo_not_in_selection',
+          hint: `vibehawk App (id=${targetAppIdStr}) はインストール済みですが、${repo} がインストール対象に含まれていません。GitHub の App Settings ページで対象リポジトリを追加してください`,
+        };
+      }
+    }
   }
 
   // 両方失敗・両方該当なし
@@ -123,13 +145,15 @@ function verifyAppInstallation(repo, appId) {
   };
 }
 
-function matchInstallation(stdout, targetAppIdStr, repo) {
-  if (!stdout || !stdout.trim()) return false;
+// installations リストから targetAppIdStr に一致する installation オブジェクトを返す
+// （null = 一致なし）。pure 関数で gh api を呼ばない（テスト容易化）
+function matchInstallation(stdout, targetAppIdStr) {
+  if (!stdout || !stdout.trim()) return null;
   let parsed;
   try {
     parsed = JSON.parse(stdout);
   } catch (_) {
-    return false;
+    return null;
   }
   // /user/installations は { installations: [...] } 形式、/orgs/X/installations は配列または同形式
   const installations = Array.isArray(parsed)
@@ -137,18 +161,56 @@ function matchInstallation(stdout, targetAppIdStr, repo) {
     : Array.isArray(parsed.installations)
       ? parsed.installations
       : [];
-  if (installations.length === 0) return false;
+  if (installations.length === 0) return null;
   for (const inst of installations) {
-    if (String(inst.app_id) !== targetAppIdStr) continue;
-    // repository_selection: 'all' なら対象 repo 含むと判定
-    if (inst.repository_selection === 'all') return true;
-    // 'selected' 時は別途 /user/installations/<id>/repositories を呼ぶ必要があるが、
-    // ここでは app_id 一致 + selected 状態を「対象 repo がインストール対象になっている可能性が高い」
-    // と楽観的に扱う（誤判定時は次のステップ verifySecret(VIBEHAWK_APP_ID) で検出される）
-    if (inst.repository_selection === 'selected') return true;
-    return true;
+    if (String(inst.app_id) === targetAppIdStr) return inst;
   }
-  return false;
+  return null;
+}
+
+// installation の repository_selection に基づき、対象 repo が含まれるかを実検証する
+// CISO 修正必須 1: 'selected' 時の楽観判定を廃止し、/user/installations/<id>/repositories で実検証
+//
+// 戻り値:
+//   { ok: true, reason: 'all' | 'selected_includes_repo' }
+//   { ok: false, reason: 'repo_not_in_selection' | 'verify_api_failed' | 'invalid_installation' }
+function verifyRepoIncluded(installation, repo) {
+  if (!installation || typeof installation !== 'object') {
+    return { ok: false, reason: 'invalid_installation' };
+  }
+  if (installation.repository_selection === 'all') {
+    return { ok: true, reason: 'all' };
+  }
+  if (installation.repository_selection !== 'selected') {
+    // 未知の selection 値はフォールバックで楽観判定（後段の verifySecret で検出）
+    return { ok: false, reason: 'verify_api_failed' };
+  }
+  // 'selected' は別途 /user/installations/<id>/repositories で実検証
+  const installationId = installation.id;
+  if (!Number.isInteger(installationId)) {
+    return { ok: false, reason: 'invalid_installation' };
+  }
+  const r = runGhApi([`/user/installations/${installationId}/repositories`, '--paginate']);
+  if (r.status !== 0) {
+    return { ok: false, reason: 'verify_api_failed' };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch (_) {
+    return { ok: false, reason: 'verify_api_failed' };
+  }
+  const repos = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed.repositories)
+      ? parsed.repositories
+      : [];
+  const targetFullName = repo;
+  const matched = repos.some((r) => r && typeof r.full_name === 'string' && r.full_name.toLowerCase() === targetFullName.toLowerCase());
+  if (matched) {
+    return { ok: true, reason: 'selected_includes_repo' };
+  }
+  return { ok: false, reason: 'repo_not_in_selection' };
 }
 
 // workflow ファイルが対象リポジトリ（マージ後の main）に配置されているかを 200/404 で判定
@@ -185,4 +247,5 @@ module.exports = {
   // テスト容易化のため一部内部関数も export
   classifyGhError,
   matchInstallation,
+  verifyRepoIncluded,
 };
