@@ -71,6 +71,15 @@ function printPlan({ owner, appName, port, dryRun, repo }) {
   console.log('ローカルファイルへの書き込み: なし（標準出力のみ）');
   console.log('GitHub Secrets への書き込み: なし（Issue #72 / #74 全手動方針、利用者が GitHub Settings UI で手動登録）');
   console.log('');
+  // Issue #61: Anthropic への送信通知（GDPR / 個人情報保護法対応、CLI 自体は Anthropic に通信しないが
+  //            配置される workflow が claude-code-action 経由で送信する事実を事前告知する）
+  console.log('ℹ️ Anthropic への送信について:');
+  console.log('   本 CLI 自体は Anthropic に通信しません。ただし配置される workflow');
+  console.log('   (.github/workflows/vibehawk-review.yml) は実行時に PR diff・コメントを');
+  console.log('   claude-code-action 経由で Anthropic API に送信します。');
+  console.log('   送信先・送信内容・利用契約は利用者の Anthropic 契約（Claude Pro / Max OAuth）');
+  console.log('   に基づきます。詳細は docs/POLICY.md「データ取扱い方針」を参照してください。');
+  console.log('');
   if (dryRun) {
     console.log('⚙️ --dry-run モード: 実際の操作は実行しません。');
     console.log('');
