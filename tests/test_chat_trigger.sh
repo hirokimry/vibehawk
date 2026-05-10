@@ -330,14 +330,13 @@ else
   fail "投稿コマンドが不足（PR / Issue 双方対応に必要）"
 fi
 
-# allowedTools（CodeRabbit PR #87 指摘: gh pr diff / jq の取りこぼしを防ぐため明示的に列挙）
+# allowedTools（CodeRabbit PR #87 指摘: gh pr diff の取りこぼしを防ぐため明示的に列挙）
+# CodeRabbit PR #106 Major 指摘: gh api / jq は issue_comment 経路でのプロンプト注入リスクのため除外
 declare -a required_tools=(
   'cat:\*'
   'gh issue comment:\*'
   'gh pr comment:\*'
   'gh pr diff:\*'
-  'gh api:\*'
-  'jq:\*'
 )
 for tool in "${required_tools[@]}"; do
   if grep -E "Bash\(${tool}\)" "$CHAT_WORKFLOW" > /dev/null; then
@@ -347,13 +346,27 @@ for tool in "${required_tools[@]}"; do
   fi
 done
 
+# CodeRabbit PR #106 Major 指摘: gh api / jq が allowedTools に含まれないこと（外部入力プロンプト注入対策）
+declare -a forbidden_tools=(
+  'gh api:\*'
+  'jq:\*'
+)
+for tool in "${forbidden_tools[@]}"; do
+  if grep -E "Bash\(${tool}\)" "$CHAT_WORKFLOW" > /dev/null; then
+    fail "allowedTools に Bash(${tool}) が含まれる（CodeRabbit PR #106 Major 指摘違反: issue_comment は外部入力でプロンプト注入で API 操作される）"
+  else
+    pass "allowedTools に Bash(${tool}) が含まれない（CodeRabbit PR #106 Major 指摘の最小権限化）"
+  fi
+done
+
 # CodeRabbit PR #87 第 3+4 ラウンド Major 指摘: allowedTools whitelist 完全一致検証
 # 第 3 ラウンドの head -1 限定では複数行 allowedTools を回避可能だったため、
 # claude_args 全体（複数行 YAML literal block scalar）から Bash(...) パターンを全部抽出
 # claude_args ブロック検出: claude_args: の次の `|` 行から、インデントが下がるまで
 # シンプルに全ファイルから Bash(...) を抽出（workflow 内に Bash(...) は claude_args 内のみのはず）
+# CodeRabbit PR #106 Major 指摘で gh api / jq を除外したため expected_set も縮小
 unexpected_tools=()
-expected_set='|cat:*|gh issue comment:*|gh pr comment:*|gh pr diff:*|gh api:*|jq:*|'
+expected_set='|cat:*|gh issue comment:*|gh pr comment:*|gh pr diff:*|'
 while IFS= read -r tool; do
   # tool は "cat:*" のような Bash(...) 内の中身
   if [[ -n "$tool" ]] && [[ "$expected_set" != *"|${tool}|"* ]]; then
@@ -362,7 +375,7 @@ while IFS= read -r tool; do
 done < <(grep -oE 'Bash\([^)]+\)' "$CHAT_WORKFLOW" | sed -E 's/^Bash\(//; s/\)$//')
 
 if [[ ${#unexpected_tools[@]} -eq 0 ]]; then
-  pass "allowedTools は許可 6 項目のみで構成（claude_args 全体走査、Bash(*) 等の危険な追加なし）"
+  pass "allowedTools は許可 4 項目のみで構成（claude_args 全体走査、Bash(*) 等の危険な追加なし、CodeRabbit PR #106 Major 反映）"
 else
   fail "allowedTools に許可外の項目: ${unexpected_tools[*]}"
 fi
