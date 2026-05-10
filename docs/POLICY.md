@@ -107,7 +107,7 @@ PR レビュー実行時、利用者リポジトリに配置された `.github/w
 
 #### claude-code-action 依存と免責の範囲（Issue #61 で再掲）
 
-vibehawk は `anthropics/claude-code-action`（MIT ライセンス）に依存しています。同 action の挙動・バグ・課金影響について vibehawk 開発者は責任を負いません（既存 L113 免責条項と整合）。利用者は claude-code-action 自体の利用規約・更新方針も自身の責任で確認してください。
+vibehawk は `anthropics/claude-code-action`（MIT ライセンス）に依存しています。同 action の挙動・バグ・課金影響について vibehawk 開発者は責任を負いません（後述「免責条項（Issue #32）」セクションと整合）。利用者は claude-code-action 自体の利用規約・更新方針も自身の責任で確認してください。
 
 ### 認証情報配布方式（Issue #72 決定、2026-05-09 / Issue #61 確定）
 
