@@ -492,12 +492,13 @@ echo "=== GitHub App manifest 構造検証 (Issue #103) ==="
 
 manifest_json=$(node -e "console.log(JSON.stringify(require('./cli/manifest').buildManifest({port:12345, name:'vibehawk-for-test'})))")
 
-# assert 1: hook_attributes.url が non-empty string（GitHub manifest validation 通過の必須要件）
+# assert 1: hook_attributes.url が string 型かつ non-empty（GitHub manifest validation 通過の必須要件）
+# bash 文字列化のみだと数値・bool などが空文字判定をすり抜けるため jq で型と長さを同時検証
 hook_url=$(echo "$manifest_json" | jq -r '.hook_attributes.url // empty')
-if [[ -n "$hook_url" ]]; then
-  pass "hook_attributes.url が non-empty string"
+if echo "$manifest_json" | jq -e '.hook_attributes.url | type == "string" and length > 0' > /dev/null; then
+  pass "hook_attributes.url が string 型かつ non-empty"
 else
-  fail "hook_attributes.url が空または欠落（GitHub manifest validation で url wasn't supplied エラー）"
+  fail "hook_attributes.url が string 型 / non-empty でない（GitHub manifest validation で url wasn't supplied エラーまたは型違反）"
 fi
 
 # assert 2: hook_attributes.active が false（webhook 実送信抑止の既存挙動保証）
@@ -508,13 +509,22 @@ else
   fail "hook_attributes.active が false でない (got: $hook_active)、webhook 実送信のリスク"
 fi
 
-# assert 3: hook_attributes.url に vibehawk が含まれない（大文字小文字問わず）
+# assert 3a: hook_attributes.url に vibehawk が含まれない（大文字小文字問わず）
 # 個別ドメイン列挙よりパターンマッチが堅牢で将来の運営側ドメイン追加にも対応する
 # specification.md「vibehawk 運営側のサーバーには一切通信しない」原則の機械化
 if echo "$hook_url" | grep -qi 'vibehawk'; then
   fail "hook_attributes.url が vibehawk 運営側を示唆するドメインを参照 ($hook_url)、specification.md 違反"
 else
   pass "hook_attributes.url が vibehawk 運営側を示唆しない（外部エンドポイント不使用、CISO/CPO 注記の機械化）"
+fi
+
+# assert 3b: hook_attributes.url が RFC 2606 reserved TLD .invalid を使用（外部到達防止の回帰検知）
+# vibehawk 非包含だけでは別の実在ドメインへの変更を検出できないため、.invalid TLD 必須を併記する
+# .invalid は RFC 2606 で名前解決不可と保証されており、active が将来 true に誤変更されても外部到達しない
+if echo "$manifest_json" | jq -e '.hook_attributes.url | type == "string" and test("^https?://([A-Za-z0-9-]+\\.)*invalid(/|$)")' > /dev/null; then
+  pass "hook_attributes.url が RFC 2606 reserved TLD .invalid を使用（外部到達防止の回帰検知）"
+else
+  fail "hook_attributes.url が .invalid 以外のドメインを使用（外部到達リスク、URL 選定根拠の崩壊）"
 fi
 
 # assert 4: トップレベル url フィールドが non-empty string（GitHub App ホームページ URL の regression 防止）
