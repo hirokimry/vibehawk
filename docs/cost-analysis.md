@@ -10,8 +10,8 @@
 |------|------|------|-------------|------|
 | 商標登録（vibehawk） | TBD（数万〜30 万円） | 特許庁 + 弁理士 | 1 回（出願時） | Issue #38、出願料 ≈ 12,000 円（電子出願 1 区分）+ 弁理士費用 5〜20 万円 |
 | GitHub Organization（vibehawk） | 0 円 / 月（Free プラン） | GitHub | 月額 | Issue #39、Free プランで開始（Team プラン: $4 / user / 月 は将来検討） |
-| 独自ドメイン | TBD | TBD | 年額 | 取得有無は未決定 |
-| npm Organization | 0 円 / 月 | npm | 月額 | 既存 hirokimry 個人アカウントで運用、Org 化未定 |
+| 独自ドメイン | TBD | TBD | TBD（年額想定） | 取得有無は未決定 |
+| npm Organization | 0 円 / 月 | npm | TBD（Org 化未定） | 既存 hirokimry 個人アカウントで運用、Org 化未定 |
 
 ## 変動費
 
