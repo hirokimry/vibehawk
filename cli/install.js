@@ -86,6 +86,23 @@ function printPlan({ owner, appName, port, dryRun, repo }) {
   }
 }
 
+// Issue #91: credentials の機密フィールドを破壊的に [REDACTED] 化する内部 helper
+// printResult 呼び出し有無に関わらず、run() が credentials を呼び出し元に返す前に必ず実行する
+// （CISO Critical: Private Key / client_secret / webhook_secret を呼び出し元のメモリに残さない）
+function redactCredentials(credentials) {
+  if (!credentials || typeof credentials !== 'object') return credentials;
+  if (credentials.pem) {
+    credentials.pem = '[REDACTED — vibehawk CLI does not expose Private Key]';
+  }
+  if (credentials.client_secret) {
+    credentials.client_secret = '[REDACTED]';
+  }
+  if (credentials.webhook_secret) {
+    credentials.webhook_secret = '[REDACTED]';
+  }
+  return credentials;
+}
+
 async function run({
   port = DEFAULT_PORT,
   openBrowser = defaultOpenBrowser,
@@ -93,6 +110,9 @@ async function run({
   readOwner = promptOwner,
   readConsent = promptConsent,
   workflowPlacer = createWorkflowPr,
+  // Issue #91: ヘッドレス再利用オプション（setup ウィザードから呼ぶ際に有効化）
+  skipConsent = false,
+  skipPrintResult = false,
 } = {}) {
   let owner = parseOwnerArg(argv);
   if (!owner) {
@@ -105,47 +125,63 @@ async function run({
   const overwrite = parseOverwrite(argv);
   const repo = parseRepoArg(argv);
 
-  console.log('vibehawk: GitHub App Manifest Flow を開始します');
-  console.log('');
-  console.log('⚠️ 命名統制: vibehawk は App 名を vibehawk-for-<owner> 形式で固定しています。');
-  console.log('   利用者は App 名を自由にカスタマイズできません（GitHub Apps の名前ユニーク制約と');
-  console.log('   ブランド統制を両立させるための設計上の制約）。');
-  console.log('');
+  if (!skipPrintResult) {
+    console.log('vibehawk: GitHub App Manifest Flow を開始します');
+    console.log('');
+    console.log('⚠️ 命名統制: vibehawk は App 名を vibehawk-for-<owner> 形式で固定しています。');
+    console.log('   利用者は App 名を自由にカスタマイズできません（GitHub Apps の名前ユニーク制約と');
+    console.log('   ブランド統制を両立させるための設計上の制約）。');
+    console.log('');
 
-  printPlan({ owner, appName, port, dryRun, repo });
+    printPlan({ owner, appName, port, dryRun, repo });
+  }
 
   if (dryRun) {
-    console.log('vibehawk: --dry-run のため実際の操作はスキップしました。');
+    if (!skipPrintResult) {
+      console.log('vibehawk: --dry-run のため実際の操作はスキップしました。');
+    }
     return { dryRun: true, owner, appName, repo: repo || null };
   }
 
   // Issue #28: 同意確認プロンプト（npm AUP 遵守）
-  if (!yes) {
+  // Issue #91: skipConsent: true（setup ウィザードから呼ぶ場合）で内部スキップ可能
+  if (!yes && !skipConsent) {
     const consent = await readConsent();
     if (!consent) {
       console.log('vibehawk: 同意が得られなかったためキャンセルしました。');
       return { canceled: true, owner, appName, repo: repo || null };
     }
-  } else {
+  } else if (yes && !skipPrintResult) {
     console.log('vibehawk: --yes / -y フラグにより同意確認をスキップしました。');
   }
-  console.log('');
 
-  console.log('このコマンドは利用者の GitHub アカウントに App を作成します。');
-  console.log('vibehawk 運営側のサーバーには一切通信しません（localhost のみで完結）。');
-  console.log('');
+  if (!skipPrintResult) {
+    console.log('');
+    console.log('このコマンドは利用者の GitHub アカウントに App を作成します。');
+    console.log('vibehawk 運営側のサーバーには一切通信しません（localhost のみで完結）。');
+    console.log('');
+  }
 
   const manifest = buildManifest({ port, name: appName });
 
   const code = await waitForCallback({ port, manifest, openBrowser });
-  console.log('vibehawk: GitHub から認可コードを受信しました。App credentials に変換します...');
+  if (!skipPrintResult) {
+    console.log('vibehawk: GitHub から認可コードを受信しました。App credentials に変換します...');
+  }
   const credentials = await exchangeCode(code);
 
-  printResult(credentials, appName, repo);
+  if (skipPrintResult) {
+    // Issue #91: ヘッドレス呼び出し時は printResult を呼ばないが、
+    // REDACT は printResult から分離した内部 helper として必ず実行する（CISO Critical）
+    redactCredentials(credentials);
+  } else {
+    printResult(credentials, appName, repo);
+  }
 
   // Issue #58: --repo 指定時、workflow ファイル PR を対象リポジトリに自動作成
+  // Issue #91: ヘッドレス呼び出し時は workflow PR 作成を呼び出し元（setup.js）に委譲するためスキップ
   let workflowPr = null;
-  if (repo) {
+  if (repo && !skipPrintResult) {
     try {
       workflowPr = await workflowPlacer({ repo, overwrite });
       if (workflowPr.skipped) {
@@ -169,6 +205,9 @@ async function run({
     }
   }
 
+  // Issue #91: 念押しの REDACT（既に printResult / skipPrintResult 経路で実行済みだが、
+  // 万一の経路漏れがあった場合のフェイルセーフ）
+  redactCredentials(credentials);
   return { ...credentials, workflowPr, repo: repo || null };
 }
 
@@ -324,16 +363,8 @@ function printResult(credentials, expectedAppName, repo) {
   console.log('利用者は GitHub App Settings ページから手動で Private Key を生成・ダウンロードし、');
   console.log('Settings UI で VIBEHAWK_PRIVATE_KEY として登録してください（経路 2 必須化で必要）。');
   console.log('');
-  // Private Key の取り扱い: メモリから即時参照を解除（CISO Critical 条件）
-  if (credentials.pem) {
-    credentials.pem = '[REDACTED — vibehawk CLI does not expose Private Key]';
-  }
-  if (credentials.client_secret) {
-    credentials.client_secret = '[REDACTED]';
-  }
-  if (credentials.webhook_secret) {
-    credentials.webhook_secret = '[REDACTED]';
-  }
+  // Issue #91: REDACT 処理は redactCredentials() に切り出し（CISO Critical 条件）
+  redactCredentials(credentials);
 }
 
 function defaultOpenBrowser(url) {

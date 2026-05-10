@@ -172,6 +172,9 @@ async function setupToken({
   rlFactory = defaultRlFactory,
   clipboard = copyToClipboard,
   consent = confirmClipboard,
+  // Issue #91: ヘッドレス再利用オプション（setup ウィザードから呼ぶ際に有効化）
+  // 登録手順印字をウィザード側に任せ、token とクリップボードコピー結果を return で受け取る
+  skipPrintInstructions = false,
 } = {}) {
   let repo = parseRepoArg(argv);
   if (!repo) {
@@ -184,19 +187,28 @@ async function setupToken({
   if (wantClipboard) {
     clipboardResult = clipboard(token);
     if (clipboardResult.success) {
-      console.log('✅ クリップボードにコピーしました。');
+      if (!skipPrintInstructions) {
+        console.log('✅ クリップボードにコピーしました。');
+      }
     } else {
-      console.log(`⚠️ クリップボードコピーに失敗: ${clipboardResult.reason}`);
-      console.log('   GitHub Settings にトークンを直接貼付してください。');
+      if (!skipPrintInstructions) {
+        console.log(`⚠️ クリップボードコピーに失敗: ${clipboardResult.reason}`);
+        console.log('   GitHub Settings にトークンを直接貼付してください。');
+      }
     }
   }
 
-  printRegistrationInstructions(repo, clipboardResult.success === true);
+  if (!skipPrintInstructions) {
+    printRegistrationInstructions(repo, clipboardResult.success === true);
+  }
 
   return {
     repo: repo || null,
     settingsUrl: buildSettingsUrl(repo),
     clipboardCopied: clipboardResult.success === true,
+    // Issue #91: ヘッドレス呼び出し時のみ token を return（setup.js が isSensitive: true で扱う）
+    // 通常 CLI 経路では token を export せず本関数のスコープで破棄する
+    token: skipPrintInstructions ? token : undefined,
   };
 }
 

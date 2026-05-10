@@ -29,7 +29,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "bash tests/test_smoke.sh && bash tests/test_workflow_yaml.sh && bash tests/test_cli.sh"
+    "test": "bash tests/test_smoke.sh && bash tests/test_workflow_yaml.sh && bash tests/test_cli.sh && bash tests/test_setup_wizard.sh"
   },
   "keywords": [
     "code-review",
@@ -37,5 +37,8 @@
     "github-actions",
     "oss",
     "no-additional-fee"
-  ]
+  ],
+  "dependencies": {
+    "@clack/prompts": "^0.11.0"
+  }
 }
