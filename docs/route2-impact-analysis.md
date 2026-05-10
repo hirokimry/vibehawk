@@ -34,7 +34,7 @@
 - **必要な設計変更**:
   - workflow 内で App Installation Token を取得 → `gh` 認証コンテキストに注入
   - sticky review state（unresolved 数による approve / request_changes 切替）の投稿主体も同 Bot 名義に揃える
-- **実装結果**: 実装済み（Issue #9 CLOSED, 683a561）。`templates/.github/workflows/vibehawk-review.yml` で `actions/create-github-app-token@v1` 相当の経路で Installation Token を取得する構成に移行済み。
+- **実装結果**: 実装済み（Issue #9 CLOSED, 683a561）。`templates/.github/workflows/vibehawk-review.yml` で `actions/create-github-app-token@v2` 相当の経路で Installation Token を取得する構成に移行済み。
 - **対応の優先度**: 完了済み
 
 ### Issue #10 — `.vibehawk.yaml` 設定スキーマと CodeRabbit 互換読み込み
@@ -66,7 +66,7 @@
 |---|---|---|---|
 | #8 | PR 全体サマリコメント / インクリメンタルレビュー | High | 対応済み |
 | #9 | severity 5 段階 inline comment / sticky review state | Medium | 対応済み |
-| #10 | `.vibehawk.yaml` 設定スキーマ | None | — |
+| #10 | `.vibehawk.yaml` 設定スキーマ | None | 対応済み |
 | #11 | `@mention` チャット応答 | Medium | 対応済み |
 
 経路 2 必須化決定が機能追加 Issue の設計に与えた具体的影響は、**Bot 名義の動的化（`vibehawk-for-<owner>[bot]`）に伴う「投稿者 ID 固定値マッチ」の見直し** に集約される。本リポジトリの実装ではプレフィックス一致（`vibehawk-for-` start-with）と種別マーカー（`<!-- vibehawk:summary -->`）の組合せで対応済み。
