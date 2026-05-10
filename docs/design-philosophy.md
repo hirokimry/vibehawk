@@ -80,6 +80,34 @@ Issue #22（2026-05-08）では「CEO の GitHub App Private Key を利用者に
 
 将来 dogfooding / CEO 自動運用フローを拡張する場合も、本セクションの原則（CLI が secret を一切 touch しない / 利用者ごと独立 App / 利用者本人が GitHub Settings UI で手動登録）は維持する。Anthropic 公式 `claude` App の仕組み調査と業界動向追従は `docs/secrets-handling.md` § 9 関連 Issue で継続する。
 
+## localhost callback 採用根拠（Issue #37 追記）
+
+`npx vibehawk install` は GitHub App Manifest Flow のコールバック先として **利用者ローカルの一時 HTTP サーバー（`127.0.0.1:8765`）** を使う。vibehawk 運営側は webhook 受信サーバーを持たない。CLI 実装は `cli/manifest.js` に閉じ、`callback_urls` / `redirect_url` は localhost に固定される。
+
+### 設計根拠
+
+1. **POLICY.md 大方針 4「専用 DB を持たない」と整合する唯一の選択肢**: webhook 受信サーバーを vibehawk 側で立てれば、callback の到着を保持・突合する状態管理が不可避になる（複数利用者が同時に install したら、どの一時 code が誰のものかを区別する必要が出る）。それは「内部 DB / ベクタ DB / 専用サーバーを一切持たない」という大方針 4 を構造的に破る。localhost callback なら状態は利用者本人のローカルプロセス内に閉じ、運用側はサーバーもストレージも持たずに済む（`docs/POLICY.md` § 大方針 4 参照）
+2. **GitHub App Manifest Flow の仕様で十分**: GitHub App Manifest Flow は `redirect_url` を任意の URL で指定でき、HTTPS 化された公開エンドポイントは要求されない。一時 `code` を `POST https://api.github.com/app-manifests/<code>/conversions` に渡す処理さえできれば App credentials が取得できるため、`127.0.0.1:8765` の素朴な HTTP サーバーで十分要件を満たす（公式仕様: `docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest`）
+3. **Value 1「利用者の契約だけで、完結させる」整合**: localhost callback は利用者本人のマシン内で完結し、vibehawk 運営側は通信経路にも一時 code にも一切関与しない。webhook サーバーを持つ瞬間、vibehawk が「利用者の install 行為を観測できる立場」になり、個人情報・利用統計を扱う運用者責任が発生する。localhost callback はその責任そのものを構造的に回避する
+
+### claude-code-action `/install-github-app` との比較
+
+claude-code-action は対話形式の `/install-github-app` コマンドで Anthropic 側が運用するエンドポイントを介して App 設置を案内する。vibehawk はこのアプローチを採用しない:
+
+| 観点 | claude-code-action `/install-github-app` | vibehawk localhost callback |
+|---|---|---|
+| 運用側サーバー | Anthropic 側のインフラが flow を仲介する | 運用側サーバーなし、利用者ローカルで完結 |
+| 障害時の影響範囲 | Anthropic 側の障害が全利用者に波及し得る | 利用者本人のローカルプロセスに閉じる |
+| Value 1 整合性 | サブスク契約と独立した運用者責任が発生 | 利用者の契約のみで完結 |
+
+claude-code-action は Anthropic サブスクリプションの一部として運用コストを集中管理できる立場だが、vibehawk は「運用者として課金される側に回らない」設計を Mission と直結させているため、同じ手法を採れない。
+
+### 含意
+
+- `127.0.0.1:8765` は利用者環境で一時占有される。同一ポートが先行プロセスで使われている場合、CLI は失敗する（`docs/SECURITY.md` のポート占有記述参照）
+- callback URL を localhost に固定する仕様は **「自宅サーバー化」を防ぐ構造的保証** も担う。運用側が将来 vibehawk のために webhook サーバーを立てたとしても、CLI が `callback_urls` を localhost で発行している限り利用者の callback は運用側に届かない
+- ブラウザ自動オープンとローカル listen の組合せは vibehawk CLI のセキュリティ要件として `docs/specification.md` § CLI 仕様にも記述する。本セクションは「なぜそう作ったか」の根拠を保持し、実装手順は仕様書側に置く責務分離
+
 ## 命名統制（Issue #25 採用）
 
 `npx vibehawk install` で作成される GitHub App の名前は **`vibehawk-for-<owner>` 形式に固定** する。利用者は名前を自由にカスタマイズできない。
@@ -89,6 +117,18 @@ Issue #22（2026-05-08）では「CEO の GitHub App Private Key を利用者に
 1. **GitHub Apps の名前ユニーク制約への対応**: GitHub Apps はプラットフォーム全体で名前ユニークが要求される。`vibehawk` 単独だと先着 1 名しか作成できない（公式仕様、`docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app` 参照）。`<owner>` 部分で名前空間を分離することで、すべての利用者がブランド `vibehawk` を含む App 名を持てる
 2. **ブランド統制**: 全 bot 名に `vibehawk` を必ず含むことで、利用者リポジトリ上で「vibehawk が動いている」ことが視認できる。命名カスタマイズを許容するとブランドが分散して特定不能になる
 3. **Value 3「強制しない」との競合の透明化**: 命名固定は本来 Value 3 と緊張する。これを `npx vibehawk install` 実行時に明示的に告知し、隠蔽せず利用者の選択肢として提示する（CPO 修正提案）
+
+### 技術選定理由（Issue #37 追記）
+
+`vibehawk-for-<owner>` の固定形式は、GitHub Apps プラットフォームの命名制約とブランド要件のトレードオフを最適化した結果である。各構成要素は単独でなく **同時に満たさなければならない** 要請の集合として理解する。
+
+| 構成要素 | 内容 | 何の制約に応じているか |
+|---|---|---|
+| GitHub Apps 名前ユニーク制約 | GitHub Apps はプラットフォーム全体で名前ユニークが要求される。`vibehawk` 単独では先着 1 名のみ作成可能となる | GitHub プラットフォーム側の不可動制約（`docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app`） |
+| `<owner>` プレフィックスでユニーク性を回避 | `<owner>` は GitHub user/org 命名規則（1-39 文字、英数字とハイフン）でプラットフォーム内ユニーク。`vibehawk-for-<owner>` の組合せも自動的にユニークになる | 上記制約を回避しつつ全利用者に共通形式を提供する設計判断 |
+| ブランド統制と利用者識別性の両立 | `vibehawk-` プレフィックスで「vibehawk が動いている」をブランド可視化、`-for-<owner>` サフィックスで「どの利用者の bot か」を識別可能。両者を 1 つの App 名文字列で同時に満たす | vibehawk の運用要件（bot コメント一覧で「vibehawk 由来」を grep 可能にする） |
+
+CodeRabbit の `coderabbitai[bot]` のような単一名空間アプローチとは設計の出発点が異なる。CodeRabbit は集中 SaaS App で 1 つの App を全利用者で共有するため、bot 名はブランド統制に最適化できる。vibehawk は **利用者ごと独立 App**（経路 2 必須化、Issue #61）を採用しているため、`<owner>` 部分による識別性が App 名に組み込まれる必要があり、この命名形式が必然となる。
 
 ### Value 3 との関係
 
