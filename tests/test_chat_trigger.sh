@@ -72,54 +72,54 @@ else
 fi
 
 # permissions: 最小権限（pull-requests:write / issues:write / contents:read）
-declare -a required_perms=(
-  "pull-requests:[[:space:]]*write"
-  "issues:[[:space:]]*write"
-  "contents:[[:space:]]*read"
-)
-for perm in "${required_perms[@]}"; do
-  if grep -E "$perm" "$CHAT_WORKFLOW" > /dev/null; then
-    pass "permissions: $perm が設定されている"
-  else
-    fail "permissions: $perm が設定されていない"
-  fi
-done
-
-# 禁止権限不在
-declare -a forbidden_perms=(
-  "administration:[[:space:]]*write"
-  "secrets:[[:space:]]*write"
-  "workflows:[[:space:]]*write"
-  "id-token:[[:space:]]*write"
-)
-for perm in "${forbidden_perms[@]}"; do
-  if grep -E "$perm" "$CHAT_WORKFLOW" > /dev/null; then
-    fail "禁止権限 $perm が含まれる"
-  else
-    pass "禁止権限 $perm が含まれない"
-  fi
-done
-
-# CodeRabbit PR #87 Major 指摘: permissions 完全一致 whitelist 検証
-# 「禁止 + 必須」だけでは「他の *: write が追加された」を検出できないため、
-# permissions ブロック内に許可された 3 キー以外が存在しないことを確認
-permission_keys="$(awk '
+# CodeRabbit PR #87 第 5 ラウンド Major 指摘: permissions block 内の key:value 完全一致検証
+# 旧: ファイル全体 grep で permissions block 外の文字列に誤マッチする可能性
+# 新: permissions ブロックを抽出して key:value 完全一致比較に統一
+permission_kv="$(awk '
   /^[[:space:]]*permissions:/ { in_perm=1; next }
   in_perm && /^[^[:space:]]/ { in_perm=0 }
-  in_perm && /^[[:space:]]+[a-z-]+:/ {
+  in_perm && /^[[:space:]]+[a-z-]+:[[:space:]]*[a-z]+/ {
     sub(/^[[:space:]]+/, "")
-    sub(/:.*/, "")
+    sub(/[[:space:]]+$/, "")
     print
   }
 ' "$CHAT_WORKFLOW" | sort -u)"
 
-expected_permissions="$(printf '%s\n' contents issues pull-requests | sort -u)"
+expected_permission_kv="$(printf '%s\n' 'contents: read' 'issues: write' 'pull-requests: write' | sort -u)"
 
-if [[ "$permission_keys" == "$expected_permissions" ]]; then
-  pass "permissions は許可 3 キー (pull-requests / issues / contents) のみで完全一致（whitelist）"
+if [[ "$permission_kv" == "$expected_permission_kv" ]]; then
+  pass "permissions は key:value 完全一致 (pull-requests:write / issues:write / contents:read)"
 else
-  fail "permissions に許可外キーが存在 / 必要キーが不足: 実際=[$(echo "$permission_keys" | tr '\n' ',')], 期待=[pull-requests,issues,contents]"
+  fail "permissions の key:value が完全一致しない: 実際=[$(echo "$permission_kv" | tr '\n' '|')], 期待=[$(echo "$expected_permission_kv" | tr '\n' '|')]"
 fi
+
+# 必須 / 禁止の個別ラベル明示も保持（運用時の可読性のため）
+declare -a required_perm_labels=(
+  "pull-requests: write"
+  "issues: write"
+  "contents: read"
+)
+for label in "${required_perm_labels[@]}"; do
+  if echo "$permission_kv" | grep -F "$label" > /dev/null; then
+    pass "permissions に $label が含まれる（必須権限）"
+  else
+    fail "permissions に $label が不足"
+  fi
+done
+
+declare -a forbidden_perm_labels=(
+  "administration: write"
+  "secrets: write"
+  "workflows: write"
+  "id-token: write"
+)
+for label in "${forbidden_perm_labels[@]}"; do
+  if echo "$permission_kv" | grep -F "$label" > /dev/null; then
+    fail "permissions に禁止権限 $label が含まれる"
+  else
+    pass "permissions に禁止権限 $label が含まれない"
+  fi
+done
 
 # 3 secrets 検証ステップ
 for sec in VIBEHAWK_APP_ID VIBEHAWK_PRIVATE_KEY CLAUDE_CODE_OAUTH_TOKEN; do
@@ -153,52 +153,68 @@ else
   fail "secrets 欠落時のプレースホルダコメント投稿ステップが不足（運用時の失敗動作見逃しリスク）"
 fi
 
-# CodeRabbit PR #87 第 4 ラウンド指摘: 件数依存ではなく step 単位で完全走査
-# check_secrets の後にある全 step の name を抽出し、プレースホルダ投稿（例外）以外は
-# 全て `if: steps.check_secrets.outputs.ready == 'true'` ガードを持つことを保証する
+# CodeRabbit PR #87 第 4+5 ラウンド指摘: ready=true ガード step 単位走査（- 起点で未命名 step も検出）
+# 旧: `- name:` 起点 → `- uses:` / `- run:` の未命名 step を見逃す
+# 新: `id: check_secrets` を起点に、step 境界を `^[[:space:]]+- ` で判定
+#     → 未命名 step も含めて全 step を走査、ready ガード未保有を検出
 unguarded_steps=()
-state="before_check_secrets"
-current_step=""
+state="before"
+current_step_marker=""  # 識別子（name / id / uses 値）
 current_step_has_ready_guard=0
 current_step_is_placeholder=0
+current_step_is_check_secrets=0
+
+flush_step() {
+  # check_secrets 後 + 非例外（プレースホルダではない）+ ガードなし → 記録
+  if [[ "$state" == "after_check_secrets" ]] && \
+     [[ "$current_step_is_placeholder" == "0" ]] && \
+     [[ "$current_step_has_ready_guard" == "0" ]] && \
+     [[ "$current_step_is_check_secrets" == "0" ]] && \
+     [[ -n "$current_step_marker" ]]; then
+    unguarded_steps+=("$current_step_marker")
+  fi
+}
 
 while IFS= read -r line; do
-  # ステップ name 行を検出（- name: で始まる）
-  if [[ "$line" =~ ^[[:space:]]+-[[:space:]]+name:[[:space:]] ]]; then
-    # 前のステップの判定: check_secrets 後のステップで、プレースホルダ例外でなく、ready ガードがない場合は記録
-    if [[ "$state" == "after_check_secrets" ]] && [[ "$current_step_is_placeholder" == "0" ]] && [[ "$current_step_has_ready_guard" == "0" ]] && [[ -n "$current_step" ]]; then
-      unguarded_steps+=("$current_step")
-    fi
-    # 新しいステップ開始
-    current_step="$(echo "$line" | sed -E 's/^[[:space:]]+-[[:space:]]+name:[[:space:]]+//; s/[[:space:]]+$//')"
+  # step 境界: 6 スペース indent + dash + space（jobs.<job>.steps[].* 直下）
+  # markdown bullet（prompt 内の `- 項目`）は 12+ スペース indent なので誤マッチしない
+  if [[ "$line" =~ ^[[:space:]]{6}-[[:space:]] ]] && [[ ! "$line" =~ ^[[:space:]]{7,} ]]; then
+    flush_step
+    current_step_marker="$(echo "$line" | sed -E 's/^[[:space:]]+-[[:space:]]+//; s/[[:space:]]+$//' | head -c 80)"
     current_step_has_ready_guard=0
     current_step_is_placeholder=0
-    if [[ "$current_step" == *"secrets 検証"* ]]; then
-      state="check_secrets"
-    elif [[ "$state" == "check_secrets" ]] || [[ "$state" == "after_check_secrets" ]]; then
-      state="after_check_secrets"
-    fi
-    # プレースホルダ投稿ステップは例外（ready != 'true' で実行される設計）
-    if [[ "$current_step" == *"プレースホルダ"* ]] || [[ "$current_step" == *"placeholder"* ]]; then
-      current_step_is_placeholder=1
-    fi
+    current_step_is_check_secrets=0
+    # check_secrets ステップ自身は対象外（ガードしない、anchor）
+    # 当ステップを表すマーカーを以後の line で id: check_secrets で確定する
     continue
   fi
-  # ガード行を検出
+  # id: check_secrets 検出 → このステップが check_secrets 自身
+  if [[ "$line" =~ id:[[:space:]]+check_secrets ]]; then
+    current_step_is_check_secrets=1
+    state="check_secrets"
+    continue
+  fi
+  # check_secrets 完了後の次の `^- ` 行で state を after_check_secrets に推移
+  if [[ "$state" == "check_secrets" ]] && [[ "$current_step_is_check_secrets" == "0" ]]; then
+    state="after_check_secrets"
+  fi
+  # ガード検出
   if [[ "$line" == *"if: steps.check_secrets.outputs.ready == 'true'"* ]]; then
     current_step_has_ready_guard=1
   fi
+  # プレースホルダ投稿ステップは ready != 'true' で実行される設計
+  if [[ "$line" == *"if: steps.check_secrets.outputs.ready != 'true'"* ]]; then
+    current_step_is_placeholder=1
+  fi
 done < "$CHAT_WORKFLOW"
 
-# 最後のステップの判定
-if [[ "$state" == "after_check_secrets" ]] && [[ "$current_step_is_placeholder" == "0" ]] && [[ "$current_step_has_ready_guard" == "0" ]] && [[ -n "$current_step" ]]; then
-  unguarded_steps+=("$current_step")
-fi
+# 最後のステップ
+flush_step
 
 if [[ ${#unguarded_steps[@]} -eq 0 ]]; then
-  pass "check_secrets 後の全 step が ready=true ガードを持つ（プレースホルダ投稿を除く、step 単位走査）"
+  pass "check_secrets 後の全 step (name / uses / run どれでも) が ready=true ガードまたは ready!='true' プレースホルダ例外を持つ"
 else
-  fail "check_secrets 後に ready=true ガードのない step: ${unguarded_steps[*]}"
+  fail "check_secrets 後に ready ガードもプレースホルダ例外もない step: ${unguarded_steps[*]}"
 fi
 
 # App Installation Token を Use（review.yml と同じ仕組み）
@@ -343,6 +359,62 @@ if [[ ${#unexpected_tools[@]} -eq 0 ]]; then
   pass "allowedTools は許可 6 項目のみで構成（claude_args 全体走査、Bash(*) 等の危険な追加なし）"
 else
   fail "allowedTools に許可外の項目: ${unexpected_tools[*]}"
+fi
+
+# CodeRabbit PR #87 第 5 ラウンド Major 指摘: locale 解決ルール検証
+# 仕様: .vibehawk.yaml 優先 → .coderabbit.yaml fallback → 未設定時 'en'
+# vibehawk_config ステップに 3 経路すべての分岐ロジックが存在することを確認
+
+# vibehawk_config ステップが存在
+if grep -F 'id: vibehawk_config' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "vibehawk_config ステップが存在する（locale 解決のため）"
+else
+  fail "vibehawk_config ステップが不在（locale 解決が機能しない）"
+fi
+
+# .vibehawk.yaml 優先のチェック（先に file -f .vibehawk.yaml を見る）
+if grep -F '.vibehawk.yaml' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F '.coderabbit.yaml' "$CHAT_WORKFLOW" > /dev/null; then
+  # 優先順序: .vibehawk.yaml が elif より先にあること
+  vibehawk_line="$(grep -nF '.vibehawk.yaml' "$CHAT_WORKFLOW" | head -1 | cut -d: -f1)"
+  coderabbit_line="$(grep -nF '.coderabbit.yaml' "$CHAT_WORKFLOW" | head -1 | cut -d: -f1)"
+  if [[ -n "$vibehawk_line" ]] && [[ -n "$coderabbit_line" ]] && [[ "$vibehawk_line" -lt "$coderabbit_line" ]]; then
+    pass "locale 解決優先順序: .vibehawk.yaml が .coderabbit.yaml より先に評価される"
+  else
+    fail "locale 解決優先順序が不正: .vibehawk.yaml(L${vibehawk_line:-?}) vs .coderabbit.yaml(L${coderabbit_line:-?})"
+  fi
+else
+  fail ".vibehawk.yaml / .coderabbit.yaml の両方が参照されていない"
+fi
+
+# 未設定時のデフォルト 'en' フォールバック
+if grep -F 'language="en"' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F '// "en"' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "locale 未設定時 / null 時に 'en' フォールバック（jq // \"en\" + 初期値 language=\"en\"）"
+else
+  fail "locale 未設定時の 'en' フォールバックが不足"
+fi
+
+# language キーを GITHUB_OUTPUT に出力
+if grep -E 'echo[[:space:]]+"language=' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "locale 解決結果が GITHUB_OUTPUT に language= で出力される"
+else
+  fail "locale 解決結果が GITHUB_OUTPUT に渡されていない"
+fi
+
+# claude-code-action prompt に LANGUAGE が渡される
+if grep -F 'LANGUAGE: ${{ steps.vibehawk_config.outputs.language }}' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "claude-code-action prompt に LANGUAGE が渡される"
+else
+  fail "claude-code-action prompt に LANGUAGE が渡されていない"
+fi
+
+# prompt に LANGUAGE=ja → 日本語応答 / 他 → 英語応答 の指示
+if grep -F 'LANGUAGE=ja' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F '日本語' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に LANGUAGE=ja → 日本語応答 / それ以外 → 英語応答の指示が含まれる"
+else
+  fail "prompt の locale 別応答指示が不足"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
