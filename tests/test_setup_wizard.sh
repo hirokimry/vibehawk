@@ -591,7 +591,14 @@ else
 fi
 
 # assert 5: dry-run で所要時間表示が stdout に出る（E2E 確認）
-dry_run_output=$(node cli/index.js setup --dry-run --owner test --repo test/test 2>&1)
+# set -e 下でコマンド置換 `$(...)` の失敗は即終了するため、明示的に if で捕捉し fail() 集計に載せる
+if dry_run_output=$(node cli/index.js setup --dry-run --owner test --repo test/test 2>&1); then
+  :
+else
+  fail "dry-run 実行自体が失敗した（後続の grep 検証はスキップされる）"
+  dry_run_output=""
+fi
+
 if echo "$dry_run_output" | grep -F 'dogfooding 計測' > /dev/null; then
   pass "dry-run 実行で「dogfooding 計測」見出しが表示される"
 else
