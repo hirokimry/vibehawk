@@ -119,6 +119,19 @@ Issue #22（2026-05-08）では「CEO の GitHub App Private Key を利用者に
 
 CEO 判断（2026-05-09）により、経路 2（利用者ごと独立 App + 3 secrets 手動登録）が必須化された。Issue #22 の経路 1 妥協は撤回され、経路 1（`secrets.GITHUB_TOKEN` + `github-actions[bot]` 投稿）は OSS 利用者の標準経路として認めない方針に確定した。
 
+#### Manifest Flow のセキュリティ対策（Issue #59）
+
+`npx vibehawk install` の GitHub App Manifest Flow は、利用者のローカルマシンで localhost HTTP サーバを起動して GitHub からの callback を待ち受ける構造のため、CSRF / port hijacking 攻撃面を最小化するための多層防御を実装している。
+
+| 対策 | 実装箇所 | 目的 |
+|---|---|---|
+| loopback bind (`127.0.0.1`) | `cli/install.js` `server.listen(port, '127.0.0.1', ...)` | 外部ネットワークから vibehawk localhost サーバに到達不能にする（port hijacking 防止） |
+| cryptographically secure な `state` パラメータ | `cli/install.js` `crypto.randomBytes(32).toString('hex')` で生成し manifest フォーム POST の hidden input に埋め込み | 同一ホスト上の別プロセスが偽の `/callback` リクエストを送って認可コードを横取りする CSRF 攻撃を防止 |
+| `crypto.timingSafeEqual` による state 照合 | `cli/install.js` `/callback` ハンドラ | timing attack による state 推測を防止 |
+| state 不一致時のサーバ即時停止 + reject | `cli/install.js` `/callback` ハンドラ | CSRF 試行検知時の保守的挙動。利用者は `npx vibehawk install` を再実行する（新たな state が生成される） |
+
+設計意図: loopback bind 単独でも同一ホスト外からの攻撃は防げるが、同一ホスト上の別プロセス（マルウェア等）からの偽 callback を防ぐため state パラメータを追加で実装。GitHub App Manifest Flow の `state` フィールドは GitHub 公式仕様で利用者の callback URL にクエリパラメータとして戻る ([GitHub Docs](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest))。
+
 #### Fork PR の扱い
 
 - Fork PR からの起動時、`pull_request_target` は使用しない（`.claude/rules/autonomous-restrictions.md` §6 不可領域）
