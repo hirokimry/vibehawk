@@ -535,6 +535,106 @@ else
   fail "トップレベル url フィールドが空または欠落（GitHub manifest validation エラー）"
 fi
 
+# Issue #110: setup ウィザード Step 2 (app-install) が `gh api /user/installations` を
+# 呼ばず利用者の目視確認経路に切り替わったことを機械検証する。
+# 背景: `/user/installations` は GitHub App user-to-server token 専用で利用者 PAT では 403。
+# Issue #56 dogfooding で発覚し、本 Issue で目視確認経路に切替えた。
+echo "=== Step 2 目視確認経路への切替検証 (Issue #110) ==="
+
+# assert 1: app-install ステップの verify が { ok: true, reason: 'manual_confirmation' } を返す
+# （= gh api 呼び出しを伴わない no-op）
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const appInstall = steps.find((s) => s.id === "app-install");
+if (!appInstall) { console.error("app-install step not found"); process.exit(1); }
+if (typeof appInstall.verify !== "function") { console.error("verify must be a function (manual confirmation no-op)"); process.exit(1); }
+const r = appInstall.verify({ credentials: { id: 12345 }, appIdString: "12345" });
+if (!r || r.ok !== true) { console.error("verify must return { ok: true } for manual confirmation, got:", r); process.exit(1); }
+if (r.reason !== "manual_confirmation") { console.error("verify reason must be manual_confirmation, got:", r.reason); process.exit(1); }
+'; then
+  pass "app-install の verify が { ok: true, reason: 'manual_confirmation' } を返す（Issue #110: 目視確認経路）"
+else
+  fail "app-install の verify が目視確認経路（manual_confirmation）になっていない"
+fi
+
+# assert 2: app-install の verify 実行で spawnSync（= gh api 呼び出し）が発生しない
+# （根本原因の機械保証: `/user/installations` が呼ばれなくなったこと）
+if node -e '
+const cp = require("child_process");
+const origSpawnSync = cp.spawnSync;
+let spawnSyncCalled = false;
+cp.spawnSync = function() { spawnSyncCalled = true; return { status: 0, stdout: "{}", stderr: "" }; };
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const appInstall = steps.find((s) => s.id === "app-install");
+const r = appInstall.verify({ credentials: { id: 12345 }, appIdString: "12345" });
+cp.spawnSync = origSpawnSync;
+if (spawnSyncCalled) { console.error("spawnSync was called during app-install.verify (gh api still invoked)"); process.exit(1); }
+if (!r || r.ok !== true) { console.error("verify must return ok:true"); process.exit(1); }
+'; then
+  pass "app-install の verify が spawnSync を呼ばない（gh api /user/installations 経路が完全に消えた）"
+else
+  fail "app-install の verify が依然として spawnSync を呼ぶ（403 問題が再発する可能性）"
+fi
+
+# assert 3: app-install ステップに getInstructions が存在し、利用者誘導文言を含む
+# （目視確認経路の UX 担保: 自動検証できない理由 + 警告を必ず表示する）
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const appInstall = steps.find((s) => s.id === "app-install");
+if (typeof appInstall.getInstructions !== "function") { console.error("getInstructions must be a function"); process.exit(1); }
+const instr = appInstall.getInstructions({ credentials: { id: 12345 }, appIdString: "12345" });
+if (typeof instr !== "string" || instr.length === 0) { console.error("getInstructions must return non-empty string"); process.exit(1); }
+if (!/目視/.test(instr)) { console.error("instructions must mention 目視確認 rationale"); process.exit(1); }
+if (!/自動検証/.test(instr)) { console.error("instructions must mention 自動検証 limitation"); process.exit(1); }
+if (!/インストール/.test(instr)) { console.error("instructions must mention インストール guidance"); process.exit(1); }
+'; then
+  pass "app-install の getInstructions が利用者誘導文言（目視 / 自動検証 / インストール）を含む"
+else
+  fail "app-install の getInstructions が利用者誘導文言を欠く"
+fi
+
+# assert 4: app-install の getUrl が /installations/new を含む（既存 UX の回帰防止）
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const appInstall = steps.find((s) => s.id === "app-install");
+const url = appInstall.getUrl({ credentials: { html_url: "https://github.com/apps/vibehawk-for-alice" } });
+if (typeof url !== "string" || !url.includes("/installations/new")) {
+  console.error("getUrl must include /installations/new, got:", url);
+  process.exit(1);
+}
+'; then
+  pass "app-install の getUrl が /installations/new を含む（既存 UX 回帰防止）"
+else
+  fail "app-install の getUrl が /installations/new を含まない"
+fi
+
+# assert 5: cli/verify.js の verifyAppInstallation export が維持されている
+# （将来 App JWT 経由で検証復活させる際の拡張余地、計画段階の設計判断）
+if node -e '
+const verify = require("./cli/verify");
+if (typeof verify.verifyAppInstallation !== "function") {
+  console.error("verifyAppInstallation export must be retained for future re-use");
+  process.exit(1);
+}
+'; then
+  pass "cli/verify.js の verifyAppInstallation export が維持されている（将来再利用余地）"
+else
+  fail "cli/verify.js の verifyAppInstallation export が失われた"
+fi
+
+# assert 6: cli/setup.js の実コード（コメント除外）が /user/installations 文字列を参照しない
+# （根本原因の機械保証: setup.js のランタイムから `/user/installations` 呼び出しが完全に消えた）
+# 行頭が // または * のコメント行を除外したうえで grep（既存の CISO 検証パターンと同方式）
+if grep -vE '^\s*(//|\*)' cli/setup.js | grep -F '/user/installations' > /dev/null; then
+  fail "cli/setup.js の実コードが /user/installations を参照（Issue #110 の根本原因が残存）"
+else
+  pass "cli/setup.js の実コードが /user/installations を参照しない（Issue #110 根本原因の機械保証）"
+fi
+
 # Issue #91 dogfooding 計測機能の機械検証
 # 完了条件「dogfooding で 5 分以内に完走することを確認」を客観的に判定可能にする実装が入っていることを検証
 echo "=== dogfooding 計測機能検証 (Issue #91) ==="
