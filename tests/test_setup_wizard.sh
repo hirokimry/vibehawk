@@ -535,5 +535,85 @@ else
   fail "トップレベル url フィールドが空または欠落（GitHub manifest validation エラー）"
 fi
 
+# Issue #91 dogfooding 計測機能の機械検証
+# 完了条件「dogfooding で 5 分以内に完走することを確認」を客観的に判定可能にする実装が入っていることを検証
+echo "=== dogfooding 計測機能検証 (Issue #91) ==="
+
+# assert 1: cli/setup.js に Date.now() 呼び出しが含まれる（所要時間計測の存在）
+if grep -F 'Date.now()' cli/setup.js > /dev/null; then
+  pass "cli/setup.js に Date.now() 呼び出しが存在する（所要時間計測の起点）"
+else
+  fail "cli/setup.js に Date.now() 呼び出しがない（所要時間計測されない）"
+fi
+
+# assert 2: cli/setup.js に durationMs フィールド書き込みが存在する（summary への所要時間記録）
+if grep -F 'durationMs' cli/setup.js > /dev/null; then
+  pass "cli/setup.js に durationMs フィールドが存在する（summary に所要時間が記録される）"
+else
+  fail "cli/setup.js に durationMs フィールドがない（summary に所要時間が記録されない）"
+fi
+
+# assert 3: 5 分閾値定数 DOGFOODING_TARGET_MS が 300_000 ms（5 * 60 * 1000）として定義される
+target_ms=$(node -e 'console.log(require("./cli/setup").DOGFOODING_TARGET_MS)')
+if [[ "$target_ms" == "300000" ]]; then
+  pass "DOGFOODING_TARGET_MS が 300000 ms（Issue #91 完了条件: 5 分以内）"
+else
+  fail "DOGFOODING_TARGET_MS が 300000 ms ではない (got: $target_ms)、完了条件と整合しない"
+fi
+
+# assert 4: formatDuration が境界値で破綻しない（NaN / 負数 / 非数値 → 'n/a' フォールバック）
+if node -e '
+const { formatDuration } = require("./cli/setup");
+const checks = [
+  [formatDuration(500), "500ms"],
+  [formatDuration(5000), "5.0s"],
+  [formatDuration(65000), "1m5s"],
+  [formatDuration(300000), "5m0s"],
+  [formatDuration(NaN), "n/a"],
+  [formatDuration(-1), "n/a"],
+  [formatDuration("abc"), "n/a"],
+];
+for (const [actual, expected] of checks) {
+  if (actual !== expected) {
+    console.error(`formatDuration mismatch: actual=${actual} expected=${expected}`);
+    process.exit(1);
+  }
+}
+'; then
+  pass "formatDuration が境界値（NaN / 負数 / 非数値）を n/a にフォールバックする"
+else
+  fail "formatDuration が境界値で想定通りの文字列を返さない"
+fi
+
+# assert 5: dry-run で所要時間表示が stdout に出る（E2E 確認）
+dry_run_output=$(node cli/index.js setup --dry-run --owner test --repo test/test 2>&1)
+if echo "$dry_run_output" | grep -F 'dogfooding 計測' > /dev/null; then
+  pass "dry-run 実行で「dogfooding 計測」見出しが表示される"
+else
+  fail "dry-run 実行で「dogfooding 計測」見出しが表示されない"
+fi
+
+if echo "$dry_run_output" | grep -F '5m0s' > /dev/null; then
+  pass "dry-run 実行で「5m0s」（5 分目標）が表示される"
+else
+  fail "dry-run 実行で「5m0s」（5 分目標）が表示されない"
+fi
+
+# assert 6: run() 戻り値に durationMs が含まれる（プログラマブル利用の保証）
+if node -e '
+const setup = require("./cli/setup");
+(async () => {
+  const result = await setup.run({ argv: ["--dry-run", "--owner", "test", "--repo", "test/test"] });
+  if (typeof result.durationMs !== "number") {
+    console.error("durationMs is not a number:", result);
+    process.exit(1);
+  }
+})();
+' > /dev/null 2>&1; then
+  pass "run() の戻り値に durationMs（number）が含まれる"
+else
+  fail "run() の戻り値に durationMs（number）が含まれない"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
