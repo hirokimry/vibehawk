@@ -161,7 +161,23 @@ function buildSteps({ owner, repo }) {
     {
       id: 'workflow',
       label: 'workflow ファイル PR を作成',
-      run: async () => {
+      run: async (state) => {
+        // Issue #111 / PR #118 CodeRabbit 指摘: Step 5 (secret-token) が skip された場合、
+        // executeStep が state.oauthToken に空文字を sentinel として残す。Step 6 開始時に
+        // それを検知し、CLAUDE_CODE_OAUTH_TOKEN が未登録のままでは workflow 実行時に
+        // claude-code-action 起動が失敗する旨を利用者に案内する。
+        // 未登録でも workflow PR 自体は作成する（Issue #111「Step 6 で『OAuth token が未登録です。
+        // 手動登録が必要です』と最終メッセージを出力しつつ workflow PR は作成する」要件）。
+        if (state && state.oauthToken === '') {
+          clack.note(
+            [
+              'CLAUDE_CODE_OAUTH_TOKEN が未登録です。手動登録が必要です。',
+              `   GitHub Secrets UI: https://github.com/${repo}/settings/secrets/actions`,
+              '   未登録のまま workflow を実行すると claude-code-action が起動失敗します。',
+            ].join('\n'),
+            '⚠️ OAuth token 未登録'
+          );
+        }
         // 既存 createWorkflowPr を再利用。冪等性: 既存ファイル検出時は overwrite なしならスキップ判定
         try {
           const result = await install.createWorkflowPr({ repo, overwrite: false });
@@ -284,6 +300,12 @@ async function executeStep(step, state, summary, dryRun) {
       }
       if (action === 'skip') {
         // Issue #111: hint を summary に保存することで、完走サマリで未登録 secrets の詳細を表示できる
+        // Issue #111 / PR #118 CodeRabbit 指摘: secret-token を skip した時点で state.oauthToken に
+        // 空文字列の sentinel を残し、後続 workflow ステップ開始前に「OAuth token が未登録」を
+        // 案内できるようにする（buildState 初期値 null → skip 確定の空文字を区別する）
+        if (step.id === 'secret-token') {
+          state.oauthToken = '';
+        }
         summary.push({ id: step.id, label: step.label, status: 'skipped', hint: r.hint, durationMs: elapsed() });
         runEarlyExit = true;
         break;
@@ -292,6 +314,11 @@ async function executeStep(step, state, summary, dryRun) {
     }
     if (runEarlyExit) return;
     if (!runOk) {
+      // Issue #111 / PR #118 CodeRabbit 指摘: 最大リトライ到達時も skip 扱いになるので
+      // secret-token の sentinel を残しておく
+      if (step.id === 'secret-token') {
+        state.oauthToken = '';
+      }
       summary.push({ id: step.id, label: step.label, status: 'skipped', hint: 'run フェーズが最大リトライ回数に到達', durationMs: elapsed() });
       return;
     }
@@ -353,10 +380,20 @@ async function executeStep(step, state, summary, dryRun) {
         throw new CancelError(step.id);
       }
       if (action === 'skip') {
+        // Issue #111 / PR #118 CodeRabbit 指摘: verify フェーズで skip された secret-token も
+        // workflow ステップで「OAuth token 未登録」案内対象にするため、空文字 sentinel を残す
+        // （verifySecret 失敗 = Secrets 未登録のため、後続 workflow 実行は失敗する前提）
+        if (step.id === 'secret-token') {
+          state.oauthToken = '';
+        }
         summary.push({ id: step.id, label: step.label, status: 'skipped', hint, durationMs: elapsed() });
         return;
       }
       // retry: 次のループで再検証
+    }
+    // Issue #111 / PR #118 CodeRabbit 指摘: verify 最大リトライ到達時の skip でも sentinel を残す
+    if (step.id === 'secret-token') {
+      state.oauthToken = '';
     }
     summary.push({ id: step.id, label: step.label, status: 'skipped', hint: '最大リトライ回数に到達', durationMs: elapsed() });
     return;
