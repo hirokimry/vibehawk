@@ -562,6 +562,8 @@ else
 fi
 
 # assert 4: formatDuration が境界値で破綻しない（NaN / 負数 / 非数値 → 'n/a' フォールバック）
+# - 59.95s 以上の境界値（toFixed(1) で "60.0" に丸まる）は "1m0s" に繰り上げる
+# - 119999ms（Math.round で remainSeconds=60 となるケース）は "2m0s" に繰り上げる
 if node -e '
 const { formatDuration } = require("./cli/setup");
 const checks = [
@@ -572,6 +574,9 @@ const checks = [
   [formatDuration(NaN), "n/a"],
   [formatDuration(-1), "n/a"],
   [formatDuration("abc"), "n/a"],
+  [formatDuration(59999), "1m0s"],
+  [formatDuration(59500), "59.5s"],
+  [formatDuration(119999), "2m0s"],
 ];
 for (const [actual, expected] of checks) {
   if (actual !== expected) {
@@ -580,7 +585,7 @@ for (const [actual, expected] of checks) {
   }
 }
 '; then
-  pass "formatDuration が境界値（NaN / 負数 / 非数値）を n/a にフォールバックする"
+  pass "formatDuration が境界値（NaN / 負数 / 非数値 / 60s 境界）で破綻しない"
 else
   fail "formatDuration が境界値で想定通りの文字列を返さない"
 fi
@@ -613,6 +618,27 @@ const setup = require("./cli/setup");
   pass "run() の戻り値に durationMs（number）が含まれる"
 else
   fail "run() の戻り値に durationMs（number）が含まれない"
+fi
+
+# assert 7: run() 戻り値に meetsDogfoodingTarget が含まれる（dry-run でも API 形状が一致）
+# dry-run はほぼ即時完了するため totalElapsedMs <= DOGFOODING_TARGET_MS が成立し true になる
+if node -e '
+const setup = require("./cli/setup");
+(async () => {
+  const result = await setup.run({ argv: ["--dry-run", "--owner", "test", "--repo", "test/test"] });
+  if (typeof result.meetsDogfoodingTarget !== "boolean") {
+    console.error("meetsDogfoodingTarget is not a boolean:", result);
+    process.exit(1);
+  }
+  if (result.meetsDogfoodingTarget !== true) {
+    console.error("meetsDogfoodingTarget is not true for dry-run:", result);
+    process.exit(1);
+  }
+})();
+' > /dev/null 2>&1; then
+  pass "run() の戻り値に meetsDogfoodingTarget（boolean, dry-run で true）が含まれる"
+else
+  fail "run() の戻り値に meetsDogfoodingTarget が含まれない、または期待値（true）と異なる"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

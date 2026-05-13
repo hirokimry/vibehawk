@@ -26,10 +26,22 @@ const DOGFOODING_TARGET_MS = 5 * 60 * 1000;
 function formatDuration(ms) {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return 'n/a';
   if (ms < 1000) return `${ms}ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainSeconds = Math.round(seconds - minutes * 60);
+  if (ms < 60000) {
+    const seconds = ms / 1000;
+    const secondsLabel = seconds.toFixed(1);
+    // 境界値（59.95s 以上で toFixed(1) が "60.0" に丸まる）は分単位へ繰り上げて表示する
+    if (secondsLabel === '60.0') {
+      return '1m0s';
+    }
+    return `${secondsLabel}s`;
+  }
+  let minutes = Math.floor(ms / 60000);
+  let remainSeconds = Math.round((ms - minutes * 60000) / 1000);
+  // 境界値で Math.round が 60 になった場合は分に繰り上げ、秒を 0-59 に正規化する
+  if (remainSeconds >= 60) {
+    minutes += Math.floor(remainSeconds / 60);
+    remainSeconds = remainSeconds % 60;
+  }
   return `${minutes}m${remainSeconds}s`;
 }
 
@@ -440,6 +452,7 @@ async function run({ argv = process.argv.slice(3) } = {}) {
 
   if (dryRun) {
     const dryRunElapsedMs = Date.now() - wizardStartTime;
+    const dryRunMeetsTarget = dryRunElapsedMs <= DOGFOODING_TARGET_MS;
     clack.note(
       [
         `所要時間: ${formatDuration(dryRunElapsedMs)}`,
@@ -449,7 +462,13 @@ async function run({ argv = process.argv.slice(3) } = {}) {
     );
     clack.outro('⚙️ --dry-run のため実際の操作は行いませんでした。');
     clearState(state);
-    return { dryRun: true, owner, repo, durationMs: dryRunElapsedMs };
+    return {
+      dryRun: true,
+      owner,
+      repo,
+      durationMs: dryRunElapsedMs,
+      meetsDogfoodingTarget: dryRunMeetsTarget,
+    };
   }
 
   const STEPS = buildSteps({ owner, repo });
