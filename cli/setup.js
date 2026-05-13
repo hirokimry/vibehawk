@@ -255,8 +255,21 @@ async function executeStep(step, state, summary, dryRun) {
       try {
         r = await step.run(state);
       } catch (e) {
-        s.stop(`❌ ${e.message}`);
-        throw e;
+        // Issue #111: 既存実装は throw e で再送出していたため、Step 5 の OAuth token 取得失敗
+        // （oauth.setupToken → promptToken → validateToken の reject）でウィザード全体が
+        // 「予期しないエラー: vibehawk: OAuth token が空です」で異常終了し Step 6 に到達できなかった。
+        // CancelError のみは再 throw（ユーザー中止を尊重）。それ以外の throw は { ok: false, hint }
+        // 化して既存 retry/skip/cancel フローに合流させる。
+        // CISO 観点: e.message を hint/stdout に出すが、oauth.js の validateToken は throw メッセージ
+        // に token 値を埋め込まない実装（"vibehawk: OAuth token が空です" / "...形式が想定外です..."
+        // のみ）。これにより isSensitive: true のステップでも値漏洩は起きない（Phase 3 テストで機械検証）。
+        if (e instanceof CancelError) {
+          s.stop(`❌ ${e.message}`);
+          throw e;
+        }
+        // 直後の `if (r.ok)` 分岐で s.stop が再度呼ばれるため、ここでは stop しない
+        // （二重表示防止、@clack/prompts spinner の stop は idempotent ではないため）
+        r = { ok: false, hint: e.message };
       }
       if (r.ok) {
         s.stop(`✅ ${r.info || '完了'}`);
@@ -270,7 +283,8 @@ async function executeStep(step, state, summary, dryRun) {
         throw new CancelError(step.id);
       }
       if (action === 'skip') {
-        summary.push({ id: step.id, label: step.label, status: 'skipped', durationMs: elapsed() });
+        // Issue #111: hint を summary に保存することで、完走サマリで未登録 secrets の詳細を表示できる
+        summary.push({ id: step.id, label: step.label, status: 'skipped', hint: r.hint, durationMs: elapsed() });
         runEarlyExit = true;
         break;
       }
@@ -530,12 +544,44 @@ async function run({ argv = process.argv.slice(3) } = {}) {
       : `⚠️ 5 分を超えました（${totalDurationLabel}）— ボトルネック分析: 上記の所要時間ログを確認してください`,
   ];
 
+  // Issue #111: 未登録 secrets 一覧と次のアクション（Secrets UI URL）を表示
+  // skipped ステップから secret 名を抽出し、CEO が手動補完する際の URL を提示する
+  const SECRET_STEP_TO_NAME = {
+    'secret-app-id': 'VIBEHAWK_APP_ID',
+    'secret-pem': 'VIBEHAWK_PRIVATE_KEY',
+    'secret-token': 'CLAUDE_CODE_OAUTH_TOKEN',
+  };
+  const unregisteredSecrets = skipped
+    .map((s) => SECRET_STEP_TO_NAME[s.id])
+    .filter((name) => typeof name === 'string' && name.length > 0);
+  const workflowSkipped = skipped.some((s) => s.id === 'workflow');
+  const secretsActionLines = [];
+  if (unregisteredSecrets.length > 0) {
+    secretsActionLines.push(
+      '',
+      '⚠️ 未登録 secrets:',
+      ...unregisteredSecrets.map((name) => `   - ${name}`),
+      '',
+      '次のアクション（手動補完）:',
+      `   GitHub Secrets UI: https://github.com/${repo}/settings/secrets/actions`,
+      '   上記 URL で未登録 secret を Name 完全一致で登録してから動作確認してください。',
+    );
+  }
+  if (workflowSkipped) {
+    secretsActionLines.push(
+      '',
+      '⚠️ workflow PR が未作成です。',
+      '   `npx vibehawk install --owner <user>` の workflow 配置経路で手動補完してください。',
+    );
+  }
+
   clack.note(
     [
       `完了: ${completed.length}/${STEPS.length}, スキップ: ${skipped.length}`,
       '',
       ...lines,
       ...dogfoodingLines,
+      ...secretsActionLines,
       ...(skipped.length > 0
         ? [
             '',
