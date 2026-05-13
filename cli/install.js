@@ -104,6 +104,50 @@ function redactCredentials(credentials) {
   return credentials;
 }
 
+// Issue #60: GitHub Manifest Flow が返した App 名が想定名と一致するか検証する。
+// 想定名と異なる場合（GitHub が同名 App 既存により連番を付与した場合等）は
+// docs/POLICY.md L175 「命名は vibehawk-for-<owner> 形式に厳密に従うこと」MUST 違反
+// となるため、ここで明示的に throw して非ゼロ終了する（CEO 判断 B、2026-05-09）。
+//
+// throw 前に redactCredentials を呼び、Private Key を呼び出し元のメモリに残さない
+// （CISO Critical 条件）。slug / html_url は redact 対象外だが、念のため redact 前に
+// ローカル変数に保持してから redact を呼ぶ防御的実装とする。
+function assertCanonicalAppName(credentials, expectedAppName) {
+  if (!credentials || typeof credentials !== 'object') return;
+  if (!expectedAppName) return;
+  if (credentials.name === expectedAppName) return;
+
+  // redact 前に必要情報をローカル変数に保持（slug は現状 redact 対象外だが防御的に）
+  const actualName = credentials.name;
+  const slug = credentials.slug;
+  // 既存 App 削除手順用 URL（slug が取れない場合は一般的な Apps 設定ページを案内）
+  const appSettingsUrl = slug
+    ? `https://github.com/settings/apps/${slug}`
+    : 'https://github.com/settings/apps';
+
+  // CISO Critical: throw 経路でも Private Key を呼び出し元メモリに残さない
+  redactCredentials(credentials);
+
+  throw new Error(
+    [
+      `vibehawk: 命名統制衝突を検出しました — 想定名「${expectedAppName}」に対し、`,
+      `GitHub から返された実際の名前は「${actualName}」です。`,
+      `同名 App が既に存在するため GitHub が連番（例: ${expectedAppName}-2）を付与した可能性があります。`,
+      ``,
+      `これは docs/POLICY.md「命名は vibehawk-for-<owner> 形式に厳密に従うこと」MUST 違反のため、`,
+      `処理を中断します。連番付き App は即時削除してください。`,
+      ``,
+      `対処手順:`,
+      `  1. 連番付き App を GitHub UI で削除: ${appSettingsUrl}`,
+      `  2. 既存「${expectedAppName}」App を確認し、不要であれば削除（https://github.com/settings/apps）`,
+      `  3. 再実行: npx vibehawk install --owner ${expectedAppName.replace(/^vibehawk-for-/, '')}`,
+      `     または別の owner 名で実行: npx vibehawk install --owner <別の名前>`,
+      ``,
+      `詳細は README.md「命名統制衝突（連番付与）が検出された場合」を参照してください。`,
+    ].join('\n')
+  );
+}
+
 async function run({
   port = DEFAULT_PORT,
   openBrowser = defaultOpenBrowser,
@@ -170,6 +214,10 @@ async function run({
     console.log('vibehawk: GitHub から認可コードを受信しました。App credentials に変換します...');
   }
   const credentials = await exchangeCode(code);
+
+  // Issue #60 / CEO 判断 B（2026-05-09）: 連番命名検出時はエラーで中断する
+  // skipPrintResult: true（setup ウィザード経路）でも throw されるよう、printResult より前に検証する
+  assertCanonicalAppName(credentials, appName);
 
   if (skipPrintResult) {
     // Issue #91: ヘッドレス呼び出し時は printResult を呼ばないが、
@@ -340,14 +388,8 @@ function printResult(credentials, expectedAppName, repo) {
   console.log(`Slug:       ${credentials.slug}`);
   console.log(`HTML URL:   ${credentials.html_url}`);
   console.log('');
-  if (expectedAppName && credentials.name !== expectedAppName) {
-    console.log('⚠️ 命名統制衝突検出:');
-    console.log(`   想定名: ${expectedAppName}`);
-    console.log(`   実際:   ${credentials.name}`);
-    console.log('   GitHub 側で同名 App が既に存在する場合、自動的に連番が付与される可能性があります。');
-    console.log('   既存の vibehawk-for-<owner> App を一度確認してから再実行してください。');
-    console.log('');
-  }
+  // Issue #60 / CEO 判断 B: 命名統制衝突は assertCanonicalAppName() で throw されるため
+  // ここに到達する時点で credentials.name === expectedAppName が保証されている（責務分離）
   console.log('=== 次のステップ（経路 2 必須化、全手動 secrets 登録、Issue #61 / #72 / #74 確定）===');
   console.log('');
   console.log(`1. App を対象リポジトリにインストール:`);
@@ -632,6 +674,7 @@ module.exports = {
   promptConsent,
   printPlan,
   createWorkflowPr,
+  assertCanonicalAppName,
   DEFAULT_PORT,
   WORKFLOW_BRANCH,
   WORKFLOW_PATH,
