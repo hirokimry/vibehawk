@@ -13,7 +13,9 @@ const { spawnSync } = require('child_process');
 const clack = require('@clack/prompts');
 const install = require('./install');
 const oauth = require('./oauth');
-const { verifySecret, verifyAppInstallation, verifyWorkflow } = require('./verify');
+// Issue #110: verifyAppInstallation の import は削除（Step 2 を目視確認経路に切替）。
+// cli/verify.js での export は将来 App JWT 経由で検証復活させる際の拡張余地として維持する。
+const { verifySecret, verifyWorkflow } = require('./verify');
 const { parseOwnerArg, validateOwner } = require('./naming');
 const { parseRepoArg } = require('./oauth');
 
@@ -97,7 +99,20 @@ function buildSteps({ owner, repo }) {
       id: 'app-install',
       label: 'App を対象リポジトリにインストール',
       getUrl: (state) => `${state.credentials && state.credentials.html_url}/installations/new`,
-      verify: (state) => verifyAppInstallation(repo, state.credentials && state.credentials.id),
+      // Issue #110: `gh api /user/installations` および `/repos/:owner/:repo/installation` は
+      // GitHub App user-to-server token / JWT 専用エンドポイントで、利用者の通常 `gh auth login`
+      // トークン（PAT）では 403 になる仕様（Issue #56 dogfooding で発覚）。通常 PAT で App の
+      // インストール状態を確認する公式 API は GitHub REST API に存在しないため、自動検証を
+      // 行わず利用者の目視確認に委ねる。インストール忘れは Step 3 以降（VIBEHAWK_APP_ID 登録
+      // → Private Key 生成）で間接的に露呈する。verifyAppInstallation 関数自体は cli/verify.js
+      // に残し export を維持する（将来 App JWT 経由で検証復活させる際の拡張余地）。
+      getInstructions: () =>
+        [
+          '上記 URL を開き「Install」を押して対象リポジトリにインストールしてください。',
+          '通常 PAT では App インストール状態を自動検証できない GitHub 仕様のため、利用者の目視確認に委ねます。',
+          'インストールせずに Enter を押すと後続 Step 3-6 が失敗します。',
+        ].join('\n'),
+      verify: () => ({ ok: true, reason: 'manual_confirmation', hint: '' }),
       isSensitive: false,
       getValue: (state) => state.appIdString,
     },
