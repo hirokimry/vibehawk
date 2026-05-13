@@ -3,6 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const readline = require('readline');
 const { spawn, spawnSync } = require('child_process');
 const { URL } = require('url');
@@ -271,6 +272,10 @@ function promptOwner() {
 
 function waitForCallback({ port, manifest, openBrowser }) {
   return new Promise((resolve, reject) => {
+    // CSRF 対策: cryptographically secure な state を生成し、/start のフォーム POST に埋め込み、
+    // /callback で照合する。loopback bind (127.0.0.1) と合わせて多層防御を実現（Issue #59）
+    const expectedState = crypto.randomBytes(32).toString('hex');
+    const expectedStateBuf = Buffer.from(expectedState, 'utf8');
     const server = http.createServer((req, res) => {
       const reqUrl = new URL(req.url, `http://localhost:${port}`);
       if (reqUrl.pathname === '/start') {
@@ -283,6 +288,7 @@ function waitForCallback({ port, manifest, openBrowser }) {
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#39;');
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        // state は [a-f0-9] のみの hex 文字列なので HTML エスケープ不要
         res.end(`<!DOCTYPE html>
 <html lang="ja">
 <head><meta charset="utf-8"><title>vibehawk install</title></head>
@@ -290,11 +296,27 @@ function waitForCallback({ port, manifest, openBrowser }) {
 <h1>vibehawk: GitHub に App 作成画面を開きます...</h1>
 <form id="form" method="post" action="https://github.com/settings/apps/new">
   <input type="hidden" name="manifest" value="${escaped}" />
+  <input type="hidden" name="state" value="${expectedState}" />
 </form>
 <script>document.getElementById('form').submit();</script>
 </body>
 </html>`);
       } else if (reqUrl.pathname === '/callback') {
+        // CSRF 対策（Issue #59）: state を timing-safe に照合する。
+        // 不一致／欠落は CSRF 試行とみなしてサーバ即時停止 + reject で abort する。
+        const receivedState = reqUrl.searchParams.get('state') || '';
+        const receivedStateBuf = Buffer.from(receivedState, 'utf8');
+        const stateValid =
+          receivedStateBuf.length === expectedStateBuf.length &&
+          crypto.timingSafeEqual(receivedStateBuf, expectedStateBuf);
+        if (!stateValid) {
+          res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end('<h1>vibehawk: state mismatch (CSRF 防止のためリクエストを拒否)</h1>');
+          clearTimeout(timeoutId);
+          server.close();
+          reject(new Error('vibehawk: state mismatch — CSRF 防止のためインストールを中断しました。`npx vibehawk install` を再実行してください。'));
+          return;
+        }
         const code = reqUrl.searchParams.get('code');
         if (!code) {
           res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
