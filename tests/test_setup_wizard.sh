@@ -794,5 +794,345 @@ else
   fail "cli/setup.js の再取得案内に alias 回避形式（\\claude setup-token）が含まれていない"
 fi
 
+# Issue #111: setup ウィザードが OAuth token 取得失敗で異常終了せず Step 6 まで継続することの機械検証
+#
+# 根本原因: cli/setup.js executeStep の run フェーズ try-catch が再 throw していたため、
+# Step 5 (secret-token) で oauth.setupToken → promptToken → validateToken が空 token で reject
+# すると、外側 run() の catch で「予期しないエラー」表示 → process.exit(1) でウィザード全体が
+# 異常終了し Step 6 (workflow PR 作成) に到達できなかった。
+#
+# 修正方針: catch 内で CancelError のみ再 throw、それ以外は { ok: false, hint: e.message } 化して
+# 既存の retry/skip/cancel フローに合流させる。
+echo "=== Issue #111: OAuth token 取得失敗時の Step 6 継続検証 ==="
+
+# assert 1: 静的解析 — executeStep の run フェーズ try-catch が CancelError 以外を再 throw しない
+# （CancelError のみ再 throw、それ以外は { ok: false, hint: ... } 化）
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/setup.js", "utf8");
+const m = src.match(/async function executeStep[\s\S]*?\n\}/);
+if (!m) { console.error("executeStep not found"); process.exit(1); }
+const body = m[0];
+// run フェーズ try-catch ブロックを抽出
+const runTryCatch = body.match(/r\s*=\s*await\s+step\.run\(state\);\s*\}\s*catch\s*\(e\)\s*\{[\s\S]*?\}\s*if\s*\(r\.ok\)/);
+if (!runTryCatch) { console.error("run try-catch block not found"); process.exit(1); }
+// 行頭が // で始まる行コメントを除外してから throw e をカウント（コメント文中の説明文を誤検出しない）
+const catchBodyNoComments = runTryCatch[0].split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
+// CancelError 分岐があり、その分岐内でのみ throw e する形であること
+if (!/if\s*\(\s*e\s+instanceof\s+CancelError\s*\)/.test(catchBodyNoComments)) {
+  console.error("CancelError instanceof branch not found in run catch");
+  process.exit(1);
+}
+// catch ブロック内に通常の throw e（CancelError 分岐外）が無いこと
+// → CancelError 分岐の throw e 以外に throw e があるか確認
+const throwCount = (catchBodyNoComments.match(/throw\s+e\b/g) || []).length;
+if (throwCount !== 1) {
+  console.error("expected exactly 1 throw e (inside CancelError branch), got:", throwCount);
+  console.error("catchBodyNoComments:\n" + catchBodyNoComments);
+  process.exit(1);
+}
+// catch ブロック内で r = { ok: false, hint: ... } 化していること
+if (!/r\s*=\s*\{\s*ok:\s*false[^}]*hint/.test(catchBodyNoComments)) {
+  console.error("catch block must set r = { ok: false, hint: ... }");
+  process.exit(1);
+}
+'; then
+  pass "executeStep run フェーズ try-catch: CancelError のみ再 throw、それ以外は { ok: false, hint } 化（Issue #111 根本修正）"
+else
+  fail "executeStep run フェーズ try-catch が Issue #111 修正方針と異なる（CancelError 以外を再 throw する可能性）"
+fi
+
+# assert 2: setup.run() が Step 5 で oauth.setupToken throw 時に process.exit(1) せず完走することの動的検証
+# - @clack/prompts をモック化（select は 'skip' を返す、text は空文字を返す）
+# - child_process.spawnSync をモック化（gh コマンドを成功偽装）
+# - cli/oauth を require.cache 差し替えで setupToken が throw する形に置き換え
+# - cli/install を require.cache 差し替えで run / createWorkflowPr を成功偽装
+# - cli/verify を require.cache 差し替えで全 verify を { ok: true } 返却に偽装
+# - setup.run を呼び、process.exit(1) ではなく summary が返ることを確認
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+
+// @clack/prompts モック: select は skip 固定、text は空文字、spinner は no-op
+require.cache[require.resolve("@clack/prompts")] = {
+  exports: {
+    intro: () => {},
+    outro: () => {},
+    text: async () => "",
+    select: async () => "skip",
+    note: () => {},
+    spinner: () => ({ start: () => {}, stop: () => {} }),
+    cancel: () => {},
+    isCancel: () => false,
+    group: async () => {},
+  },
+};
+
+// child_process.spawnSync モック: gh コマンド全てを success 偽装（checkGhAuth 通過用）
+const cp = require("child_process");
+const origSpawnSync = cp.spawnSync;
+cp.spawnSync = function() { return { status: 0, stdout: "{}", stderr: "" }; };
+
+// cli/install を success 偽装（app-create / workflow ステップ通過用）
+require.cache[require.resolve("./cli/install")] = {
+  exports: {
+    run: async () => ({ id: 12345, name: "vibehawk-for-test", html_url: "https://github.com/apps/vibehawk-for-test" }),
+    createWorkflowPr: async () => ({ url: "https://github.com/test/test/pull/1" }),
+  },
+};
+
+// cli/verify を success 偽装（各検証ステップ通過用）
+require.cache[require.resolve("./cli/verify")] = {
+  exports: {
+    verifySecret: () => ({ ok: true, reason: "found", hint: "" }),
+    verifyAppInstallation: () => ({ ok: true, reason: "installed_via_user", hint: "" }),
+    verifyWorkflow: () => ({ ok: true, reason: "found", hint: "" }),
+  },
+};
+
+// cli/oauth を setupToken が throw する形にモック（Issue #111 の根本ケース再現）
+// copyToClipboard も必須（setup.js が require 時に参照）
+require.cache[require.resolve("./cli/oauth")] = {
+  exports: {
+    setupToken: async () => { throw new Error("vibehawk: OAuth token が空です"); },
+    copyToClipboard: () => ({ success: true }),
+    parseRepoArg: () => null,
+  },
+};
+
+// process.exit を捕捉して呼ばれたら fail
+const origExit = process.exit;
+let exitCode = null;
+process.exit = (code) => { exitCode = code; throw new Error("process.exit(" + code + ") called"); };
+
+const setup = require("./cli/setup");
+setup.run({ argv: ["--owner", "test", "--repo", "test/test"] }).then((result) => {
+  process.exit = origExit;
+  cp.spawnSync = origSpawnSync;
+  if (exitCode !== null) {
+    console.error("process.exit was called with:", exitCode);
+    process.exit(1);
+  }
+  // summary が返り、secret-token が skipped 記録されていることを確認
+  if (!result || !Array.isArray(result.summary)) {
+    console.error("result.summary is not an array");
+    process.exit(1);
+  }
+  const tokenSummary = result.summary.find((s) => s.id === "secret-token");
+  if (!tokenSummary || tokenSummary.status !== "skipped") {
+    console.error("secret-token must be skipped, got:", tokenSummary);
+    process.exit(1);
+  }
+  // hint に「OAuth token が空」由来のメッセージが入っていること（e.message が伝搬している）
+  if (!tokenSummary.hint || !/OAuth token/.test(tokenSummary.hint)) {
+    console.error("secret-token.hint must contain OAuth token error message, got:", tokenSummary.hint);
+    process.exit(1);
+  }
+  // workflow ステップが summary に含まれている（= Step 6 まで到達した）
+  const workflowSummary = result.summary.find((s) => s.id === "workflow");
+  if (!workflowSummary) {
+    console.error("workflow step must be reached (Step 6 to be executed)");
+    process.exit(1);
+  }
+  process.exit(0);
+}).catch((e) => {
+  process.exit = origExit;
+  cp.spawnSync = origSpawnSync;
+  console.error("setup.run threw:", e.message);
+  process.exit(1);
+});
+' > /dev/null 2>&1; then
+  pass "setup.run が Step 5 OAuth token throw 時に process.exit(1) せず、Step 6 まで完走し summary に skipped 記録される（Issue #111 動的検証）"
+else
+  fail "setup.run が Step 5 OAuth token throw 時に異常終了するか Step 6 に到達しない（Issue #111 動的検証失敗）"
+fi
+
+# assert 3: 完走サマリ表示文言（未登録 secrets / Secrets UI URL / 次のアクション）が setup.js に含まれる
+if grep -F '未登録 secrets' cli/setup.js > /dev/null; then
+  pass "cli/setup.js に「未登録 secrets」見出しが含まれる（Phase 2 サマリ拡張）"
+else
+  fail "cli/setup.js に「未登録 secrets」見出しが含まれない（Phase 2 サマリ拡張未実装）"
+fi
+
+if grep -F 'settings/secrets/actions' cli/setup.js > /dev/null; then
+  pass "cli/setup.js に GitHub Secrets UI URL（settings/secrets/actions）が含まれる（Phase 2 サマリ拡張）"
+else
+  fail "cli/setup.js に GitHub Secrets UI URL が含まれない（Phase 2 サマリ拡張未実装）"
+fi
+
+if grep -F '次のアクション' cli/setup.js > /dev/null; then
+  pass "cli/setup.js に「次のアクション」見出しが含まれる（Phase 2 サマリ拡張）"
+else
+  fail "cli/setup.js に「次のアクション」見出しが含まれない（Phase 2 サマリ拡張未実装）"
+fi
+
+# assert 4: SECRET_STEP_TO_NAME の 3 secret 名（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）が
+# サマリ生成ロジックに含まれること
+for secret_name in "VIBEHAWK_APP_ID" "VIBEHAWK_PRIVATE_KEY" "CLAUDE_CODE_OAUTH_TOKEN"; do
+  if grep -F "$secret_name" cli/setup.js > /dev/null; then
+    pass "cli/setup.js に secret 名 '$secret_name' のサマリマッピングが含まれる"
+  else
+    fail "cli/setup.js に secret 名 '$secret_name' のサマリマッピングが含まれない"
+  fi
+done
+
+# assert 5: CISO 観点 — oauth.js の validateToken が throw メッセージに token 値を埋め込まないこと
+# （Issue #111 で e.message を stdout/hint に出すが、値漏洩しないことを機械保証）
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/oauth.js", "utf8");
+const m = src.match(/function validateToken[\s\S]*?\n\}/);
+if (!m) { console.error("validateToken not found"); process.exit(1); }
+const body = m[0];
+// throw new Error(...) の引数文字列に ${token} などの token 値補間がないこと
+// テンプレートリテラル / 連結文字列内に token / answer 変数参照がないか確認
+const throwMatches = body.match(/throw\s+new\s+Error\([^)]*\)/g) || [];
+for (const throwStr of throwMatches) {
+  if (/\$\{token\}|\$\{answer\}|"\s*\+\s*token|"\s*\+\s*answer|token\s*\+\s*"|answer\s*\+\s*"/.test(throwStr)) {
+    console.error("validateToken throws with token value interpolated:", throwStr);
+    process.exit(1);
+  }
+}
+'; then
+  pass "oauth.validateToken の throw メッセージに token 値が埋め込まれない（CISO 観点: Issue #111 値漏洩防止）"
+else
+  fail "oauth.validateToken の throw メッセージに token 値が埋め込まれる可能性（CISO Critical 違反）"
+fi
+
+# Issue #111 / PR #118 CodeRabbit 指摘: secret-token skip 時に state.oauthToken に空文字 sentinel を
+# 残し、Step 6 (workflow) 開始時に「OAuth token が未登録です。手動登録が必要です」と案内する
+echo "=== Issue #111 / PR #118: secret-token skip 時の sentinel + Step 6 未登録案内 検証 ==="
+
+# assert 1: 静的解析 — executeStep の skip 分岐で state.oauthToken = '' を sentinel として残す
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/setup.js", "utf8");
+const m = src.match(/async function executeStep[\s\S]*?\n\}/);
+if (!m) { console.error("executeStep not found"); process.exit(1); }
+const body = m[0];
+// skip 分岐内で secret-token のとき state.oauthToken = "" or '"'"''"'"' をセットしていること
+if (!/step\.id\s*===\s*['\''"]secret-token['\''"]\s*\)\s*\{\s*state\.oauthToken\s*=\s*['\''"]{2}/.test(body)) {
+  console.error("skip branch must set state.oauthToken = '"'"''"'"' when step.id === '"'"'secret-token'"'"'");
+  process.exit(1);
+}
+'; then
+  pass "executeStep の skip 分岐で secret-token のとき state.oauthToken に空文字 sentinel をセットする（PR #118 CodeRabbit Major 対応）"
+else
+  fail "executeStep の skip 分岐で secret-token sentinel がセットされない（PR #118 CodeRabbit 指摘未修正）"
+fi
+
+# assert 2: 静的解析 — workflow ステップの run が state.oauthToken === '' を検知して案内する
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/setup.js", "utf8");
+// workflow ステップの run 関数を抽出（id: "workflow" から次の閉じ括弧まで）
+const m = src.match(/id:\s*['\''"]workflow['\''"][\s\S]*?run:\s*async[\s\S]*?createWorkflowPr/);
+if (!m) { console.error("workflow step run not found"); process.exit(1); }
+const body = m[0];
+// state.oauthToken === "" を検知している
+if (!/state\.oauthToken\s*===\s*['\''"]{2}/.test(body)) {
+  console.error("workflow step run must check state.oauthToken === '"'"''"'"'");
+  process.exit(1);
+}
+// 「OAuth token 未登録」または「CLAUDE_CODE_OAUTH_TOKEN が未登録」相当の案内文言を含むこと
+if (!/CLAUDE_CODE_OAUTH_TOKEN.*未登録|OAuth token.*未登録/.test(body)) {
+  console.error("workflow step run must show CLAUDE_CODE_OAUTH_TOKEN unregistered guidance");
+  process.exit(1);
+}
+'; then
+  pass "workflow ステップ run が state.oauthToken === '' を検知して「OAuth token が未登録」を案内する（PR #118 CodeRabbit Major 対応）"
+else
+  fail "workflow ステップ run で sentinel チェック + 未登録案内が実装されていない（PR #118 CodeRabbit 指摘未修正）"
+fi
+
+# assert 3: 動的検証 — secret-token skip 後、workflow ステップ実行時に state.oauthToken === '' であり
+# 「OAuth token 未登録」案内が clack.note で出力されることを確認
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+
+// clack.note の呼び出しを記録するモック
+const noteCallArgs = [];
+require.cache[require.resolve("@clack/prompts")] = {
+  exports: {
+    intro: () => {},
+    outro: () => {},
+    text: async () => "",
+    select: async () => "skip",
+    note: (content, title) => { noteCallArgs.push({ content: String(content), title: String(title || "") }); },
+    spinner: () => ({ start: () => {}, stop: () => {} }),
+    cancel: () => {},
+    isCancel: () => false,
+    group: async () => {},
+  },
+};
+
+const cp = require("child_process");
+const origSpawnSync = cp.spawnSync;
+cp.spawnSync = function() { return { status: 0, stdout: "{}", stderr: "" }; };
+
+require.cache[require.resolve("./cli/install")] = {
+  exports: {
+    run: async () => ({ id: 12345, name: "vibehawk-for-test", html_url: "https://github.com/apps/vibehawk-for-test" }),
+    createWorkflowPr: async () => ({ url: "https://github.com/test/test/pull/1" }),
+  },
+};
+
+require.cache[require.resolve("./cli/verify")] = {
+  exports: {
+    verifySecret: () => ({ ok: true, reason: "found", hint: "" }),
+    verifyAppInstallation: () => ({ ok: true, reason: "installed_via_user", hint: "" }),
+    verifyWorkflow: () => ({ ok: true, reason: "found", hint: "" }),
+  },
+};
+
+// cli/oauth: setupToken が throw（Step 5 skip ルート発火）
+require.cache[require.resolve("./cli/oauth")] = {
+  exports: {
+    setupToken: async () => { throw new Error("vibehawk: OAuth token が空です"); },
+    copyToClipboard: () => ({ success: true }),
+    parseRepoArg: () => null,
+  },
+};
+
+const origExit = process.exit;
+let exitCode = null;
+process.exit = (code) => { exitCode = code; throw new Error("process.exit(" + code + ") called"); };
+
+const setup = require("./cli/setup");
+setup.run({ argv: ["--owner", "test", "--repo", "test/test"] }).then((result) => {
+  process.exit = origExit;
+  cp.spawnSync = origSpawnSync;
+  if (exitCode !== null) {
+    console.error("process.exit was called with:", exitCode);
+    process.exit(1);
+  }
+  // workflow ステップに到達したこと
+  const workflowSummary = result.summary.find((s) => s.id === "workflow");
+  if (!workflowSummary) {
+    console.error("workflow step must be reached");
+    process.exit(1);
+  }
+  // 「OAuth token 未登録」案内が clack.note で呼ばれていること
+  const unregisteredNote = noteCallArgs.find((arg) =>
+    /OAuth token.*未登録|CLAUDE_CODE_OAUTH_TOKEN.*未登録/.test(arg.content) ||
+    /OAuth token.*未登録|CLAUDE_CODE_OAUTH_TOKEN.*未登録/.test(arg.title)
+  );
+  if (!unregisteredNote) {
+    console.error("clack.note must be called with OAuth token unregistered guidance before workflow step");
+    console.error("all note calls:", JSON.stringify(noteCallArgs.map((a) => a.title), null, 2));
+    process.exit(1);
+  }
+  process.exit(0);
+}).catch((e) => {
+  process.exit = origExit;
+  cp.spawnSync = origSpawnSync;
+  console.error("setup.run threw:", e.message);
+  process.exit(1);
+});
+' > /dev/null 2>&1; then
+  pass "setup.run が secret-token skip 後の workflow ステップで「OAuth token 未登録」を clack.note で案内する（PR #118 CodeRabbit Major 動的検証）"
+else
+  fail "secret-token skip 後の workflow ステップで未登録案内が出力されない（PR #118 CodeRabbit Major 動的検証失敗）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
