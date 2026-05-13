@@ -975,6 +975,102 @@ for secret_name in "VIBEHAWK_APP_ID" "VIBEHAWK_PRIVATE_KEY" "CLAUDE_CODE_OAUTH_T
   fi
 done
 
+# assert 4b: 動的検証 — PR #118 CodeRabbit 指摘対応
+# 完走サマリの「未登録 secrets」「次のアクション」「workflow PR が未作成です」が
+# 実際に clack.note の引数として渡されることを動的に確認する。
+# （grep assert は文字列の存在だけを保証するが、表示ロジックが正しく呼ばれることまでは保証しない）
+# secret-token を skip + workflow を skip させ、完走サマリ note に 3 文言が含まれることを検証。
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+
+const noteCallArgs = [];
+require.cache[require.resolve("@clack/prompts")] = {
+  exports: {
+    intro: () => {},
+    outro: () => {},
+    text: async () => "",
+    select: async () => "skip",
+    note: (content, title) => { noteCallArgs.push({ content: String(content), title: String(title || "") }); },
+    spinner: () => ({ start: () => {}, stop: () => {} }),
+    cancel: () => {},
+    isCancel: () => false,
+    group: async () => {},
+  },
+};
+
+const cp = require("child_process");
+const origSpawnSync = cp.spawnSync;
+cp.spawnSync = function() { return { status: 0, stdout: "{}", stderr: "" }; };
+
+require.cache[require.resolve("./cli/install")] = {
+  exports: {
+    run: async () => ({ id: 12345, name: "vibehawk-for-test", html_url: "https://github.com/apps/vibehawk-for-test" }),
+    // PR #118: workflow ステップを skip ルートに乗せるため createWorkflowPr を throw 化
+    createWorkflowPr: async () => { throw new Error("workflow PR 作成失敗（テスト用 throw）"); },
+  },
+};
+
+require.cache[require.resolve("./cli/verify")] = {
+  exports: {
+    verifySecret: () => ({ ok: true, reason: "found", hint: "" }),
+    verifyAppInstallation: () => ({ ok: true, reason: "installed_via_user", hint: "" }),
+    verifyWorkflow: () => ({ ok: true, reason: "found", hint: "" }),
+  },
+};
+
+// cli/oauth: setupToken が throw（secret-token skip ルート発火）
+require.cache[require.resolve("./cli/oauth")] = {
+  exports: {
+    setupToken: async () => { throw new Error("vibehawk: OAuth token が空です"); },
+    copyToClipboard: () => ({ success: true }),
+    parseRepoArg: () => null,
+  },
+};
+
+const origExit = process.exit;
+let exitCode = null;
+process.exit = (code) => { exitCode = code; throw new Error("process.exit(" + code + ") called"); };
+
+const setup = require("./cli/setup");
+setup.run({ argv: ["--owner", "test", "--repo", "test/test"] }).then((result) => {
+  process.exit = origExit;
+  cp.spawnSync = origSpawnSync;
+  if (exitCode !== null) {
+    console.error("process.exit was called with:", exitCode);
+    process.exit(1);
+  }
+  // 完走サマリ note の content 全体を結合して文言検証
+  const allNoteContent = noteCallArgs.map((a) => a.content + " " + a.title).join("\n");
+  const requiredPhrases = ["未登録 secrets", "次のアクション", "workflow PR が未作成です"];
+  const missing = requiredPhrases.filter((p) => !allNoteContent.includes(p));
+  if (missing.length > 0) {
+    console.error("missing phrases in actual note output:", missing);
+    console.error("all note titles:", JSON.stringify(noteCallArgs.map((a) => a.title), null, 2));
+    process.exit(1);
+  }
+  // 未登録 secrets には CLAUDE_CODE_OAUTH_TOKEN が含まれること
+  if (!allNoteContent.includes("CLAUDE_CODE_OAUTH_TOKEN")) {
+    console.error("note must include CLAUDE_CODE_OAUTH_TOKEN as unregistered secret");
+    process.exit(1);
+  }
+  // Secrets UI URL が note に含まれること
+  if (!allNoteContent.includes("settings/secrets/actions")) {
+    console.error("note must include settings/secrets/actions URL");
+    process.exit(1);
+  }
+  process.exit(0);
+}).catch((e) => {
+  process.exit = origExit;
+  cp.spawnSync = origSpawnSync;
+  console.error("setup.run threw:", e.message);
+  process.exit(1);
+});
+' > /dev/null 2>&1; then
+  pass "完走サマリ note の引数に「未登録 secrets」「次のアクション」「workflow PR が未作成です」「CLAUDE_CODE_OAUTH_TOKEN」「settings/secrets/actions」が実際に渡される（PR #118 CodeRabbit Nitpick 対応: 実表示の動的検証）"
+else
+  fail "完走サマリ note の実表示で必要文言が捕捉できない（PR #118 CodeRabbit Nitpick: grep のみでは実表示まで保証できない）"
+fi
+
 # assert 5: CISO 観点 — oauth.js の validateToken が throw メッセージに token 値を埋め込まないこと
 # （Issue #111 で e.message を stdout/hint に出すが、値漏洩しないことを機械保証）
 if node -e '
