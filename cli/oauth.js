@@ -33,12 +33,25 @@ function defaultRlFactory() {
 
 async function promptToken({ rlFactory = defaultRlFactory } = {}) {
   console.log('=== Claude OAuth Token の取得 ===');
-  console.log('別ターミナルで以下のコマンドを実行し、表示されたトークンをコピーしてください:');
   console.log('');
-  console.log('  claude setup-token');
+  console.log('【推奨手順】別ターミナル（素の zsh/bash）で以下を実行し、表示されたトークンをコピーしてください:');
+  console.log('');
+  console.log('  cd /tmp && \\claude setup-token');
+  console.log('');
+  console.log('上記コマンドのポイント:');
+  console.log('  1. 別ターミナル で実行する（Claude Code 内 `!claude setup-token` は再帰的に新規起動して setup-token サブコマンドが効かない）');
+  console.log('  2. `\\claude`（または `command claude`）で alias を回避する');
+  console.log('     （vibecorp 系の `alias claude=...` が定義されている環境では bare な `claude setup-token` が通常起動モードに化ける）');
+  console.log('  3. HOME 外（例: `/tmp`）に cd してから実行する');
+  console.log('     （vibehawk sandbox 等で WORKTREE が HOME 配下と判定されると `WORKTREE を HOME と同一にはできません` エラーになる）');
   console.log('');
   console.log('（公式: https://claude.com/claude-code 参照。claude CLI 未インストールの場合は');
   console.log(' `npm install -g @anthropic-ai/claude-code` 等で導入してください）');
+  console.log('');
+  console.log('【代替経路】上記でも取得に失敗する場合、Anthropic Console から API key を発行する経路があります:');
+  console.log('  https://console.anthropic.com/settings/keys');
+  console.log('  （CLAUDE_CODE_OAUTH_TOKEN の代わりに ANTHROPIC_API_KEY を GitHub Secrets に登録する運用。');
+  console.log('   既存 Claude Code の credentials（macOS Keychain 等）を再利用できる場合はそちらを優先してください）');
   console.log('');
   const rl = rlFactory();
   return new Promise((resolve, reject) => {
@@ -158,7 +171,8 @@ function printRegistrationInstructions(repo, clipboardCopied) {
   if (clipboardCopied) {
     console.log('3. Secret フィールドに Cmd+V / Ctrl+V で貼付');
   } else {
-    console.log('3. Secret フィールドにトークンを貼付（再取得が必要な場合は `claude setup-token` を再実行）');
+    console.log('3. Secret フィールドにトークンを貼付');
+    console.log('   （再取得が必要な場合は別ターミナルで `cd /tmp && \\claude setup-token` を再実行。alias 回避必須）');
   }
   console.log('');
   console.log('4. 「Add secret」をクリック');

@@ -195,7 +195,7 @@ function showClipboardFallback(value, isSensitive, reason) {
       [
         'クリップボードへのコピーに失敗しました。',
         'GitHub Settings の入力欄に直接貼り付けてください。',
-        'トークンを再取得する場合は別ターミナルで `claude setup-token` を再実行してください。',
+        'トークンを再取得する場合は別ターミナルで `cd /tmp && \\claude setup-token` を再実行してください（alias 回避・HOME 外実行が必要）。',
         `理由: ${reason || 'unknown'}`,
       ].join('\n'),
       '⚠️ クリップボードコピー失敗'

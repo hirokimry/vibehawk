@@ -759,5 +759,40 @@ else
   fail "run() の戻り値に meetsDogfoodingTarget が含まれない、または期待値（true）と異なる"
 fi
 
+# Issue #109: setup ウィザード Step 5 で claude setup-token 実行ガイダンスを sandbox 環境向けに拡充
+# 案内文の実体は cli/oauth.js の promptToken（および補足は cli/setup.js）。
+# 必要キーワードがガイダンス内に含まれているかを grep で機械検証する。
+echo "--- Issue #109: Step 5 ガイダンス拡充の検証 ---"
+
+# キーワード一覧（Issue #109 完了条件にマップ）
+# - 別ターミナル明示
+# - alias バイパス（\claude または command claude）
+# - HOME 外 cd 例（cd /tmp）
+# - 再帰起動注意（Claude Code 内 !claude setup-token は再帰）
+# - 代替経路（Anthropic Console / ANTHROPIC_API_KEY）
+declare -a OAUTH_KEYWORDS=(
+  "別ターミナル"
+  "\\\\claude"
+  "cd /tmp"
+  "再帰"
+  "console.anthropic.com"
+  "ANTHROPIC_API_KEY"
+)
+
+for kw in "${OAUTH_KEYWORDS[@]}"; do
+  if grep -F -- "$kw" cli/oauth.js > /dev/null; then
+    pass "cli/oauth.js に Step 5 ガイダンス キーワード '$kw' が含まれる"
+  else
+    fail "cli/oauth.js に Step 5 ガイダンス キーワード '$kw' が含まれていない"
+  fi
+done
+
+# cli/setup.js の showClipboardFallback 内の再取得案内文も alias 回避を反映している
+if grep -F -- "\\\\claude setup-token" cli/setup.js > /dev/null; then
+  pass "cli/setup.js の再取得案内に alias 回避形式（\\claude setup-token）が含まれる"
+else
+  fail "cli/setup.js の再取得案内に alias 回避形式（\\claude setup-token）が含まれていない"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
