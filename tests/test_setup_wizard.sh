@@ -554,11 +554,15 @@ else
 fi
 
 # assert 3: 5 分閾値定数 DOGFOODING_TARGET_MS が 300_000 ms（5 * 60 * 1000）として定義される
-target_ms=$(node -e 'console.log(require("./cli/setup").DOGFOODING_TARGET_MS)')
-if [[ "$target_ms" == "300000" ]]; then
-  pass "DOGFOODING_TARGET_MS が 300000 ms（Issue #91 完了条件: 5 分以内）"
+# set -e 下でコマンド置換 `$(...)` の失敗は即終了するため、明示的に if で捕捉し fail() 集計に載せる
+if target_ms=$(node -e 'console.log(require("./cli/setup").DOGFOODING_TARGET_MS)' 2>&1); then
+  if [[ "$target_ms" == "300000" ]]; then
+    pass "DOGFOODING_TARGET_MS が 300000 ms（Issue #91 完了条件: 5 分以内）"
+  else
+    fail "DOGFOODING_TARGET_MS が 300000 ms ではない (got: $target_ms)、完了条件と整合しない"
+  fi
 else
-  fail "DOGFOODING_TARGET_MS が 300000 ms ではない (got: $target_ms)、完了条件と整合しない"
+  fail "DOGFOODING_TARGET_MS の取得に失敗した (output: $target_ms)"
 fi
 
 # assert 4: formatDuration が境界値で破綻しない（NaN / 負数 / 非数値 → 'n/a' フォールバック）
@@ -592,21 +596,28 @@ fi
 
 # assert 5: dry-run で所要時間表示が stdout に出る（E2E 確認）
 # set -e 下でコマンド置換 `$(...)` の失敗は即終了するため、明示的に if で捕捉し fail() 集計に載せる
+# dry_run_ok フラグで後続 grep をスキップし、本来の失敗原因（dry-run 実行自体の失敗）を冗長 fail に埋もれさせない
+dry_run_ok=true
 if dry_run_output=$(node cli/index.js setup --dry-run --owner test --repo test/test 2>&1); then
   :
 else
-  fail "dry-run 実行自体が失敗した（後続の grep 検証はスキップされる）"
+  fail "dry-run 実行自体が失敗した（後続の grep 検証はスキップする）"
   dry_run_output=""
+  dry_run_ok=false
 fi
 
-if echo "$dry_run_output" | grep -F 'dogfooding 計測' > /dev/null; then
+if [[ "$dry_run_ok" == "true" ]] && echo "$dry_run_output" | grep -F 'dogfooding 計測' > /dev/null; then
   pass "dry-run 実行で「dogfooding 計測」見出しが表示される"
+elif [[ "$dry_run_ok" == "false" ]]; then
+  :
 else
   fail "dry-run 実行で「dogfooding 計測」見出しが表示されない"
 fi
 
-if echo "$dry_run_output" | grep -F '5m0s' > /dev/null; then
+if [[ "$dry_run_ok" == "true" ]] && echo "$dry_run_output" | grep -F '5m0s' > /dev/null; then
   pass "dry-run 実行で「5m0s」（5 分目標）が表示される"
+elif [[ "$dry_run_ok" == "false" ]]; then
+  :
 else
   fail "dry-run 実行で「5m0s」（5 分目標）が表示されない"
 fi
