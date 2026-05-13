@@ -484,6 +484,116 @@ else
   fail "install.js が 127.0.0.1 を明示 listen していない（Windows で IPv6 にバインドされる可能性）"
 fi
 
+# Issue #59: Manifest Flow port hijacking / CSRF 対策 — state パラメータ生成
+# crypto.randomBytes で cryptographically secure な state を生成していること
+if grep -E "crypto\.randomBytes\([0-9]+\)\.toString\(['\"]hex['\"]\)" cli/install.js > /dev/null; then
+  pass "install.js が crypto.randomBytes で state を生成（Issue #59 CSRF 対策）"
+else
+  fail "install.js が crypto.randomBytes で state を生成していない"
+fi
+
+# Issue #59: state を timing-safe に照合していること（crypto.timingSafeEqual）
+if grep -F "crypto.timingSafeEqual" cli/install.js > /dev/null; then
+  pass "install.js が crypto.timingSafeEqual で state を照合（Issue #59 CSRF 対策）"
+else
+  fail "install.js が crypto.timingSafeEqual で state を照合していない"
+fi
+
+# Issue #59: /start レスポンスに state hidden input が含まれ、/callback で state を検証することの動的検証
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const http = require("http");
+const install = require("./cli/install");
+const { buildManifest } = require("./cli/manifest");
+const PORT = 18765;
+const manifest = buildManifest({ port: PORT, name: "vibehawk-for-test" });
+
+// waitForCallback の Promise を即時 catch して unhandled rejection を抑止
+const promise = install.waitForCallback({ port: PORT, manifest, openBrowser: () => {} });
+let rejectionReason = null;
+promise.catch((e) => { rejectionReason = e; });
+
+function httpGet(path) {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: "127.0.0.1", port: PORT, path }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => data += chunk);
+      res.on("end", () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on("error", reject);
+  });
+}
+
+(async () => {
+  // /start を叩いて HTML を取得し state を抽出
+  const startRes = await httpGet("/start");
+  if (startRes.status !== 200) throw new Error("/start status: " + startRes.status);
+  if (!/<input[^>]*name="state"[^>]*value="[a-f0-9]+"/.test(startRes.body)) {
+    throw new Error("/start HTML に state hidden input が含まれない");
+  }
+  const stateMatch = startRes.body.match(/<input[^>]*name="state"[^>]*value="([a-f0-9]+)"/);
+  const state = stateMatch[1];
+  if (state.length !== 64) throw new Error("state length unexpected: " + state.length);
+
+  // 誤った state で /callback を叩く → 400 応答 + waitForCallback が reject される
+  const badRes = await httpGet("/callback?code=dummy&state=deadbeef");
+  if (badRes.status !== 400) throw new Error("/callback bad state status: " + badRes.status);
+
+  // microtask を 1 ターン進めて rejection ハンドラを実行させる
+  await new Promise((r) => setImmediate(r));
+  if (!rejectionReason) throw new Error("waitForCallback should reject on state mismatch");
+  if (!/state mismatch/.test(rejectionReason.message)) {
+    throw new Error("expected state mismatch error, got: " + rejectionReason.message);
+  }
+  process.exit(0);
+})().catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "Issue #59: /start に state hidden input が含まれ /callback で誤った state を 400 拒否 + reject"
+else
+  fail "Issue #59: state hidden input / state 検証の動的動作が想定と異なる"
+fi
+
+# Issue #59: 正しい state での /callback が code を resolve すること
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const http = require("http");
+const install = require("./cli/install");
+const { buildManifest } = require("./cli/manifest");
+const PORT = 18766;
+const manifest = buildManifest({ port: PORT, name: "vibehawk-for-test" });
+
+const promise = install.waitForCallback({ port: PORT, manifest, openBrowser: () => {} });
+
+function httpGet(path) {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: "127.0.0.1", port: PORT, path }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => data += chunk);
+      res.on("end", () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on("error", reject);
+  });
+}
+
+(async () => {
+  const startRes = await httpGet("/start");
+  const stateMatch = startRes.body.match(/<input[^>]*name="state"[^>]*value="([a-f0-9]+)"/);
+  const state = stateMatch[1];
+
+  // 正しい state で /callback を叩く → 200 + waitForCallback が code を resolve
+  const okRes = await httpGet("/callback?code=mycode123&state=" + state);
+  if (okRes.status !== 200) throw new Error("/callback ok status: " + okRes.status);
+
+  const code = await promise;
+  if (code !== "mycode123") throw new Error("expected code mycode123, got: " + code);
+  process.exit(0);
+})().catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "Issue #59: 正しい state での /callback が code を resolve"
+else
+  fail "Issue #59: 正しい state での /callback resolve 挙動が想定と異なる"
+fi
+
 # Issue #58: parseOverwrite が --overwrite を検出
 if node -e '
 const { parseOverwrite } = require("./cli/install");
