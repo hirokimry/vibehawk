@@ -604,5 +604,108 @@ else
   fail "install --dry-run の同意プレビューに Anthropic 送信通知が含まれない"
 fi
 
+# Issue #60 / CEO 判断 B（2026-05-09）: assertCanonicalAppName 単体テスト
+# 連番命名検出時にエラー終了する仕様（POLICY.md MUST 違反防止）
+if node -e '
+const { assertCanonicalAppName } = require("./cli/install");
+// 正常名 → throw されない
+const ok = { name: "vibehawk-for-alice", pem: "secret", slug: "vibehawk-for-alice", id: 1 };
+assertCanonicalAppName(ok, "vibehawk-for-alice");
+// 連番命名 → throw + redact
+const ng = { name: "vibehawk-for-alice-2", pem: "PRIVATE", slug: "vibehawk-for-alice-2", id: 2 };
+try {
+  assertCanonicalAppName(ng, "vibehawk-for-alice");
+  process.exit(1);
+} catch (e) {
+  if (!/命名統制衝突/.test(e.message)) process.exit(1);
+  if (!/既存/.test(e.message)) process.exit(1);
+  if (!/別の owner|別の名前/.test(e.message)) process.exit(1);
+  // throw 経路でも Private Key が redact されていることを検証（CISO Critical）
+  if (ng.pem !== "[REDACTED — vibehawk CLI does not expose Private Key]") process.exit(1);
+}
+// 空 expectedAppName → throw されない（ガード）
+assertCanonicalAppName({ name: "any" }, null);
+assertCanonicalAppName({ name: "any" }, "");
+// credentials null/undefined → throw されない（ガード）
+assertCanonicalAppName(null, "anything");
+assertCanonicalAppName(undefined, "anything");
+process.exit(0);
+'; then
+  pass "assertCanonicalAppName が連番命名で throw + Private Key redact、正常名/空入力で throw なし"
+else
+  fail "assertCanonicalAppName の挙動が想定と異なる"
+fi
+
+# Issue #60: install.run() が連番命名 credentials を返した場合に reject される（統合テスト）
+# fetch をモックして exchangeCode が連番名 credentials を返す状況を再現
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const install = require("./cli/install");
+// fetch をモック: exchangeCode が連番名 credentials を返すように差し替え
+global.fetch = async () => ({
+  ok: true,
+  json: async () => ({
+    id: 999,
+    name: "vibehawk-for-alice-2",
+    slug: "vibehawk-for-alice-2",
+    html_url: "https://github.com/apps/vibehawk-for-alice-2",
+    pem: "FAKE_PRIVATE_KEY_DATA",
+    client_secret: "FAKE_CLIENT_SECRET",
+    webhook_secret: "FAKE_WEBHOOK_SECRET",
+  }),
+});
+// waitForCallback もモック（HTTP server を起動させない）
+const path = require("path");
+const installPath = require.resolve("./cli/install");
+delete require.cache[installPath];
+const orig = require("./cli/install");
+orig.waitForCallback = async () => "fake-code";
+// orig.run は内部の waitForCallback を直接参照しているため、module を直接書き換えるのは難しい
+// 代わりに waitForCallback の代替を passed in する設計がないので、HTTP server を立てる代わりに
+// process を hang させずに済むよう、別アプローチ: assertCanonicalAppName を直接テスト済みなので
+// 統合テストは waitForCallback / openBrowser を no-op に置換した dry-run 経路ではなく、
+// fetch モックのみで run() の throw が起きるかを検証する
+const http = require("http");
+// HTTP server を立てる代わりに /callback への即時 GET を模倣するために、
+// install.waitForCallback を直接シミュレートできないので、ここでは
+// 「fetch モック下で exchangeCode → assertCanonicalAppName で throw」の連鎖を検証する
+(async () => {
+  try {
+    const code = "fake-code";
+    const credentials = await orig.exchangeCode(code);
+    if (credentials.name !== "vibehawk-for-alice-2") process.exit(1);
+    try {
+      orig.assertCanonicalAppName(credentials, "vibehawk-for-alice");
+      process.exit(1); // throw されなかった
+    } catch (e) {
+      if (!/命名統制衝突/.test(e.message)) process.exit(1);
+      if (credentials.pem !== "[REDACTED — vibehawk CLI does not expose Private Key]") process.exit(1);
+      process.exit(0);
+    }
+  } catch (e) {
+    console.error(e.message);
+    process.exit(1);
+  }
+})();
+' > /dev/null 2>&1; then
+  pass "exchangeCode → assertCanonicalAppName の連鎖で連番命名が reject される（fetch モック統合テスト）"
+else
+  fail "exchangeCode → assertCanonicalAppName の連鎖が想定通りに動かない"
+fi
+
+# Issue #60: install.run() の正常名フローでは throw されないことの回帰確認
+# （dry-run でなく実際の run() を走らせると HTTP server を起動するため、
+#  ここでは「正常名でも assertCanonicalAppName が throw しない」ことを直接確認する）
+if node -e '
+const { assertCanonicalAppName } = require("./cli/install");
+const ok = { name: "vibehawk-for-alice", pem: "secret", slug: "vibehawk-for-alice", id: 1 };
+assertCanonicalAppName(ok, "vibehawk-for-alice");
+process.exit(0);
+'; then
+  pass "正常名（vibehawk-for-<owner>）では assertCanonicalAppName が throw しない（回帰）"
+else
+  fail "正常名で assertCanonicalAppName が誤って throw する"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
