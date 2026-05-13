@@ -19,6 +19,32 @@ const { parseRepoArg } = require('./oauth');
 
 const MAX_RETRY = 5;
 
+// Issue #91 完了条件: dogfooding（vibehawk 自身を teardown → setup）で 5 分以内に完走することを確認
+// 5 分（300_000 ms）を客観的判定の閾値として使用する
+const DOGFOODING_TARGET_MS = 5 * 60 * 1000;
+
+function formatDuration(ms) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return 'n/a';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) {
+    const seconds = ms / 1000;
+    const secondsLabel = seconds.toFixed(1);
+    // 境界値（59.95s 以上で toFixed(1) が "60.0" に丸まる）は分単位へ繰り上げて表示する
+    if (secondsLabel === '60.0') {
+      return '1m0s';
+    }
+    return `${secondsLabel}s`;
+  }
+  let minutes = Math.floor(ms / 60000);
+  let remainSeconds = Math.round((ms - minutes * 60000) / 1000);
+  // 境界値で Math.round が 60 になった場合は分に繰り上げ、秒を 0-59 に正規化する
+  if (remainSeconds >= 60) {
+    minutes += Math.floor(remainSeconds / 60);
+    remainSeconds = remainSeconds % 60;
+  }
+  return `${minutes}m${remainSeconds}s`;
+}
+
 function parseDryRun(argv) {
   return Array.isArray(argv) && argv.some((a) => a === '--dry-run');
 }
@@ -192,8 +218,12 @@ async function chooseRetryAction() {
 async function executeStep(step, state, summary, dryRun) {
   clack.note(step.label, `[${state.stepIndex + 1}/${state.totalSteps}]`);
 
+  // Issue #91 dogfooding 計測: 各ステップの所要時間を Date.now() で計測する
+  const stepStartTime = Date.now();
+  const elapsed = () => Date.now() - stepStartTime;
+
   if (dryRun) {
-    summary.push({ id: step.id, label: step.label, status: 'dry-run' });
+    summary.push({ id: step.id, label: step.label, status: 'dry-run', durationMs: elapsed() });
     return;
   }
 
@@ -225,7 +255,7 @@ async function executeStep(step, state, summary, dryRun) {
         throw new CancelError(step.id);
       }
       if (action === 'skip') {
-        summary.push({ id: step.id, label: step.label, status: 'skipped' });
+        summary.push({ id: step.id, label: step.label, status: 'skipped', durationMs: elapsed() });
         runEarlyExit = true;
         break;
       }
@@ -233,11 +263,11 @@ async function executeStep(step, state, summary, dryRun) {
     }
     if (runEarlyExit) return;
     if (!runOk) {
-      summary.push({ id: step.id, label: step.label, status: 'skipped', hint: 'run フェーズが最大リトライ回数に到達' });
+      summary.push({ id: step.id, label: step.label, status: 'skipped', hint: 'run フェーズが最大リトライ回数に到達', durationMs: elapsed() });
       return;
     }
     if (runResult && runResult.skipped) {
-      summary.push({ id: step.id, label: step.label, status: 'skipped' });
+      summary.push({ id: step.id, label: step.label, status: 'skipped', durationMs: elapsed() });
       return;
     }
   }
@@ -283,7 +313,7 @@ async function executeStep(step, state, summary, dryRun) {
       }
       if (v && v.ok) {
         s.stop(`✅ 検証 OK`);
-        summary.push({ id: step.id, label: step.label, status: 'completed' });
+        summary.push({ id: step.id, label: step.label, status: 'completed', durationMs: elapsed() });
         return;
       }
       // v が null/undefined を返した場合のガード（TypeError 防止）
@@ -294,17 +324,17 @@ async function executeStep(step, state, summary, dryRun) {
         throw new CancelError(step.id);
       }
       if (action === 'skip') {
-        summary.push({ id: step.id, label: step.label, status: 'skipped', hint });
+        summary.push({ id: step.id, label: step.label, status: 'skipped', hint, durationMs: elapsed() });
         return;
       }
       // retry: 次のループで再検証
     }
-    summary.push({ id: step.id, label: step.label, status: 'skipped', hint: '最大リトライ回数に到達' });
+    summary.push({ id: step.id, label: step.label, status: 'skipped', hint: '最大リトライ回数に到達', durationMs: elapsed() });
     return;
   }
 
   // run のみで verify なしのステップは success 確定
-  summary.push({ id: step.id, label: step.label, status: 'completed' });
+  summary.push({ id: step.id, label: step.label, status: 'completed', durationMs: elapsed() });
 }
 
 class CancelError extends Error {
@@ -347,6 +377,9 @@ async function promptRepoInteractive() {
 async function run({ argv = process.argv.slice(3) } = {}) {
   const dryRun = parseDryRun(argv);
   const state = buildState();
+
+  // Issue #91 dogfooding 計測: 全体所要時間の開始時刻を記録
+  const wizardStartTime = Date.now();
 
   // SIGINT/SIGTERM ハンドラ: メモリ参照を null 化してから終了（CISO Critical）
   const onInterrupt = () => {
@@ -418,9 +451,24 @@ async function run({ argv = process.argv.slice(3) } = {}) {
   );
 
   if (dryRun) {
+    const dryRunElapsedMs = Date.now() - wizardStartTime;
+    const dryRunMeetsTarget = dryRunElapsedMs <= DOGFOODING_TARGET_MS;
+    clack.note(
+      [
+        `所要時間: ${formatDuration(dryRunElapsedMs)}`,
+        `dogfooding 目標: ${formatDuration(DOGFOODING_TARGET_MS)}（Issue #91 完了条件）`,
+      ].join('\n'),
+      '⏱️ dogfooding 計測'
+    );
     clack.outro('⚙️ --dry-run のため実際の操作は行いませんでした。');
     clearState(state);
-    return { dryRun: true, owner, repo };
+    return {
+      dryRun: true,
+      owner,
+      repo,
+      durationMs: dryRunElapsedMs,
+      meetsDogfoodingTarget: dryRunMeetsTarget,
+    };
   }
 
   const STEPS = buildSteps({ owner, repo });
@@ -449,13 +497,30 @@ async function run({ argv = process.argv.slice(3) } = {}) {
   const lines = [];
   for (const s of summary) {
     const icon = s.status === 'completed' ? '✅' : s.status === 'skipped' ? '⏭️' : '•';
-    lines.push(`  ${icon} ${s.label}${s.hint ? ` — ${s.hint}` : ''}`);
+    // Issue #91 dogfooding 計測: 各ステップの所要時間を表示
+    const durationLabel = typeof s.durationMs === 'number' ? ` (${formatDuration(s.durationMs)})` : '';
+    lines.push(`  ${icon} ${s.label}${durationLabel}${s.hint ? ` — ${s.hint}` : ''}`);
   }
+
+  // Issue #91 dogfooding 計測: 全体所要時間と 5 分閾値判定
+  const totalElapsedMs = Date.now() - wizardStartTime;
+  const totalDurationLabel = formatDuration(totalElapsedMs);
+  const targetDurationLabel = formatDuration(DOGFOODING_TARGET_MS);
+  const meetsTarget = totalElapsedMs <= DOGFOODING_TARGET_MS;
+  const dogfoodingLines = [
+    '',
+    `⏱️ 所要時間: ${totalDurationLabel} / 目標 ${targetDurationLabel}（Issue #91 完了条件: dogfooding 5 分以内）`,
+    meetsTarget
+      ? `🎯 5 分以内達成（${totalDurationLabel}）— Issue #91 の dogfooding 完了条件をクリア`
+      : `⚠️ 5 分を超えました（${totalDurationLabel}）— ボトルネック分析: 上記の所要時間ログを確認してください`,
+  ];
+
   clack.note(
     [
       `完了: ${completed.length}/${STEPS.length}, スキップ: ${skipped.length}`,
       '',
       ...lines,
+      ...dogfoodingLines,
       ...(skipped.length > 0
         ? [
             '',
@@ -474,7 +539,7 @@ async function run({ argv = process.argv.slice(3) } = {}) {
   );
 
   clearState(state);
-  return { owner, repo, summary };
+  return { owner, repo, summary, durationMs: totalElapsedMs, meetsDogfoodingTarget: meetsTarget };
 }
 
 module.exports = {
@@ -485,4 +550,7 @@ module.exports = {
   buildState,
   clearState,
   CancelError,
+  // Issue #91 dogfooding 計測関連の export（テスト用）
+  formatDuration,
+  DOGFOODING_TARGET_MS,
 };
