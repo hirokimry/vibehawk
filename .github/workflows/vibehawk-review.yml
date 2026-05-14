@@ -258,10 +258,12 @@ jobs:
 
             この 2 行が欠落すると、次回 push で前回 SHA が抽出できず、incremental が破綻し完全再レビュー扱いになります。
 
-            3. event を決定する（auto_resolve 後の unresolved 数で）:
-               - unresolved == 0 → `event=APPROVE`
-               - unresolved >= 1 → `event=REQUEST_CHANGES`
-               - inline 指摘が 0 件かつ Critical/Major が 0 件 → `event=APPROVE`
+            3. event を決定する（auto_resolve 後の unresolved 数 + 新規 inline 指摘の severity で）:
+               - unresolved >= 1 件 → `event=REQUEST_CHANGES`（最優先）
+               - 新規 inline 指摘に Critical/Major が 1 件でもある → `event=REQUEST_CHANGES`
+               - それ以外（unresolved == 0 件 かつ 新規 inline が 0 件 または Minor/Trivial/Info のみ） → `event=APPROVE`
+
+            この event 決定は「## status check 投稿」の conclusion 導出表と必ず整合させる（同一の severity 判定軸で APPROVE/REQUEST_CHANGES を決め、conclusion はそれに従って success/failure/neutral にマップする）。
             4. `gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews"` を **1 回だけ** 呼ぶ。`comments` は配列なので `-f`/`-F` の repeatable は使えず、`--input -` で JSON ペイロード全体を渡す:
 
             ```bash
@@ -385,13 +387,18 @@ jobs:
 
             **重要制約**: 他者・他 Bot のレビュースレッドには **絶対に resolveReviewThread を呼ばない**（誤 resolve は信頼破壊）。投稿者 ID チェックを必ず実施。
 
-            ## review event 決定（auto_resolve 後の unresolved 数で）
+            ## review event 決定（auto_resolve 後の unresolved 数 + 新規 inline の severity で）
 
-            auto_resolve 完了後、bundled review POST の **直前** に unresolved 数で event を決定する:
+            auto_resolve 完了後、bundled review POST の **直前** に event を決定する:
 
             1. `gh api graphql` で `reviewThreads` を取得し、`isResolved == false` の数をカウント
-            2. unresolved == 0 かつ今回新規追加する inline 指摘も 0 件 → `event=APPROVE`、body 冒頭に `✅ vibehawk: 未解決指摘なし`
-            3. それ以外 → `event=REQUEST_CHANGES`、body 冒頭に `⚠️ vibehawk: 未解決指摘 N 件 / 新規指摘 M 件`
+            2. 今回新規追加する inline 指摘の severity 分布をカウントする（Critical/Major/Minor/Trivial/Info ごと）
+            3. event 判定（上から順に評価、最初にマッチした条件を採用）:
+               - unresolved >= 1 件 → `event=REQUEST_CHANGES`、body 冒頭に `⚠️ vibehawk: 未解決指摘 N 件 / 新規指摘 M 件`
+               - 新規 inline に Critical/Major が 1 件でもある → `event=REQUEST_CHANGES`、body 冒頭に `⚠️ vibehawk: 新規 Critical/Major M 件`
+               - 新規 inline は Minor/Trivial/Info のみ（または 0 件） → `event=APPROVE`、body 冒頭に `✅ vibehawk: 未解決指摘なし`（新規 0 件）または `✅ vibehawk: 助言 N 件（要対応指摘なし）`（Minor 以下のみ）
+
+            この判定は「## status check 投稿」の conclusion 導出表と同一の severity 判定軸を使い、最終的に APPROVE/REQUEST_CHANGES から conclusion (success/neutral/failure) を一意に導出する。
 
             状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
 

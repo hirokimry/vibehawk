@@ -563,7 +563,10 @@ else
   fail "prompt に head_sha 受け渡し指示が含まれない（Issue #121-C1）"
 fi
 
-# Issue #121-C1: conclusion 導出表の 4 種（success / failure / neutral / skip）が言及される
+# Issue #121-C1: conclusion 導出表の 4 種（success / failure / neutral / step skip）が言及される
+# 3 種（success / failure / neutral）は GitHub check-runs API の conclusion 値として grep する。
+# 4 種目の skip ケースは GitHub check-runs API の conclusion 値ではなく workflow step 自体の skip を意味するため、
+# 「step skip」相当の文言が prompt 内に存在することを別途検証する（PR #125 CodeRabbit Major 指摘）。
 declare -a required_conclusions=(success failure neutral)
 for conclusion in "${required_conclusions[@]}"; do
   if grep -F "$conclusion" "$WORKFLOW" > /dev/null; then
@@ -572,6 +575,14 @@ for conclusion in "${required_conclusions[@]}"; do
     fail "prompt に conclusion=$conclusion の導出指示が含まれない（Issue #121-C1）"
   fi
 done
+
+# Issue #121-C1: 4 種目（step skip）の言及検証（PR #125 CodeRabbit Major 指摘）
+# check-runs API 失敗 / secrets 未設定時の step skip ケースが導出表 4 種目として明記されているか確認する
+if grep -F 'step skip' "$WORKFLOW" > /dev/null || grep -F 'step 自体は skip' "$WORKFLOW" > /dev/null; then
+  pass "prompt に conclusion 導出表の 4 種目（step skip ケース）が言及される（Issue #121-C1、PR #125 CodeRabbit Major 対応）"
+else
+  fail "prompt に conclusion 導出表の 4 種目（step skip ケース）の言及がない（Issue #121-C1、導出表は 4 種ある）"
+fi
 
 # Issue #121-C1: API 失敗時の graceful degradation（warning 出力 + continue）
 if grep -F '::warning::' "$WORKFLOW" | grep -F 'check-runs' > /dev/null; then

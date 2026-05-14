@@ -226,7 +226,7 @@ bundled review API の approve / request_changes 投稿（PR #122）に加え、
 
 #### App 権限要件
 
-`check-runs` API の POST には `vibehawk-for-<owner>` App の `checks: write` 権限が必要。App manifest（`cli/setup/manifest.ts` 等）で `checks: write` が付与されている前提で動作する。権限不足で 403 が返った場合、workflow 内 `|| echo "::warning::..."` で graceful degradation し、warning に「App の再 install で権限を更新してください」と案内を含める（bundled review 投稿自体は完了済みのため review badge は維持される）。
+`check-runs` API の POST には `vibehawk-for-<owner>` App の `checks: write` 権限が必要。App manifest（`cli/manifest.js`）で `checks: write` が付与されている前提で動作する。権限不足で 403 が返った場合、workflow 内 `|| echo "::warning::..."` で graceful degradation し、warning に「App の再 install で権限を更新してください」と案内を含める（bundled review 投稿自体は完了済みのため review badge は維持される）。
 
 ### @mention チャット応答
 
