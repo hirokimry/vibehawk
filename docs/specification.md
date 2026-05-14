@@ -56,6 +56,7 @@ vibehawk は以下の利用者層を主要ターゲットとする:
 | path_instructions | パス別のカスタムレビュー観点を Bot に注入 |
 | @mention チャット応答 | 「@bot ここどうする？」に Bot が返事する（issue_comment トリガー） |
 | 状態管理（GitHub をストアとして使う） | PR コメント・resolved 状態などを GitHub 上で直接読み書きする |
+| status check 投稿（required status check） | bundled review に加えて `check-runs` API で "vibehawk" check を post（branch protection の `required_status_checks` に登録することで merge gating を確実に効かせる、Issue #121-C1） |
 
 ### 補助機能
 
@@ -194,6 +195,38 @@ fi
 [Step 3] unresolved == 0 なら gh pr review --approve
 [Step 4] unresolved >= 1 なら gh pr review --request-changes
 ```
+
+### status check 仕様（Issue #121-C1、required status check による merge gating）
+
+bundled review API の approve / request_changes 投稿（PR #122）に加え、`POST /repos/X/Y/check-runs` API で **status check** を post する。bot review は GitHub の構造仕様により branch protection の required reviewers に count されないため、merge gating を確実に効かせるには status check 側で required 指定する必要がある（CodeRabbit が `required_status_checks: ["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
+
+#### check run のメタデータ
+
+| 項目 | 値 |
+|---|---|
+| `name` | `vibehawk`（固定、利用者は branch protection でこの名前を required に登録する） |
+| `head_sha` | `github.event.pull_request.head.sha`（PR の HEAD SHA） |
+| `status` | `completed`（vibehawk はレビュー実行完了時のみ check を post する。in_progress は使わない） |
+| `conclusion` | 下表の 4 種から導出 |
+| `output.title` | 1 行サマリ（例: `vibehawk: 未解決 3 件 / 新規 2 件`） |
+| `output.summary` | 詳細サマリ（review body と同等の文字列） |
+
+#### conclusion 導出表
+
+| bundled review event | 新規 inline 指摘の severity | conclusion | 意味 |
+|---|---|---|---|
+| `APPROVE`（unresolved == 0 かつ新規 0 件） | — | `success` | merge OK |
+| `REQUEST_CHANGES`（unresolved ≥ 1 件 または 新規 Critical/Major あり） | — | `failure` | merge ブロック |
+| `APPROVE` だが新規 Minor/Trivial/Info のみ（intent 重視軸外で REQUEST_CHANGES に至らず） | Minor/Trivial/Info のみ | `neutral` | merge OK だが助言あり（required check では failure 扱いされない） |
+| `check_secrets` 未設定 / API 失敗 | — | step skip | check 自体を post しない（既存ガード） |
+
+#### 利用者側オペ（branch protection への登録）
+
+利用者は `Settings → Branches → Branch protection rules` で対象ブランチ（通常 `main`）を編集し、`Require status checks to pass before merging` を ON にした上で、検索ボックスに `vibehawk` と入力して required に追加する。初回登録時は `vibehawk` check が未発火だと検索候補に出ないため、先にダミー PR を立てて check を発火させてから登録する手順となる（README の setup ステップ 7 参照）。
+
+#### App 権限要件
+
+`check-runs` API の POST には `vibehawk-for-<owner>` App の `checks: write` 権限が必要。App manifest（`cli/manifest.js`）で `checks: write` が付与されている前提で動作する。権限不足で 403 が返った場合、workflow 内 `|| echo "::warning::..."` で graceful degradation し、warning に「App の再 install で権限を更新してください」と案内を含める（bundled review 投稿自体は完了済みのため review badge は維持される）。
 
 ### @mention チャット応答
 

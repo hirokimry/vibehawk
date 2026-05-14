@@ -28,6 +28,10 @@ function buildManifest({ port, name }) {
       pull_requests: 'write',
       issues: 'write',
       contents: 'read',
+      // Issue #121-C1: check-runs API で "vibehawk" status check を post するために必要。
+      // bot review は branch protection の required reviewers に count されない GitHub 仕様により、
+      // merge gating を確実に効かせるには status check 側で required 指定する必要がある。
+      checks: 'write',
     },
     default_events: ['pull_request'],
   };

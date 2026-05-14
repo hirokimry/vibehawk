@@ -533,5 +533,70 @@ else
   fail "prompt に depth 4 段階のすべての説明が含まれない（Issue #10、$depth_desc_count/4）"
 fi
 
+# Issue #121-C1: status check 投稿（check-runs API）指示が prompt に含まれる
+# bot review は branch protection の required reviewers に count されないため、
+# check-runs API で "vibehawk" check を post して merge gating を確保する設計。
+if grep -F 'check-runs' "$WORKFLOW" > /dev/null; then
+  pass "prompt に check-runs API 投稿指示が含まれる（Issue #121-C1）"
+else
+  fail "prompt に check-runs API 投稿指示が含まれない（Issue #121-C1、required status check の前提）"
+fi
+
+# Issue #121-C1: check-runs POST のサンプルコードが含まれる（gh api -X POST repos/.../check-runs）
+if grep -F 'gh api -X POST' "$WORKFLOW" | grep -F 'check-runs' > /dev/null; then
+  pass "prompt に check-runs POST のサンプルコード（gh api -X POST repos/.../check-runs）が含まれる（Issue #121-C1）"
+else
+  fail "prompt に check-runs POST のサンプルコードが含まれない（Issue #121-C1）"
+fi
+
+# Issue #121-C1: check run の name は "vibehawk" 固定（branch protection との一致のため）
+if grep -E 'name="vibehawk"|name=vibehawk' "$WORKFLOW" > /dev/null; then
+  pass "prompt に check run name=\"vibehawk\" 固定指定が含まれる（Issue #121-C1、branch protection 一致）"
+else
+  fail "prompt に check run name=\"vibehawk\" 固定指定が含まれない（Issue #121-C1）"
+fi
+
+# Issue #121-C1: head_sha を $HEAD_SHA で渡す指示
+if grep -F 'head_sha=' "$WORKFLOW" > /dev/null; then
+  pass "prompt に head_sha 受け渡し指示が含まれる（Issue #121-C1）"
+else
+  fail "prompt に head_sha 受け渡し指示が含まれない（Issue #121-C1）"
+fi
+
+# Issue #121-C1: conclusion 導出表の 4 種（success / failure / neutral / step skip）が言及される
+# 3 種（success / failure / neutral）は GitHub check-runs API の conclusion 値として grep する。
+# 4 種目の skip ケースは GitHub check-runs API の conclusion 値ではなく workflow step 自体の skip を意味するため、
+# 「step skip」相当の文言が prompt 内に存在することを別途検証する（PR #125 CodeRabbit Major 指摘）。
+declare -a required_conclusions=(success failure neutral)
+for conclusion in "${required_conclusions[@]}"; do
+  if grep -F "$conclusion" "$WORKFLOW" > /dev/null; then
+    pass "prompt に conclusion=$conclusion の導出指示が含まれる（Issue #121-C1）"
+  else
+    fail "prompt に conclusion=$conclusion の導出指示が含まれない（Issue #121-C1）"
+  fi
+done
+
+# Issue #121-C1: 4 種目（step skip）の言及検証（PR #125 CodeRabbit Major 指摘）
+# check-runs API 失敗 / secrets 未設定時の step skip ケースが導出表 4 種目として明記されているか確認する
+if grep -F 'step skip' "$WORKFLOW" > /dev/null || grep -F 'step 自体は skip' "$WORKFLOW" > /dev/null; then
+  pass "prompt に conclusion 導出表の 4 種目（step skip ケース）が言及される（Issue #121-C1、PR #125 CodeRabbit Major 対応）"
+else
+  fail "prompt に conclusion 導出表の 4 種目（step skip ケース）の言及がない（Issue #121-C1、導出表は 4 種ある）"
+fi
+
+# Issue #121-C1: API 失敗時の graceful degradation（warning 出力 + continue）
+if grep -F '::warning::' "$WORKFLOW" | grep -F 'check-runs' > /dev/null; then
+  pass "prompt に check-runs API 失敗時の warning fallback 指示が含まれる（Issue #121-C1）"
+else
+  fail "prompt に check-runs API 失敗時の warning fallback 指示が含まれない（Issue #121-C1、graceful degradation の前提）"
+fi
+
+# Issue #121-C1: status が "completed" 固定（check run の完結ステータス）
+if grep -F 'status="completed"' "$WORKFLOW" > /dev/null; then
+  pass "prompt に status=\"completed\" 固定指定が含まれる（Issue #121-C1）"
+else
+  fail "prompt に status=\"completed\" 固定指定が含まれない（Issue #121-C1）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

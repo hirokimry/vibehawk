@@ -81,17 +81,19 @@ else
 fi
 
 # manifest.js が最小権限のみ要求すること
+# Issue #121-C1: status check (check-runs API) post のため checks: write を追加
 if node -e '
 const { buildManifest } = require("./cli/manifest");
 const m = buildManifest({ port: 8765, name: "vibehawk" });
-const expected = ["pull_requests", "issues", "contents"];
+const expected = ["pull_requests", "issues", "contents", "checks"];
 const actual = Object.keys(m.default_permissions).sort();
 if (JSON.stringify(actual) !== JSON.stringify(expected.sort())) { console.error("permissions:", actual); process.exit(1); }
 if (m.default_permissions.pull_requests !== "write") process.exit(1);
 if (m.default_permissions.issues !== "write") process.exit(1);
 if (m.default_permissions.contents !== "read") process.exit(1);
+if (m.default_permissions.checks !== "write") process.exit(1);
 '; then
-  pass "manifest.js が最小権限（pull_requests:write, issues:write, contents:read）のみ要求"
+  pass "manifest.js が最小権限（pull_requests:write, issues:write, contents:read, checks:write）のみ要求"
 else
   fail "manifest.js の最小権限が想定と異なる"
 fi
