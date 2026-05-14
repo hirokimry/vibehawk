@@ -200,6 +200,21 @@ fi
 
 bundled review API の approve / request_changes 投稿（PR #122）に加え、`POST /repos/X/Y/check-runs` API で **status check** を post する。bot review は GitHub の構造仕様により branch protection の required reviewers に count されないため、merge gating を確実に効かせるには status check 側で required 指定する必要がある（CodeRabbit が `required_status_checks: ["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
 
+#### check run の投稿者と認証経路（Issue #121-C1 fix）
+
+| 項目 | 値 |
+|---|---|
+| 投稿主体（API 上の actor） | `github-actions[bot]`（デフォルト `GITHUB_TOKEN` で post するため） |
+| 認証経路 | workflow に付与された `permissions.checks: write` 付きの `secrets.GITHUB_TOKEN`（App Installation Token は使わない） |
+| 実行場所 | `claude-code-action` ステップの **直後** に追加された独立 step（`vibehawk status check を post`） |
+
+`vibehawk-for-<owner>` App の `checks: write` 権限経路は採用しない（PR #125 初版が依存していた経路）。理由:
+
+- App permission を後付け追加した場合、既に install 済の利用者は App を **再 install** しないと新権限が反映されない（GitHub 仕様）
+- claude-code-action の sub-agent permission model（`--allowedTools "Bash(gh api:*)"`）は POST 系の `gh api -X POST` を deny するケースが観測されており、Claude prompt 内 POST は信頼性が低い
+
+代わりに workflow.permissions の `checks: write`（デフォルト `GITHUB_TOKEN` に付与される）を使う設計とした。利用者は workflow ファイルを最新版に更新するだけで status check post が動作し、App 再 install は不要。check run の投稿者表示は `vibehawk-for-<owner>[bot]` ではなく `github-actions[bot]` になるが、check の `name` は `vibehawk` 固定のため branch protection 設定上の識別性は維持される。
+
 #### check run のメタデータ
 
 | 項目 | 値 |
@@ -207,26 +222,25 @@ bundled review API の approve / request_changes 投稿（PR #122）に加え、
 | `name` | `vibehawk`（固定、利用者は branch protection でこの名前を required に登録する） |
 | `head_sha` | `github.event.pull_request.head.sha`（PR の HEAD SHA） |
 | `status` | `completed`（vibehawk はレビュー実行完了時のみ check を post する。in_progress は使わない） |
-| `conclusion` | 下表の 4 種から導出 |
-| `output.title` | 1 行サマリ（例: `vibehawk: 未解決 3 件 / 新規 2 件`） |
-| `output.summary` | 詳細サマリ（review body と同等の文字列） |
+| `conclusion` | 下表の 3 種から導出（bash `case` ベースの決定論マッピング） |
+| `output.title` | 1 行サマリ（例: `vibehawk: APPROVED` / `vibehawk: CHANGES_REQUESTED`） |
+| `output.summary` | 直前の review body（最大 60000 文字で切り詰め、check-runs API 制約 65535 字に対する安全側マージン） |
 
 #### conclusion 導出表
 
-| bundled review event | 新規 inline 指摘の severity | conclusion | 意味 |
-|---|---|---|---|
-| `APPROVE`（unresolved == 0 かつ新規 0 件） | — | `success` | merge OK |
-| `REQUEST_CHANGES`（unresolved ≥ 1 件 または 新規 Critical/Major あり） | — | `failure` | merge ブロック |
-| `APPROVE` だが新規 Minor/Trivial/Info のみ（intent 重視軸外で REQUEST_CHANGES に至らず） | Minor/Trivial/Info のみ | `neutral` | merge OK だが助言あり（required check では failure 扱いされない） |
-| `check_secrets` 未設定 / API 失敗 | — | step skip | check 自体を post しない（既存ガード） |
+直前の vibehawk review（`vibehawk-for-<owner>[bot]` 投稿の最新 review、`gh api repos/X/Y/pulls/N/reviews --paginate` で `submitted_at` 最後尾を取得）の `state` から bash `case` で決定論的にマップする:
+
+| 直前 review の `state` | conclusion | 意味 |
+|---|---|---|
+| `APPROVED` | `success` | merge OK |
+| `CHANGES_REQUESTED` | `failure` | merge ブロック |
+| `COMMENTED` 等その他 / review 未検出 | `neutral` | informational（required check では failure 扱いされない） |
+
+`check_secrets` 未設定時は step 自体が `if: steps.check_secrets.outputs.ready == 'true'` ガードで skip され、check 自体が post されない（既存ガード継承）。
 
 #### 利用者側オペ（branch protection への登録）
 
 利用者は `Settings → Branches → Branch protection rules` で対象ブランチ（通常 `main`）を編集し、`Require status checks to pass before merging` を ON にした上で、検索ボックスに `vibehawk` と入力して required に追加する。初回登録時は `vibehawk` check が未発火だと検索候補に出ないため、先にダミー PR を立てて check を発火させてから登録する手順となる（README の setup ステップ 7 参照）。
-
-#### App 権限要件
-
-`check-runs` API の POST には `vibehawk-for-<owner>` App の `checks: write` 権限が必要。App manifest（`cli/manifest.js`）で `checks: write` が付与されている前提で動作する。権限不足で 403 が返った場合、workflow 内 `|| echo "::warning::..."` で graceful degradation し、warning に「App の再 install で権限を更新してください」と案内を含める（bundled review 投稿自体は完了済みのため review badge は維持される）。
 
 ### @mention チャット応答
 

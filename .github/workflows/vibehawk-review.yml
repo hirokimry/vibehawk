@@ -12,6 +12,10 @@ permissions:
   pull-requests: write
   issues: write
   contents: read
+  # Issue #121-C1 fix: vibehawk status check を post するため、デフォルト GITHUB_TOKEN に
+  # checks: write を付与する。check-runs POST はワークフロー step で決定論的に実行する
+  # （Claude prompt 経由は permission_denial で失敗するため廃止、Issue #121 コメント参照）。
+  checks: write
 
 jobs:
   review:
@@ -263,7 +267,7 @@ jobs:
                - 新規 inline 指摘に Critical/Major が 1 件でもある → `event=REQUEST_CHANGES`
                - それ以外（unresolved == 0 件 かつ 新規 inline が 0 件 または Minor/Trivial/Info のみ） → `event=APPROVE`
 
-            この event 決定は「## status check 投稿」の conclusion 導出表と必ず整合させる（同一の severity 判定軸で APPROVE/REQUEST_CHANGES を決め、conclusion はそれに従って success/failure/neutral にマップする）。
+            この event 決定の結果（APPROVED / CHANGES_REQUESTED）から、後続の GitHub Actions step が決定論的に status check の conclusion (success/failure/neutral) を導出して post する（Issue #121-C1 fix、Claude prompt 内 check-runs POST は permission_denial 多発のため廃止し workflow step に移管した）。
             4. `gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews"` を **1 回だけ** 呼ぶ。`comments` は配列なので `-f`/`-F` の repeatable は使えず、`--input -` で JSON ペイロード全体を渡す:
 
             ```bash
@@ -302,44 +306,9 @@ jobs:
             - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/comments` で inline を個別投稿する（バンドルから外れ muted badge の原因）
             - 旧 issue comment 形式のサマリを edit する経路（issue comment 経路は撤廃、bundled review に統一）
 
-            ## status check 投稿（Issue #121-C1、merge gating 確保）
+            ## status check 投稿は workflow step が決定論的に行う（Issue #121-C1 fix）
 
-            bundled review POST の **直後** に check-runs API を呼んで status check を post してください。bot review は GitHub の構造仕様により branch protection の required reviewers に count されません。check-runs API で "vibehawk" という名前の check を post し、利用者が branch protection の `required_status_checks` に "vibehawk" を登録することで merge gating を成立させます（CodeRabbit が `["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
-
-            ### conclusion 導出表（4 種、必ずこの表に従う）
-
-            | bundled review event | 新規 inline 指摘の severity | conclusion |
-            |---|---|---|
-            | APPROVE（unresolved == 0 かつ新規 0 件） | — | `success` |
-            | REQUEST_CHANGES（unresolved ≥ 1 件 または 新規 Critical/Major あり） | — | `failure` |
-            | APPROVE 投稿だが 新規 Minor/Trivial/Info のみ（intent 重視軸外で REQUEST_CHANGES に至らず） | Minor/Trivial/Info のみ | `neutral` |
-            | check_secrets 未設定 / API 失敗 | — | step skip（既存 `if: steps.check_secrets.outputs.ready == 'true'` ガードに従う） |
-
-            ### POST 手順
-
-            bundled review POST 完了後（同一 prompt 実行内）に以下を 1 回だけ実行する:
-
-            ```bash
-            # VIBEHAWK_CONCLUSION / VIBEHAWK_TITLE / VIBEHAWK_SUMMARY は上記表に基づいて事前に算出
-            # - VIBEHAWK_CONCLUSION: success | failure | neutral のいずれか
-            # - VIBEHAWK_TITLE: 1 行サマリ（例: "vibehawk: 未解決 3 件 / 新規 2 件"）
-            # - VIBEHAWK_SUMMARY: 詳細サマリ（review body と同等の文字列で OK）
-            gh api -X POST "repos/$REPO/check-runs" \
-              --field name="vibehawk" \
-              --field head_sha="$HEAD_SHA" \
-              --field status="completed" \
-              --field conclusion="$VIBEHAWK_CONCLUSION" \
-              --field "output[title]=$VIBEHAWK_TITLE" \
-              --field "output[summary]=$VIBEHAWK_SUMMARY" \
-              || echo "::warning::vibehawk: check-runs POST が失敗しました（App に checks:write 権限が不足している可能性があります。再 install で権限を更新してください）"
-            ```
-
-            ### 重要な制約
-
-            - check run の `name` は **必ず "vibehawk" 固定**（利用者が branch protection に登録する名前と一致させるため変更不可）
-            - `head_sha` は prompt 変数 `$HEAD_SHA`（= `github.event.pull_request.head.sha`）を使う
-            - 失敗時は warning のみで continue（既存レビュー投稿は完了済みなので review badge は維持される）
-            - **絶対禁止**: 別 step で再投稿する / commit status API（旧 `/statuses/$SHA`）を併用する / name を "vibehawk-review" 等の別名にする
+            Claude prompt 内では check-runs API を **絶対に呼ばない**。check-runs POST は claude-code-action の次の step（`vibehawk status check を post`）が GitHub Actions の GITHUB_TOKEN を使って実行する。Claude prompt から POST を呼ぶ旧設計は claude-code-action の permission model により deny されるため、本 prompt は bundled review POST まででタスク完了とすること。
 
             ## サマリ本文（REVIEW_BODY）の必須要件
 
@@ -398,7 +367,7 @@ jobs:
                - 新規 inline に Critical/Major が 1 件でもある → `event=REQUEST_CHANGES`、body 冒頭に `⚠️ vibehawk: 新規 Critical/Major M 件`
                - 新規 inline は Minor/Trivial/Info のみ（または 0 件） → `event=APPROVE`、body 冒頭に `✅ vibehawk: 未解決指摘なし`（新規 0 件）または `✅ vibehawk: 助言 N 件（要対応指摘なし）`（Minor 以下のみ）
 
-            この判定は「## status check 投稿」の conclusion 導出表と同一の severity 判定軸を使い、最終的に APPROVE/REQUEST_CHANGES から conclusion (success/neutral/failure) を一意に導出する。
+            この判定結果（APPROVED / CHANGES_REQUESTED）は後続の workflow step が読み取り、status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix）。
 
             状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
 
@@ -445,3 +414,71 @@ jobs:
             Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります。コード生成（docstring 全文 / unit-test ファイル新設 / 自動 commit）は **絶対に禁止**（5 大方針 2）。
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
+
+      - name: vibehawk status check を post（Issue #121-C1 fix）
+        # Claude prompt 内 check-runs POST は claude-code-action の permission model で
+        # deny されるため、workflow step で決定論的に post する。デフォルト GITHUB_TOKEN の
+        # checks: write 権限を使い、App installation の permission 状態に依存しない。
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
+
+          # 直前の Claude セッションが投稿した vibehawk の最新 review を取得する。
+          # bundled review POST が成功していれば submitted_at で最後尾の 1 件が今回投稿分。
+          # `gh api --paginate` の生 JSON を `jq -cs` で slurp 集約してから一括フィルタする
+          # （prev_summary ステップと同じパターン、ページ横断集約の必要性は cli/cli#1268 / #10459）。
+          review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+            | jq -cs --arg bot "${BOT_LOGIN}" '
+                [ .[][]
+                  | select(.user.login == $bot)
+                ]
+                | sort_by(.submitted_at)
+                | last // empty
+              ')"
+
+          # conclusion 導出表（Issue #121-C1、docs/specification.md status check 仕様）:
+          #   APPROVED         → success（merge OK）
+          #   CHANGES_REQUESTED → failure（merge ブロック）
+          #   COMMENTED 等その他 / review 未検出 → neutral（informational）
+          if [[ -z "${review_json}" ]]; then
+            conclusion="neutral"
+            title="vibehawk: review 未投稿"
+            summary="vibehawk review が見つかりません（claude-code-action の bundled POST が失敗している可能性があります）"
+          else
+            state="$(echo "${review_json}" | jq -r '.state // ""')"
+            body="$(echo "${review_json}" | jq -r '.body // ""')"
+
+            case "${state}" in
+              APPROVED)
+                conclusion="success"
+                title="vibehawk: APPROVED"
+                ;;
+              CHANGES_REQUESTED)
+                conclusion="failure"
+                title="vibehawk: CHANGES_REQUESTED"
+                ;;
+              *)
+                conclusion="neutral"
+                title="vibehawk: ${state}"
+                ;;
+            esac
+            summary="${body}"
+          fi
+
+          # check-runs API の output.summary は最大 65535 文字。安全側で 60000 字で切る。
+          summary="${summary:0:60000}"
+
+          gh api -X POST "repos/${REPO}/check-runs" \
+            --field name="vibehawk" \
+            --field head_sha="${HEAD_SHA}" \
+            --field status="completed" \
+            --field conclusion="${conclusion}" \
+            --field "output[title]=${title}" \
+            --field "output[summary]=${summary}"
