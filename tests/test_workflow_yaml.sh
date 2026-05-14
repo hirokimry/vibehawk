@@ -176,11 +176,26 @@ else
   fail "claude_args が設定されていない（claude-code-action が automatic review mode で動作しない）"
 fi
 
-# claude が PR コメント投稿できる allowedTools
-if echo "$WORKFLOW_BODY" | grep -F "Bash(gh pr comment:*)" > /dev/null; then
-  pass "allowedTools に Bash(gh pr comment:*) が含まれる"
+# Issue #121: bundled review API（gh api -X POST pulls/N/reviews）で投稿するため、
+# allowedTools に Bash(gh api:*) が含まれることを確認する。
+# 旧 `gh pr comment` / `gh pr review` 経路は bundled 化で撤廃（colored badge 表示の前提）。
+if echo "$WORKFLOW_BODY" | grep -F "Bash(gh api:*)" > /dev/null; then
+  pass "allowedTools に Bash(gh api:*) が含まれる（Issue #121 bundled review API 投稿）"
 else
-  fail "allowedTools に Bash(gh pr comment:*) が含まれない（claude-code-action がコメント投稿できない）"
+  fail "allowedTools に Bash(gh api:*) が含まれない（Issue #121、bundled review POST が呼べない）"
+fi
+
+# Issue #121: 旧 `gh pr comment` / `gh pr review` 経路は bundled 化で撤廃されているべき
+if echo "$WORKFLOW_BODY" | grep -F "Bash(gh pr comment:*)" > /dev/null; then
+  fail "allowedTools に Bash(gh pr comment:*) が残っている（Issue #121、bundled 化で撤廃すべき）"
+else
+  pass "allowedTools に Bash(gh pr comment:*) が含まれない（Issue #121 bundled 化）"
+fi
+
+if echo "$WORKFLOW_BODY" | grep -F "Bash(gh pr review:*)" > /dev/null; then
+  fail "allowedTools に Bash(gh pr review:*) が残っている（Issue #121、bundled 化で撤廃すべき）"
+else
+  pass "allowedTools に Bash(gh pr review:*) が含まれない（Issue #121 bundled 化）"
 fi
 
 # 経路 2 必須化（#59）: claude-code-action の github_token に App Installation Token (steps.app-token.outputs.token) を渡している
@@ -288,12 +303,47 @@ for var in INCREMENTAL_MODE EXISTING_COMMENT_ID PREV_SHA REVIEW_RANGE; do
   fi
 done
 
-# Issue #8: prompt に PATCH endpoint（コメント edit）の指示が含まれる
+# Issue #121: bundled review API への移行
+# - prompt に bundled review POST 指示が含まれる（gh api -X POST pulls/N/reviews）
+# - incremental サマリは新規 review 都度作成（GitHub Reviews API は edit 不可）
+# - 旧 gh api -X PATCH issues/comments/ 経路は撤廃
+if grep -F 'gh api -X POST' "$WORKFLOW" > /dev/null && \
+   grep -F 'pulls/$PR_NUMBER/reviews' "$WORKFLOW" > /dev/null; then
+  pass "prompt に bundled review POST 指示（gh api -X POST pulls/N/reviews）が含まれる（Issue #121）"
+else
+  fail "prompt に bundled review POST 指示が含まれない（Issue #121、colored badge 表示の前提）"
+fi
+
+# Issue #121: 旧 PATCH コメント edit 経路は撤廃されているべき
 if grep -F 'gh api -X PATCH' "$WORKFLOW" > /dev/null && \
    grep -F 'issues/comments/' "$WORKFLOW" > /dev/null; then
-  pass "prompt にコメント edit 指示（gh api -X PATCH issues/comments/）が含まれる（Issue #8）"
+  fail "prompt に旧コメント edit 指示（gh api -X PATCH issues/comments/）が残っている（Issue #121、bundled 化で撤廃すべき）"
 else
-  fail "prompt にコメント edit 指示が含まれない（Issue #8、サマリ重複投稿の原因）"
+  pass "prompt から旧コメント edit 指示が撤廃されている（Issue #121 bundled 化）"
+fi
+
+# Issue #121: bundled review POST には event / body / commit_id / comments 4 フィールドが必須
+for field in event body commit_id comments; do
+  if grep -F "$field" "$WORKFLOW" > /dev/null; then
+    pass "prompt に bundled review POST の $field フィールド指示が含まれる（Issue #121）"
+  else
+    fail "prompt に bundled review POST の $field フィールド指示が含まれない（Issue #121）"
+  fi
+done
+
+# Issue #121: event は APPROVE / REQUEST_CHANGES のいずれか
+if grep -F 'APPROVE' "$WORKFLOW" > /dev/null && \
+   grep -F 'REQUEST_CHANGES' "$WORKFLOW" > /dev/null; then
+  pass "prompt に event=APPROVE / REQUEST_CHANGES の指示が含まれる（Issue #121）"
+else
+  fail "prompt に event=APPROVE / REQUEST_CHANGES の指示が含まれない（Issue #121）"
+fi
+
+# Issue #121: prev_summary ステップが pulls/.../reviews 経路で前回サマリを検索する
+if grep -F 'pulls/${PR_NUMBER}/reviews' "$WORKFLOW" > /dev/null; then
+  pass "prev_summary が pulls/.../reviews エンドポイントで前回サマリを検索する（Issue #121）"
+else
+  fail "prev_summary が pulls/.../reviews エンドポイントを参照していない（Issue #121、bundled review API への移行未完）"
 fi
 
 # Issue #8: allowedTools に gh api / git log / git diff が追加されている

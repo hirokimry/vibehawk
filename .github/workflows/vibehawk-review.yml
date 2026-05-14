@@ -76,10 +76,15 @@ jobs:
           set -euo pipefail
           BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
 
-          # 投稿者 ID + 種別マーカーの二重チェックで vibehawk のサマリコメントを特定（仕様: docs/specification.md:83）
-          # null は jq で空文字に変換、複数ヒット時は created_at 最新を採用
-          summary_json="$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
-            --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\") | select(.body | contains(\"<!-- vibehawk:summary -->\"))] | sort_by(.created_at) | last // empty")"
+          # Issue #121: bundled review API へ移行
+          # サマリは `POST /repos/X/Y/pulls/N/reviews` の review body に埋め込まれるため、
+          # 前回サマリの検索元は pulls/reviews エンドポイントとなる。
+          # 投稿者 ID + 種別マーカーの二重チェックで vibehawk の review を特定。
+          # 旧 issue comment 形式のサマリ（Issue #121 以前）は無視されるが、誤判定はしない
+          # （種別マーカー <!-- vibehawk:summary --> は review body にも引き続き含まれる）。
+          # null は jq で空文字に変換、複数ヒット時は submitted_at 最新を採用。
+          summary_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+            --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\") | select(.body | contains(\"<!-- vibehawk:summary -->\"))] | sort_by(.submitted_at) | last // empty")"
 
           if [[ -z "${summary_json}" ]]; then
             echo "vibehawk: 前回サマリ未検出 → 初回レビュー"
@@ -90,6 +95,8 @@ jobs:
             exit 0
           fi
 
+          # comment_id は GitHub Reviews API では review.id（PATCH 不可、bundled review 化により edit 経路は撤廃）。
+          # 後方互換のため GITHUB_OUTPUT には残すが prompt 側では使わない（incremental は新規 review を都度作成）。
           comment_id="$(echo "${summary_json}" | jq -r '.id')"
           body="$(echo "${summary_json}" | jq -r '.body')"
           # SHA マーカー <!-- vibehawk:sha=<hex> --> から SHA を抽出
@@ -223,33 +230,73 @@ jobs:
             - INCREMENTAL_MODE=false かつ EXISTING_COMMENT_ID が空（初回レビュー）: PR 全体（base ブランチからの全差分 `git diff origin/$BASE_REF...HEAD`）をレビュー
             - INCREMENTAL_MODE=false かつ EXISTING_COMMENT_ID が設定済（force push / rebase 検出）: PR 全体を **完全再レビュー**（前回サマリは古い SHA に紐づいているため棄却し、最新差分で書き直す）
 
-            ## 投稿方法（最重要）
+            ## 投稿方法（最重要、Issue #121 で bundled review API に変更）
 
-            EXISTING_COMMENT_ID が空（初回）:
-            - `gh pr comment $PR_NUMBER --body "<サマリ本文>"` で新規投稿
+            **全ての投稿は `POST /repos/X/Y/pulls/N/reviews` を 1 回呼ぶ bundled review に統合する。**
 
-            EXISTING_COMMENT_ID が設定済（前回サマリあり、edit で更新）:
-            - `gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING_COMMENT_ID" -f body="<新サマリ本文>"` で edit
-            - 新規 `gh pr comment` を呼ばないこと（コメントが増えてしまう）
+            理由: GitHub UI は review event 配下にサマリ本文 + inline 指摘がバンドルされている場合のみ colored badge（APPROVED→緑 / CHANGES_REQUESTED→赤）で表示する。3 段階分離投稿（inline 個別 POST + サマリ issue comment + `gh pr review` 系コマンドでの approve / request-changes 発火）では review event が空になり muted badge になるため。
 
-            ## サマリ本文の必須要件
+            ### 投稿フロー（INCREMENTAL_MODE 共通）
 
-            - PR 全体の変更内容の要約（簡潔に）
-            - 検出した指摘の合計件数を severity 別に表示
-            - **末尾に必ず以下 2 行を含める**（インクリメンタルレビューの一意特定に必須、Issue #57）:
+            1. inline 指摘は **その場で POST せず**、JSON 配列 `comments[]` に貯める（path / line / side / body / 必要に応じ start_line+start_side）
+            2. レビュー本文（severity 別件数を含む長文サマリ）を変数として組み立てる。**末尾に必ず以下 2 行を含める**（インクリメンタルレビューの一意特定に必須、Issue #57）:
 
-            ```
+            ```text
             <!-- vibehawk:summary -->
             <!-- vibehawk:sha=${{ github.event.pull_request.head.sha }} -->
             ```
 
-            この 2 行が欠落すると、次回 push でサマリが update できず重複投稿になります。
+            この 2 行が欠落すると、次回 push で前回 SHA が抽出できず、incremental が破綻し完全再レビュー扱いになります。
 
-            ## inline comment 投稿（Issue #9 severity 5 段階）
+            3. event を決定する（auto_resolve 後の unresolved 数で）:
+               - unresolved == 0 → `event=APPROVE`
+               - unresolved >= 1 → `event=REQUEST_CHANGES`
+               - inline 指摘が 0 件かつ Critical/Major が 0 件 → `event=APPROVE`
+            4. `gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews"` を **1 回だけ** 呼ぶ。`comments` は配列なので `-f`/`-F` の repeatable は使えず、`--input -` で JSON ペイロード全体を渡す:
 
-            指摘ごとに `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/comments` で inline comment を投稿してください（5 大方針 2「コード生成は絶対しない」厳守、ただし GitHub Suggestions 構文は OK）。
+            ```bash
+            # comments_array.json は事前に jq で組み立てる（後述）
+            jq -n \
+              --arg event "$EVENT" \
+              --arg body "$REVIEW_BODY" \
+              --arg commit_id "$HEAD_SHA" \
+              --slurpfile comments comments_array.json \
+              '{event: $event, body: $body, commit_id: $commit_id, comments: $comments[0]}' \
+              | gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews" --input -
+            ```
 
-            ### severity 5 段階分類（CodeRabbit 公式仕様、`.claude/rules/severity/coderabbit.md` 準拠）
+            ### `comments[]` 配列の要素フォーマット
+
+            ```json
+            {
+              "path": "src/foo.ts",
+              "line": 42,
+              "side": "RIGHT",
+              "body": "🟠 **Major**: 指摘内容..."
+            }
+            ```
+
+            複数行範囲指摘なら `start_line` / `start_side` を追加。
+
+            ### incremental（前回サマリあり）の扱い
+
+            GitHub Reviews API には review body の edit エンドポイントがない（PATCH 不可）。したがって incremental でも **新規 review を都度作成** する。前回 review は GitHub UI 上で履歴として残るが、最新 review が APPROVED/CHANGES_REQUESTED の最終結論となるため運用上問題ない。
+
+            旧 issue comment 形式のサマリ（Issue #121 以前）が PR に残っていた場合は、touch せず放置（自然消滅）。
+
+            **絶対禁止**:
+            - `gh pr comment` 系コマンドでサマリを別投稿する（重複・badge 失効の原因）
+            - `gh pr review` 系コマンドで review event を別発火する（本来 bundled で 1 回呼出に統合、approve / request-changes の発火経路は本 prompt の bundled POST のみ）
+            - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/comments` で inline を個別投稿する（バンドルから外れ muted badge の原因）
+            - 旧 issue comment 形式のサマリを edit する経路（issue comment 経路は撤廃、bundled review に統一）
+
+            ## サマリ本文（REVIEW_BODY）の必須要件
+
+            - PR 全体の変更内容の要約（簡潔に）
+            - 検出した指摘の合計件数を severity 別に表示
+            - 末尾に上記 2 行（`<!-- vibehawk:summary -->` / `<!-- vibehawk:sha=... -->`）を含める
+
+            ## inline 指摘の severity 5 段階分類（CodeRabbit 公式仕様、`.claude/rules/severity/coderabbit.md` 準拠）
 
             | Marker | severity | 定義 |
             |--------|---------|---------|
@@ -259,26 +306,13 @@ jobs:
             | 🔵 | Trivial | コード品質を高めるための軽微な提案 |
             | ⚪ | Info | 情報提供のみ、対応不要 |
 
-            inline comment 本文の冒頭に必ず該当 severity の絵文字を 1 つ付ける（例: `🟠 **Major**: ...`）。重大度判定は本仕様（CodeRabbit 公式定義）に厳格に従う。
-
-            ### inline comment 必須フィールド（gh api -X POST 呼出）
-
-            ```bash
-            gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/comments" \
-              -f body="🟠 **Major**: 指摘内容..." \
-              -f commit_id="$HEAD_SHA" \
-              -f path="src/foo.ts" \
-              -f line=42 \
-              -f side=RIGHT
-            ```
-
-            複数行範囲指摘なら `start_line` / `start_side` / `line` / `side` を併用。
+            `comments[].body` の冒頭に必ず該当 severity の絵文字を 1 つ付ける（例: `🟠 **Major**: ...`）。重大度判定は本仕様（CodeRabbit 公式定義）に厳格に従う。
 
             ### GitHub Suggestions 構文（修正案、利用者が 1 クリックで適用可）
 
-            必要に応じて inline comment 本文に GitHub Suggestions 構文を埋め込んでください。**Bot 自身は commit しない**（5 大方針 2 の例外として「Suggestions 構文の生成」は明示的に許可、Bot 自身が PR に commit を作る行為は禁止）:
+            必要に応じて `comments[].body` に GitHub Suggestions 構文を埋め込んでください。**Bot 自身は commit しない**（5 大方針 2 の例外として「Suggestions 構文の生成」は明示的に許可、Bot 自身が PR に commit を作る行為は禁止）:
 
-            ````
+            ````text
             🟡 **Minor**: 変数名を意図がわかる名前に
             ```suggestion
             const userCount = users.length;
@@ -287,7 +321,7 @@ jobs:
 
             ## auto_resolve（push で直った旧指摘を resolved 化、Issue #9）
 
-            INCREMENTAL_MODE=true の場合、レビュー前に以下を実施:
+            INCREMENTAL_MODE=true の場合、bundled review POST の **前** に以下を実施:
 
             1. `gh api repos/$REPO/pulls/$PR_NUMBER/comments --paginate` で既存 inline comments を取得
             2. **投稿者 ID が `vibehawk-for-<owner>[bot]` のコメントのみ**フィルタ（他者・他 Bot のコメントは絶対に touch しない）
@@ -302,15 +336,15 @@ jobs:
 
             **重要制約**: 他者・他 Bot のレビュースレッドには **絶対に resolveReviewThread を呼ばない**（誤 resolve は信頼破壊）。投稿者 ID チェックを必ず実施。
 
-            ## sticky review state（Issue #9）
+            ## review event 決定（auto_resolve 後の unresolved 数で）
 
-            inline comment + auto_resolve 完了後、PR の review state を以下の規則で都度発行:
+            auto_resolve 完了後、bundled review POST の **直前** に unresolved 数で event を決定する:
 
-            1. `gh api repos/$REPO/pulls/$PR_NUMBER --jq '.review_comments'` 等で全 review thread の resolved / unresolved 数をカウント（または GraphQL で reviewThreads 取得）
-            2. unresolved == 0 → `gh pr review $PR_NUMBER --approve --body "✅ vibehawk: 未解決指摘なし"`
-            3. unresolved >= 1 → `gh pr review $PR_NUMBER --request-changes --body "⚠️ vibehawk: 未解決指摘 N 件あり"`
+            1. `gh api graphql` で `reviewThreads` を取得し、`isResolved == false` の数をカウント
+            2. unresolved == 0 かつ今回新規追加する inline 指摘も 0 件 → `event=APPROVE`、body 冒頭に `✅ vibehawk: 未解決指摘なし`
+            3. それ以外 → `event=REQUEST_CHANGES`、body 冒頭に `⚠️ vibehawk: 未解決指摘 N 件 / 新規指摘 M 件`
 
-            状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。
+            状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
 
             ## .vibehawk.yaml 設定の反映（Issue #10）
 
@@ -354,4 +388,4 @@ jobs:
 
             Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります。コード生成（docstring 全文 / unit-test ファイル新設 / 自動 commit）は **絶対に禁止**（5 大方針 2）。
           claude_args: |
-            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*)"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
