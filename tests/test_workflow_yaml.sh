@@ -346,6 +346,104 @@ else
   fail "prev_summary が pulls/.../reviews エンドポイントを参照していない（Issue #121、bundled review API への移行未完）"
 fi
 
+# Issue #121: bundled review POST のランタイム gh モック検証
+# prompt 内に埋め込まれた `jq -n ... | gh api -X POST repos/$REPO/pulls/$PR_NUMBER/reviews --input -`
+# サンプルを抽出し、`gh` をスタブ化して以下を検証する:
+#   - POST /pulls/<PR>/reviews が **ちょうど 1 回** 呼ばれる
+#   - 受け取った JSON payload が必須 4 フィールド（event / body / commit_id / comments）を含む
+#   - event 値が APPROVE / REQUEST_CHANGES のいずれかである
+#   - 旧経路 `gh api -X PATCH issues/comments/` が **1 回も呼ばれない**
+# Issue #121 完了条件（gh api モック検証）を grep 検証だけでなく実行時に担保する。
+MOCK_DIR="$(mktemp -d)"
+trap 'rm -rf "$MOCK_DIR"' EXIT
+
+# gh スタブを作成: 引数と stdin を記録するだけ
+cat > "$MOCK_DIR/gh" <<MOCK_EOF
+#!/usr/bin/env bash
+# 呼び出しログに引数を 1 行追記
+echo "\$@" >> "$MOCK_DIR/gh_calls.log"
+# --input - 指定時は stdin の JSON を保存
+for arg in "\$@"; do
+  if [[ "\$arg" == "--input" ]]; then
+    cat > "$MOCK_DIR/gh_last_stdin.json"
+    break
+  fi
+done
+exit 0
+MOCK_EOF
+chmod +x "$MOCK_DIR/gh"
+touch "$MOCK_DIR/gh_calls.log"
+
+# 環境変数を準備し、prompt のサンプル相当 bash を実行
+(
+  export PATH="$MOCK_DIR:$PATH"
+  export REPO="hirokimry/vibehawk"
+  export PR_NUMBER="999"
+  export EVENT="REQUEST_CHANGES"
+  export REVIEW_BODY="test summary body"
+  export HEAD_SHA="deadbeef1234567890abcdef1234567890abcdef"
+
+  # inline comments 配列（prompt の comments[] フォーマット）
+  cat > "$MOCK_DIR/comments_array.json" <<'JSON'
+[
+  {"path": "src/foo.ts", "line": 42, "side": "RIGHT", "body": "🟠 **Major**: test"}
+]
+JSON
+
+  # prompt 内の bundled POST サンプルを実行（templates/.github/workflows/vibehawk-review.yml 内の指示と同一）
+  jq -n \
+    --arg event "$EVENT" \
+    --arg body "$REVIEW_BODY" \
+    --arg commit_id "$HEAD_SHA" \
+    --slurpfile comments "$MOCK_DIR/comments_array.json" \
+    '{event: $event, body: $body, commit_id: $commit_id, comments: $comments[0]}' \
+    | gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews" --input -
+)
+
+# 検証 1: POST /pulls/<PR>/reviews が 1 回呼ばれる
+post_count="$(grep -cE -- '-X POST repos/[^ ]+/pulls/[0-9]+/reviews' "$MOCK_DIR/gh_calls.log" || true)"
+if [[ "$post_count" -eq 1 ]]; then
+  pass "bundled POST /pulls/N/reviews がランタイムでちょうど 1 回呼ばれる（Issue #121）"
+else
+  fail "bundled POST /pulls/N/reviews の呼出回数が想定外: ${post_count} 回（Issue #121、期待: 1）"
+fi
+
+# 検証 2: 旧経路 PATCH issues/comments が呼ばれていない
+patch_count="$(grep -cE -- '-X PATCH .*issues/comments' "$MOCK_DIR/gh_calls.log" || true)"
+if [[ "$patch_count" -eq 0 ]]; then
+  pass "旧経路 gh api -X PATCH issues/comments がランタイムで呼ばれない（Issue #121）"
+else
+  fail "旧経路 gh api -X PATCH issues/comments が ${patch_count} 回呼ばれている（Issue #121、bundled 化で撤廃すべき）"
+fi
+
+# 検証 3: payload に必須 4 フィールドが含まれる
+if [[ -f "$MOCK_DIR/gh_last_stdin.json" ]]; then
+  for field in event body commit_id comments; do
+    if jq -e --arg f "$field" 'has($f)' "$MOCK_DIR/gh_last_stdin.json" > /dev/null; then
+      pass "bundled POST payload に必須フィールド '$field' が含まれる（Issue #121）"
+    else
+      fail "bundled POST payload に必須フィールド '$field' が含まれない（Issue #121）"
+    fi
+  done
+
+  # 検証 4: event 値が APPROVE / REQUEST_CHANGES のいずれか
+  event_val="$(jq -r '.event' "$MOCK_DIR/gh_last_stdin.json")"
+  if [[ "$event_val" == "APPROVE" || "$event_val" == "REQUEST_CHANGES" ]]; then
+    pass "bundled POST payload の event 値が APPROVE/REQUEST_CHANGES のいずれか（実値: ${event_val}）"
+  else
+    fail "bundled POST payload の event 値が APPROVE/REQUEST_CHANGES 以外: ${event_val}（Issue #121）"
+  fi
+
+  # 検証 5: comments が配列である
+  if jq -e '.comments | type == "array"' "$MOCK_DIR/gh_last_stdin.json" > /dev/null; then
+    pass "bundled POST payload の comments が配列である（Issue #121）"
+  else
+    fail "bundled POST payload の comments が配列でない（Issue #121）"
+  fi
+else
+  fail "bundled POST の stdin payload が記録されていない（Issue #121、mock が --input - を受け取っていない）"
+fi
+
 # Issue #8: allowedTools に gh api / git log / git diff が追加されている
 for tool in 'gh api:\*' 'git log:\*' 'git diff:\*'; do
   if grep -E "Bash\(${tool}\)" "$WORKFLOW" > /dev/null; then

@@ -82,9 +82,19 @@ jobs:
           # 投稿者 ID + 種別マーカーの二重チェックで vibehawk の review を特定。
           # 旧 issue comment 形式のサマリ（Issue #121 以前）は無視されるが、誤判定はしない
           # （種別マーカー <!-- vibehawk:summary --> は review body にも引き続き含まれる）。
-          # null は jq で空文字に変換、複数ヒット時は submitted_at 最新を採用。
+          # null は jq で空文字に変換（`.body // ""`）、複数ヒット時は submitted_at 最新を採用。
+          # `gh api --paginate --jq` はページ単位で jq が評価され、複数ページに分散したレビューでは
+          # 全件中の最新 1 件を正しく取得できないため、`--paginate` の生 JSON を `jq -cs`（slurp）で
+          # ページ横断集約してから一括フィルタする（cli/cli#1268 / #10459 参照）。
           summary_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-            --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\") | select(.body | contains(\"<!-- vibehawk:summary -->\"))] | sort_by(.submitted_at) | last // empty")"
+            | jq -cs --arg bot "${BOT_LOGIN}" '
+                [ .[][]
+                  | select(.user.login == $bot)
+                  | select((.body // "") | contains("<!-- vibehawk:summary -->"))
+                ]
+                | sort_by(.submitted_at)
+                | last // empty
+              ')"
 
           if [[ -z "${summary_json}" ]]; then
             echo "vibehawk: 前回サマリ未検出 → 初回レビュー"
