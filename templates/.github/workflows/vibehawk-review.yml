@@ -300,6 +300,45 @@ jobs:
             - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/comments` で inline を個別投稿する（バンドルから外れ muted badge の原因）
             - 旧 issue comment 形式のサマリを edit する経路（issue comment 経路は撤廃、bundled review に統一）
 
+            ## status check 投稿（Issue #121-C1、merge gating 確保）
+
+            bundled review POST の **直後** に check-runs API を呼んで status check を post してください。bot review は GitHub の構造仕様により branch protection の required reviewers に count されません。check-runs API で "vibehawk" という名前の check を post し、利用者が branch protection の `required_status_checks` に "vibehawk" を登録することで merge gating を成立させます（CodeRabbit が `["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
+
+            ### conclusion 導出表（4 種、必ずこの表に従う）
+
+            | bundled review event | 新規 inline 指摘の severity | conclusion |
+            |---|---|---|
+            | APPROVE（unresolved == 0 かつ新規 0 件） | — | `success` |
+            | REQUEST_CHANGES（unresolved ≥ 1 件 または 新規 Critical/Major あり） | — | `failure` |
+            | APPROVE 投稿だが 新規 Minor/Trivial/Info のみ（intent 重視軸外で REQUEST_CHANGES に至らず） | Minor/Trivial/Info のみ | `neutral` |
+            | check_secrets 未設定 / API 失敗 | — | step skip（既存 `if: steps.check_secrets.outputs.ready == 'true'` ガードに従う） |
+
+            ### POST 手順
+
+            bundled review POST 完了後（同一 prompt 実行内）に以下を 1 回だけ実行する:
+
+            ```bash
+            # VIBEHAWK_CONCLUSION / VIBEHAWK_TITLE / VIBEHAWK_SUMMARY は上記表に基づいて事前に算出
+            # - VIBEHAWK_CONCLUSION: success | failure | neutral のいずれか
+            # - VIBEHAWK_TITLE: 1 行サマリ（例: "vibehawk: 未解決 3 件 / 新規 2 件"）
+            # - VIBEHAWK_SUMMARY: 詳細サマリ（review body と同等の文字列で OK）
+            gh api -X POST "repos/$REPO/check-runs" \
+              --field name="vibehawk" \
+              --field head_sha="$HEAD_SHA" \
+              --field status="completed" \
+              --field conclusion="$VIBEHAWK_CONCLUSION" \
+              --field "output[title]=$VIBEHAWK_TITLE" \
+              --field "output[summary]=$VIBEHAWK_SUMMARY" \
+              || echo "::warning::vibehawk: check-runs POST が失敗しました（App に checks:write 権限が不足している可能性があります。再 install で権限を更新してください）"
+            ```
+
+            ### 重要な制約
+
+            - check run の `name` は **必ず "vibehawk" 固定**（利用者が branch protection に登録する名前と一致させるため変更不可）
+            - `head_sha` は prompt 変数 `$HEAD_SHA`（= `github.event.pull_request.head.sha`）を使う
+            - 失敗時は warning のみで continue（既存レビュー投稿は完了済みなので review badge は維持される）
+            - **絶対禁止**: 別 step で再投稿する / commit status API（旧 `/statuses/$SHA`）を併用する / name を "vibehawk-review" 等の別名にする
+
             ## サマリ本文（REVIEW_BODY）の必須要件
 
             - PR 全体の変更内容の要約（簡潔に）
