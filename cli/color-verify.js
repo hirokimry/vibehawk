@@ -23,3 +23,5 @@ function verifyBundledColor(input) {
 }
 
 module.exports = { verifyBundledColor };
+
+// Trigger second workflow run (Test B: vibehawk alone after CodeRabbit pause)
