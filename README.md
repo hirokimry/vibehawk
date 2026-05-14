@@ -126,6 +126,8 @@ PR を作成すると `vibehawk-review.yml` が起動し、`vibehawk-for-<owner>
 
 vibehawk は bundled review API による approve / request_changes 投稿に加え、`POST /repos/X/Y/check-runs` API で `vibehawk` という名前の status check を post します。GitHub の構造仕様により bot review は branch protection の required reviewers に count されないため、merge gating を確実に効かせるには **status check 側で required 指定** する必要があります（CodeRabbit が `["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
 
+check 名は `vibehawk` 固定で、`vibehawk-for-<owner>` App ではなく workflow のデフォルト `GITHUB_TOKEN`（`permissions.checks: write` 付き）で post されます。利用者は App の再 install なしで status check が動作します。
+
 設定手順:
 
 1. リポジトリの `Settings → Branches → Branch protection rules` を開く

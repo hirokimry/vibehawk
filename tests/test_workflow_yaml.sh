@@ -77,15 +77,18 @@ else
 fi
 
 # 最小権限（id-token: write は #22 で削除済み）
+# Issue #121-C1 fix: checks: write を必須化（workflow step での check-runs POST 用）
 declare -a required_perms=(
   "pull-requests:[[:space:]]*write"
   "issues:[[:space:]]*write"
   "contents:[[:space:]]*read"
+  "checks:[[:space:]]*write"
 )
 declare -a perm_labels=(
   "pull-requests: write"
   "issues: write"
   "contents: read"
+  "checks: write"
 )
 for i in "${!required_perms[@]}"; do
   pattern="${required_perms[$i]}"
@@ -533,69 +536,73 @@ else
   fail "prompt に depth 4 段階のすべての説明が含まれない（Issue #10、$depth_desc_count/4）"
 fi
 
-# Issue #121-C1: status check 投稿（check-runs API）指示が prompt に含まれる
-# bot review は branch protection の required reviewers に count されないため、
-# check-runs API で "vibehawk" check を post して merge gating を確保する設計。
-if grep -F 'check-runs' "$WORKFLOW" > /dev/null; then
-  pass "prompt に check-runs API 投稿指示が含まれる（Issue #121-C1）"
+# Issue #121-C1 fix: status check 投稿は workflow step が決定論的に行う設計に変更
+# （Claude prompt 内 check-runs POST は claude-code-action の permission_denial で動作しないため）。
+#
+# 旧設計の prompt 内 check-runs 指示は **撤廃** されているべき。
+# 新設計では claude-code-action ステップの後に独立した GitHub Actions step を追加し、
+# デフォルト GITHUB_TOKEN（checks: write 付き）で check-runs を POST する。
+
+# prompt 部分とそれ以外を分離するため、prompt セクション（`prompt: |` から `claude_args:` 直前まで）を抽出
+# awk で "prompt: |" 〜 "claude_args:" の範囲を取る
+WORKFLOW_PROMPT="$(awk '/prompt:[[:space:]]*\|/{flag=1; next} /^[[:space:]]+claude_args:/{flag=0} flag' "$WORKFLOW")"
+# prompt より後（claude_args: 以降、後続 step を含む）を抽出
+WORKFLOW_POST_PROMPT="$(awk '/^[[:space:]]+claude_args:/{flag=1} flag' "$WORKFLOW")"
+
+# 旧設計の prompt 内 check-runs POST 指示は撤廃されているべき
+if echo "$WORKFLOW_PROMPT" | grep -F 'gh api -X POST' | grep -F 'check-runs' > /dev/null; then
+  fail "prompt 内に check-runs POST 指示が残っている（Issue #121-C1 fix、claude-code-action permission_denial で deny されるため撤廃すべき）"
 else
-  fail "prompt に check-runs API 投稿指示が含まれない（Issue #121-C1、required status check の前提）"
+  pass "prompt 内に check-runs POST 指示が残っていない（Issue #121-C1 fix、workflow step に移管済み）"
 fi
 
-# Issue #121-C1: check-runs POST のサンプルコードが含まれる（gh api -X POST repos/.../check-runs）
-if grep -F 'gh api -X POST' "$WORKFLOW" | grep -F 'check-runs' > /dev/null; then
-  pass "prompt に check-runs POST のサンプルコード（gh api -X POST repos/.../check-runs）が含まれる（Issue #121-C1）"
+# 新設計: claude-code-action ステップ以降の workflow step に check-runs POST が含まれる
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'gh api -X POST' | grep -F 'check-runs' > /dev/null; then
+  pass "claude-code-action 後の workflow step に check-runs POST が含まれる（Issue #121-C1 fix、決定論的 status check）"
 else
-  fail "prompt に check-runs POST のサンプルコードが含まれない（Issue #121-C1）"
+  fail "claude-code-action 後の workflow step に check-runs POST が含まれない（Issue #121-C1 fix、決定論的 status check の前提）"
 fi
 
-# Issue #121-C1: check run の name は "vibehawk" 固定（branch protection との一致のため）
-if grep -E 'name="vibehawk"|name=vibehawk' "$WORKFLOW" > /dev/null; then
-  pass "prompt に check run name=\"vibehawk\" 固定指定が含まれる（Issue #121-C1、branch protection 一致）"
+# 新設計: check run の name は "vibehawk" 固定（branch protection との一致のため）
+if echo "$WORKFLOW_POST_PROMPT" | grep -E 'name="vibehawk"|name=vibehawk' > /dev/null; then
+  pass "後続 step に check run name=\"vibehawk\" 固定指定が含まれる（Issue #121-C1 fix、branch protection 一致）"
 else
-  fail "prompt に check run name=\"vibehawk\" 固定指定が含まれない（Issue #121-C1）"
+  fail "後続 step に check run name=\"vibehawk\" 固定指定が含まれない（Issue #121-C1 fix）"
 fi
 
-# Issue #121-C1: head_sha を $HEAD_SHA で渡す指示
-if grep -F 'head_sha=' "$WORKFLOW" > /dev/null; then
-  pass "prompt に head_sha 受け渡し指示が含まれる（Issue #121-C1）"
+# 新設計: status="completed" 固定
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'status="completed"' > /dev/null; then
+  pass "後続 step に status=\"completed\" 固定指定が含まれる（Issue #121-C1 fix）"
 else
-  fail "prompt に head_sha 受け渡し指示が含まれない（Issue #121-C1）"
+  fail "後続 step に status=\"completed\" 固定指定が含まれない（Issue #121-C1 fix）"
 fi
 
-# Issue #121-C1: conclusion 導出表の 4 種（success / failure / neutral / step skip）が言及される
-# 3 種（success / failure / neutral）は GitHub check-runs API の conclusion 値として grep する。
-# 4 種目の skip ケースは GitHub check-runs API の conclusion 値ではなく workflow step 自体の skip を意味するため、
-# 「step skip」相当の文言が prompt 内に存在することを別途検証する（PR #125 CodeRabbit Major 指摘）。
-declare -a required_conclusions=(success failure neutral)
-for conclusion in "${required_conclusions[@]}"; do
-  if grep -F "$conclusion" "$WORKFLOW" > /dev/null; then
-    pass "prompt に conclusion=$conclusion の導出指示が含まれる（Issue #121-C1）"
-  else
-    fail "prompt に conclusion=$conclusion の導出指示が含まれない（Issue #121-C1）"
-  fi
-done
-
-# Issue #121-C1: 4 種目（step skip）の言及検証（PR #125 CodeRabbit Major 指摘）
-# check-runs API 失敗 / secrets 未設定時の step skip ケースが導出表 4 種目として明記されているか確認する
-if grep -F 'step skip' "$WORKFLOW" > /dev/null || grep -F 'step 自体は skip' "$WORKFLOW" > /dev/null; then
-  pass "prompt に conclusion 導出表の 4 種目（step skip ケース）が言及される（Issue #121-C1、PR #125 CodeRabbit Major 対応）"
+# 新設計: conclusion 導出の bash ロジック（APPROVED→success / CHANGES_REQUESTED→failure / 他→neutral）が含まれる
+# case 文での state → conclusion マッピング全体を grep
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'APPROVED)' > /dev/null && \
+   echo "$WORKFLOW_POST_PROMPT" | grep -F 'CHANGES_REQUESTED)' > /dev/null && \
+   echo "$WORKFLOW_POST_PROMPT" | grep -E 'conclusion="success"' > /dev/null && \
+   echo "$WORKFLOW_POST_PROMPT" | grep -E 'conclusion="failure"' > /dev/null && \
+   echo "$WORKFLOW_POST_PROMPT" | grep -E 'conclusion="neutral"' > /dev/null; then
+  pass "後続 step に conclusion 導出ロジック（APPROVED→success / CHANGES_REQUESTED→failure / 他→neutral）が含まれる（Issue #121-C1 fix）"
 else
-  fail "prompt に conclusion 導出表の 4 種目（step skip ケース）の言及がない（Issue #121-C1、導出表は 4 種ある）"
+  fail "後続 step に conclusion 導出ロジックが含まれない（Issue #121-C1 fix、bash case ベースの決定論マッピングが前提）"
 fi
 
-# Issue #121-C1: API 失敗時の graceful degradation（warning 出力 + continue）
-if grep -F '::warning::' "$WORKFLOW" | grep -F 'check-runs' > /dev/null; then
-  pass "prompt に check-runs API 失敗時の warning fallback 指示が含まれる（Issue #121-C1）"
+# 新設計: secrets ガード（既存 check_secrets パターンを後続 step も継承）
+if echo "$WORKFLOW_POST_PROMPT" | grep -F "steps.check_secrets.outputs.ready == 'true'" > /dev/null; then
+  pass "後続 status check step が check_secrets.ready ガードを継承（Issue #121-C1 fix、secrets 未設定時 skip）"
 else
-  fail "prompt に check-runs API 失敗時の warning fallback 指示が含まれない（Issue #121-C1、graceful degradation の前提）"
+  fail "後続 status check step が check_secrets.ready ガードを継承していない（Issue #121-C1 fix）"
 fi
 
-# Issue #121-C1: status が "completed" 固定（check run の完結ステータス）
-if grep -F 'status="completed"' "$WORKFLOW" > /dev/null; then
-  pass "prompt に status=\"completed\" 固定指定が含まれる（Issue #121-C1）"
+# 新設計: GITHUB_TOKEN（デフォルト workflow token）を使う（App Installation Token ではなく）
+# 理由: workflow.permissions.checks: write はデフォルト GITHUB_TOKEN に付与され、
+# App installation の permission 更新（再 install 必須）に依存しないため信頼性が高い
+if echo "$WORKFLOW_POST_PROMPT" | grep -E 'GH_TOKEN:[[:space:]]*\$\{\{[[:space:]]*secrets\.GITHUB_TOKEN[[:space:]]*\}\}' > /dev/null; then
+  pass "後続 status check step が secrets.GITHUB_TOKEN を使用（Issue #121-C1 fix、App permission 状態に依存しない）"
 else
-  fail "prompt に status=\"completed\" 固定指定が含まれない（Issue #121-C1）"
+  fail "後続 status check step が secrets.GITHUB_TOKEN を使用していない（Issue #121-C1 fix、App permission 更新依存を避けるため必須）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

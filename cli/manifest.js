@@ -28,9 +28,11 @@ function buildManifest({ port, name }) {
       pull_requests: 'write',
       issues: 'write',
       contents: 'read',
-      // Issue #121-C1: check-runs API で "vibehawk" status check を post するために必要。
-      // bot review は branch protection の required reviewers に count されない GitHub 仕様により、
-      // merge gating を確実に効かせるには status check 側で required 指定する必要がある。
+      // Issue #121-C1: status check による merge gating を仕様として有効化するための権限予約。
+      // 注: 現行 workflow（templates/.github/workflows/vibehawk-review.yml）は status check の POST に
+      // App Installation Token ではなく workflow デフォルトの GITHUB_TOKEN（permissions.checks: write 付き）
+      // を使う設計（Issue #121-C1 fix）。新規 install 利用者の App には本権限が初期付与され、
+      // 将来 App 経由で check-runs を扱う機能拡張時に再 install 不要となるため定義しておく。
       checks: 'write',
     },
     default_events: ['pull_request'],
