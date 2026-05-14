@@ -605,5 +605,39 @@ else
   fail "後続 status check step が secrets.GITHUB_TOKEN を使用していない（Issue #121-C1 fix、App permission 更新依存を避けるため必須）"
 fi
 
+# Issue #121 追加修正: substantive review filter（PR #129 観測対応）
+# bundled review POST 後に auto_resolve thread 解決で空の COMMENTED review が
+# 副産物として追加されるため、単純な「最後尾」では空 COMMENTED を拾い conclusion が
+# neutral に倒れる。substantive な review（APPROVED / CHANGES_REQUESTED かつ body 非空）
+# を優先取得するロジックが含まれていることを検証する。
+
+# 1. substantive_review_json 変数を導入している
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'substantive_review_json' > /dev/null; then
+  pass "後続 status check step に substantive_review_json 変数が導入されている（Issue #121 追加修正）"
+else
+  fail "後続 status check step に substantive_review_json 変数が導入されていない（Issue #121 追加修正、空 COMMENTED 副産物の誤拾い対策）"
+fi
+
+# 2. state == APPROVED or CHANGES_REQUESTED で絞り込む
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '.state == "APPROVED" or .state == "CHANGES_REQUESTED"' > /dev/null; then
+  pass "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込む（Issue #121 追加修正）"
+else
+  fail "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込んでいない（Issue #121 追加修正）"
+fi
+
+# 3. body 非空で絞り込む（auto_resolve 副産物の空 COMMENTED 排除）
+if echo "$WORKFLOW_POST_PROMPT" | grep -E '\(\.body // ""\) \| length > 0' > /dev/null; then
+  pass "substantive review filter が body 非空で絞り込む（Issue #121 追加修正、空 body の auto_resolve 副産物排除）"
+else
+  fail "substantive review filter が body 非空で絞り込んでいない（Issue #121 追加修正）"
+fi
+
+# 4. fallback として素の最新 review を取得するロジックが含まれる
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'if [[ -n "${substantive_review_json}" ]]' > /dev/null; then
+  pass "substantive review が無い場合の fallback ロジックが含まれる（Issue #121 追加修正）"
+else
+  fail "substantive review が無い場合の fallback ロジックが含まれない（Issue #121 追加修正、初回 review 未投稿などの edge case 対応）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

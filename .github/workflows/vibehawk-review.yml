@@ -431,17 +431,36 @@ jobs:
           BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
 
           # 直前の Claude セッションが投稿した vibehawk の最新 review を取得する。
-          # bundled review POST が成功していれば submitted_at で最後尾の 1 件が今回投稿分。
+          # bundled review POST 後に auto_resolve thread 解決で空の COMMENTED review が
+          # 副産物として追加されるため、単純な「最後尾」では空 COMMENTED を拾い conclusion が
+          # neutral に倒れる（Issue #121 追加修正、PR #129 観測）。substantive な review
+          # （APPROVED / CHANGES_REQUESTED かつ body 非空）を優先取得し、無ければ素の最新を
+          # fallback に使う。
           # `gh api --paginate` の生 JSON を `jq -cs` で slurp 集約してから一括フィルタする
           # （prev_summary ステップと同じパターン、ページ横断集約の必要性は cli/cli#1268 / #10459）。
-          review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+          substantive_review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
             | jq -cs --arg bot "${BOT_LOGIN}" '
                 [ .[][]
                   | select(.user.login == $bot)
+                  | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
+                  | select((.body // "") | length > 0)
                 ]
                 | sort_by(.submitted_at)
                 | last // empty
               ')"
+
+          if [[ -n "${substantive_review_json}" ]]; then
+            review_json="${substantive_review_json}"
+          else
+            review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+              | jq -cs --arg bot "${BOT_LOGIN}" '
+                  [ .[][]
+                    | select(.user.login == $bot)
+                  ]
+                  | sort_by(.submitted_at)
+                  | last // empty
+                ')"
+          fi
 
           # conclusion 導出表（Issue #121-C1、docs/specification.md status check 仕様）:
           #   APPROVED         → success（merge OK）
