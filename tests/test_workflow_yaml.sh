@@ -176,11 +176,26 @@ else
   fail "claude_args が設定されていない（claude-code-action が automatic review mode で動作しない）"
 fi
 
-# claude が PR コメント投稿できる allowedTools
-if echo "$WORKFLOW_BODY" | grep -F "Bash(gh pr comment:*)" > /dev/null; then
-  pass "allowedTools に Bash(gh pr comment:*) が含まれる"
+# Issue #121: bundled review API（gh api -X POST pulls/N/reviews）で投稿するため、
+# allowedTools に Bash(gh api:*) が含まれることを確認する。
+# 旧 `gh pr comment` / `gh pr review` 経路は bundled 化で撤廃（colored badge 表示の前提）。
+if echo "$WORKFLOW_BODY" | grep -F "Bash(gh api:*)" > /dev/null; then
+  pass "allowedTools に Bash(gh api:*) が含まれる（Issue #121 bundled review API 投稿）"
 else
-  fail "allowedTools に Bash(gh pr comment:*) が含まれない（claude-code-action がコメント投稿できない）"
+  fail "allowedTools に Bash(gh api:*) が含まれない（Issue #121、bundled review POST が呼べない）"
+fi
+
+# Issue #121: 旧 `gh pr comment` / `gh pr review` 経路は bundled 化で撤廃されているべき
+if echo "$WORKFLOW_BODY" | grep -F "Bash(gh pr comment:*)" > /dev/null; then
+  fail "allowedTools に Bash(gh pr comment:*) が残っている（Issue #121、bundled 化で撤廃すべき）"
+else
+  pass "allowedTools に Bash(gh pr comment:*) が含まれない（Issue #121 bundled 化）"
+fi
+
+if echo "$WORKFLOW_BODY" | grep -F "Bash(gh pr review:*)" > /dev/null; then
+  fail "allowedTools に Bash(gh pr review:*) が残っている（Issue #121、bundled 化で撤廃すべき）"
+else
+  pass "allowedTools に Bash(gh pr review:*) が含まれない（Issue #121 bundled 化）"
 fi
 
 # 経路 2 必須化（#59）: claude-code-action の github_token に App Installation Token (steps.app-token.outputs.token) を渡している
@@ -288,12 +303,145 @@ for var in INCREMENTAL_MODE EXISTING_COMMENT_ID PREV_SHA REVIEW_RANGE; do
   fi
 done
 
-# Issue #8: prompt に PATCH endpoint（コメント edit）の指示が含まれる
+# Issue #121: bundled review API への移行
+# - prompt に bundled review POST 指示が含まれる（gh api -X POST pulls/N/reviews）
+# - incremental サマリは新規 review 都度作成（GitHub Reviews API は edit 不可）
+# - 旧 gh api -X PATCH issues/comments/ 経路は撤廃
+if grep -F 'gh api -X POST' "$WORKFLOW" > /dev/null && \
+   grep -F 'pulls/$PR_NUMBER/reviews' "$WORKFLOW" > /dev/null; then
+  pass "prompt に bundled review POST 指示（gh api -X POST pulls/N/reviews）が含まれる（Issue #121）"
+else
+  fail "prompt に bundled review POST 指示が含まれない（Issue #121、colored badge 表示の前提）"
+fi
+
+# Issue #121: 旧 PATCH コメント edit 経路は撤廃されているべき
 if grep -F 'gh api -X PATCH' "$WORKFLOW" > /dev/null && \
    grep -F 'issues/comments/' "$WORKFLOW" > /dev/null; then
-  pass "prompt にコメント edit 指示（gh api -X PATCH issues/comments/）が含まれる（Issue #8）"
+  fail "prompt に旧コメント edit 指示（gh api -X PATCH issues/comments/）が残っている（Issue #121、bundled 化で撤廃すべき）"
 else
-  fail "prompt にコメント edit 指示が含まれない（Issue #8、サマリ重複投稿の原因）"
+  pass "prompt から旧コメント edit 指示が撤廃されている（Issue #121 bundled 化）"
+fi
+
+# Issue #121: bundled review POST には event / body / commit_id / comments 4 フィールドが必須
+for field in event body commit_id comments; do
+  if grep -F "$field" "$WORKFLOW" > /dev/null; then
+    pass "prompt に bundled review POST の $field フィールド指示が含まれる（Issue #121）"
+  else
+    fail "prompt に bundled review POST の $field フィールド指示が含まれない（Issue #121）"
+  fi
+done
+
+# Issue #121: event は APPROVE / REQUEST_CHANGES のいずれか
+if grep -F 'APPROVE' "$WORKFLOW" > /dev/null && \
+   grep -F 'REQUEST_CHANGES' "$WORKFLOW" > /dev/null; then
+  pass "prompt に event=APPROVE / REQUEST_CHANGES の指示が含まれる（Issue #121）"
+else
+  fail "prompt に event=APPROVE / REQUEST_CHANGES の指示が含まれない（Issue #121）"
+fi
+
+# Issue #121: prev_summary ステップが pulls/.../reviews 経路で前回サマリを検索する
+if grep -F 'pulls/${PR_NUMBER}/reviews' "$WORKFLOW" > /dev/null; then
+  pass "prev_summary が pulls/.../reviews エンドポイントで前回サマリを検索する（Issue #121）"
+else
+  fail "prev_summary が pulls/.../reviews エンドポイントを参照していない（Issue #121、bundled review API への移行未完）"
+fi
+
+# Issue #121: bundled review POST のランタイム gh モック検証
+# prompt 内に埋め込まれた `jq -n ... | gh api -X POST repos/$REPO/pulls/$PR_NUMBER/reviews --input -`
+# サンプルを抽出し、`gh` をスタブ化して以下を検証する:
+#   - POST /pulls/<PR>/reviews が **ちょうど 1 回** 呼ばれる
+#   - 受け取った JSON payload が必須 4 フィールド（event / body / commit_id / comments）を含む
+#   - event 値が APPROVE / REQUEST_CHANGES のいずれかである
+#   - 旧経路 `gh api -X PATCH issues/comments/` が **1 回も呼ばれない**
+# Issue #121 完了条件（gh api モック検証）を grep 検証だけでなく実行時に担保する。
+MOCK_DIR="$(mktemp -d)"
+trap 'rm -rf "$MOCK_DIR"' EXIT
+
+# gh スタブを作成: 引数と stdin を記録するだけ
+cat > "$MOCK_DIR/gh" <<MOCK_EOF
+#!/usr/bin/env bash
+# 呼び出しログに引数を 1 行追記
+echo "\$@" >> "$MOCK_DIR/gh_calls.log"
+# --input - 指定時は stdin の JSON を保存
+for arg in "\$@"; do
+  if [[ "\$arg" == "--input" ]]; then
+    cat > "$MOCK_DIR/gh_last_stdin.json"
+    break
+  fi
+done
+exit 0
+MOCK_EOF
+chmod +x "$MOCK_DIR/gh"
+touch "$MOCK_DIR/gh_calls.log"
+
+# 環境変数を準備し、prompt のサンプル相当 bash を実行
+(
+  export PATH="$MOCK_DIR:$PATH"
+  export REPO="hirokimry/vibehawk"
+  export PR_NUMBER="999"
+  export EVENT="REQUEST_CHANGES"
+  export REVIEW_BODY="test summary body"
+  export HEAD_SHA="deadbeef1234567890abcdef1234567890abcdef"
+
+  # inline comments 配列（prompt の comments[] フォーマット）
+  cat > "$MOCK_DIR/comments_array.json" <<'JSON'
+[
+  {"path": "src/foo.ts", "line": 42, "side": "RIGHT", "body": "🟠 **Major**: test"}
+]
+JSON
+
+  # prompt 内の bundled POST サンプルを実行（templates/.github/workflows/vibehawk-review.yml 内の指示と同一）
+  jq -n \
+    --arg event "$EVENT" \
+    --arg body "$REVIEW_BODY" \
+    --arg commit_id "$HEAD_SHA" \
+    --slurpfile comments "$MOCK_DIR/comments_array.json" \
+    '{event: $event, body: $body, commit_id: $commit_id, comments: $comments[0]}' \
+    | gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews" --input -
+)
+
+# 検証 1: POST /pulls/<PR>/reviews が 1 回呼ばれる
+post_count="$(grep -cE -- '-X POST repos/[^ ]+/pulls/[0-9]+/reviews' "$MOCK_DIR/gh_calls.log" || true)"
+if [[ "$post_count" -eq 1 ]]; then
+  pass "bundled POST /pulls/N/reviews がランタイムでちょうど 1 回呼ばれる（Issue #121）"
+else
+  fail "bundled POST /pulls/N/reviews の呼出回数が想定外: ${post_count} 回（Issue #121、期待: 1）"
+fi
+
+# 検証 2: 旧経路 PATCH issues/comments が呼ばれていない
+patch_count="$(grep -cE -- '-X PATCH .*issues/comments' "$MOCK_DIR/gh_calls.log" || true)"
+if [[ "$patch_count" -eq 0 ]]; then
+  pass "旧経路 gh api -X PATCH issues/comments がランタイムで呼ばれない（Issue #121）"
+else
+  fail "旧経路 gh api -X PATCH issues/comments が ${patch_count} 回呼ばれている（Issue #121、bundled 化で撤廃すべき）"
+fi
+
+# 検証 3: payload に必須 4 フィールドが含まれる
+if [[ -f "$MOCK_DIR/gh_last_stdin.json" ]]; then
+  for field in event body commit_id comments; do
+    if jq -e --arg f "$field" 'has($f)' "$MOCK_DIR/gh_last_stdin.json" > /dev/null; then
+      pass "bundled POST payload に必須フィールド '$field' が含まれる（Issue #121）"
+    else
+      fail "bundled POST payload に必須フィールド '$field' が含まれない（Issue #121）"
+    fi
+  done
+
+  # 検証 4: event 値が APPROVE / REQUEST_CHANGES のいずれか
+  event_val="$(jq -r '.event' "$MOCK_DIR/gh_last_stdin.json")"
+  if [[ "$event_val" == "APPROVE" || "$event_val" == "REQUEST_CHANGES" ]]; then
+    pass "bundled POST payload の event 値が APPROVE/REQUEST_CHANGES のいずれか（実値: ${event_val}）"
+  else
+    fail "bundled POST payload の event 値が APPROVE/REQUEST_CHANGES 以外: ${event_val}（Issue #121）"
+  fi
+
+  # 検証 5: comments が配列である
+  if jq -e '.comments | type == "array"' "$MOCK_DIR/gh_last_stdin.json" > /dev/null; then
+    pass "bundled POST payload の comments が配列である（Issue #121）"
+  else
+    fail "bundled POST payload の comments が配列でない（Issue #121）"
+  fi
+else
+  fail "bundled POST の stdin payload が記録されていない（Issue #121、mock が --input - を受け取っていない）"
 fi
 
 # Issue #8: allowedTools に gh api / git log / git diff が追加されている

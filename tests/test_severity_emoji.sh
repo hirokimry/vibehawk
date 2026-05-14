@@ -53,21 +53,25 @@ for pair in "${severity_pairs[@]}"; do
   fi
 done
 
-echo "=== inline comment 投稿指示（Issue #9） ==="
+echo "=== inline comment 投稿指示（Issue #9 / Issue #121 bundled review API） ==="
 
-if grep -F 'gh api -X POST' "$WORKFLOW" | grep -F 'pulls/$PR_NUMBER/comments' > /dev/null; then
-  pass "inline comment 投稿コマンド (gh api -X POST .../pulls/.../comments) が prompt に含まれる"
+# Issue #121: inline comments は bundled review POST の comments[] 配列で渡される
+# （個別 POST `gh api -X POST .../pulls/.../comments` は撤廃、muted badge の原因）
+if grep -F 'gh api -X POST' "$WORKFLOW" | grep -F 'pulls/$PR_NUMBER/reviews' > /dev/null; then
+  pass "bundled review POST 経由の inline 投稿指示（gh api -X POST .../pulls/.../reviews）が prompt に含まれる（Issue #121）"
 else
-  fail "inline comment 投稿コマンドが prompt に含まれない"
+  fail "bundled review POST 経由の inline 投稿指示が prompt に含まれない（Issue #121）"
 fi
 
-if grep -F 'commit_id=' "$WORKFLOW" > /dev/null && \
-   grep -F 'path=' "$WORKFLOW" > /dev/null && \
-   grep -F 'line=' "$WORKFLOW" > /dev/null && \
-   grep -F 'side=' "$WORKFLOW" > /dev/null; then
-  pass "inline comment 必須フィールド（commit_id / path / line / side）が prompt に明示"
+# Issue #121: comments[] 配列の必須フィールドが JSON 形式で明示されている
+# bundled review では `-f commit_id=` のような bash 形式ではなく、JSON ペイロード内で `"path":` `"line":` `"side":` として記載される
+if grep -F '"path":' "$WORKFLOW" > /dev/null && \
+   grep -F '"line":' "$WORKFLOW" > /dev/null && \
+   grep -F '"side":' "$WORKFLOW" > /dev/null && \
+   grep -F 'commit_id' "$WORKFLOW" > /dev/null; then
+  pass "inline comment 必須フィールド（path / line / side / commit_id）が bundled review JSON 形式で prompt に明示（Issue #121）"
 else
-  fail "inline comment 必須フィールドが prompt に揃っていない"
+  fail "inline comment 必須フィールド（path / line / side / commit_id）が bundled review JSON 形式で揃っていない（Issue #121）"
 fi
 
 if grep -F 'severity 絵文字を 1 つ付ける' "$WORKFLOW" > /dev/null || \
@@ -101,18 +105,28 @@ else
   fail "auto_resolve の他者非操作制約が prompt に不足（誤 resolve は信頼破壊）"
 fi
 
-echo "=== sticky review state（Issue #9） ==="
+echo "=== sticky review state（Issue #9 / Issue #121 bundled review API） ==="
 
-if grep -F 'gh pr review' "$WORKFLOW" | grep -F -- '--approve' > /dev/null && \
-   grep -F 'gh pr review' "$WORKFLOW" | grep -F -- '--request-changes' > /dev/null; then
-  pass "sticky review の approve / request-changes 切替指示が prompt に含まれる"
+# Issue #121: sticky review state は bundled review API の event フィールドで表現
+# （`gh pr review --approve|--request-changes` から `gh api -X POST .../reviews -f event=APPROVE|REQUEST_CHANGES` に移行）
+if grep -F 'APPROVE' "$WORKFLOW" > /dev/null && \
+   grep -F 'REQUEST_CHANGES' "$WORKFLOW" > /dev/null; then
+  pass "sticky review の APPROVE / REQUEST_CHANGES 切替指示が prompt に含まれる（Issue #121 bundled）"
 else
-  fail "sticky review の approve / request-changes 切替指示が prompt に不足"
+  fail "sticky review の APPROVE / REQUEST_CHANGES 切替指示が prompt に不足（Issue #121）"
+fi
+
+# Issue #121: 旧 `gh pr review --approve|--request-changes` 経路は撤廃されているべき
+if grep -F 'gh pr review' "$WORKFLOW" | grep -F -- '--approve' > /dev/null || \
+   grep -F 'gh pr review' "$WORKFLOW" | grep -F -- '--request-changes' > /dev/null; then
+  fail "旧 sticky review 経路（gh pr review --approve|--request-changes）が残っている（Issue #121、bundled 化で撤廃すべき）"
+else
+  pass "旧 sticky review 経路（gh pr review --approve|--request-changes）が撤廃されている（Issue #121 bundled）"
 fi
 
 if grep -F 'unresolved == 0' "$WORKFLOW" > /dev/null && \
    grep -F 'unresolved >= 1' "$WORKFLOW" > /dev/null; then
-  pass "sticky review の判定条件（unresolved 0 → approve / >= 1 → request-changes）が prompt に明示"
+  pass "sticky review の判定条件（unresolved 0 → APPROVE / >= 1 → REQUEST_CHANGES）が prompt に明示"
 else
   fail "sticky review の判定条件が prompt に不足"
 fi
