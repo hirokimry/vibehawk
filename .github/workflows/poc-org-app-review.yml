@@ -52,16 +52,15 @@ jobs:
           app-id: ${{ secrets.POC_ORG_APP_ID }}
           private-key: ${{ secrets.POC_ORG_PRIVATE_KEY }}
 
-      - name: トークン発行元 identity 確認
+      - name: Installation 経由でアクセス可能な repo を確認
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          echo "=== App identity の確認 ==="
-          gh api /app 2>&1 | head -30
-          echo ""
-          echo "=== Installation 情報 ==="
-          gh api /installation/repositories 2>&1 | head -20
+          echo "=== Installation token でアクセス可能な repo ==="
+          # installation token は /app には叩けない (App-level JWT が必要)。
+          # 代わりに /installation/repositories で App identity を間接確認する。
+          gh api /installation/repositories --jq '.repositories[] | {full_name, owner_login: .owner.login, owner_type: .owner.type}' 2>&1 | head -20 || true
 
       - name: PR 番号を解決
         id: resolve_pr
