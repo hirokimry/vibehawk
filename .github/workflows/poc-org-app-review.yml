@@ -1,0 +1,105 @@
+name: PoC Organization-owned App Review (Issue #121 H1 検証)
+
+# 目的: H1 仮説検証
+#   「App owner が Organization の場合、Reviews UI で緑バッジになる」
+# 前提: secrets に POC_ORG_APP_ID / POC_ORG_PRIVATE_KEY が登録済み
+#   （Organization 所有 GitHub App の credentials）
+# 動作:
+#   1. Organization 所有 App の installation token を取得
+#   2. POST /repos/X/Y/pulls/N/reviews で event=APPROVE の review を post
+#   3. Reviews UI で緑/灰色を CEO が目視確認
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'poc-trigger/**'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'review を post する PR 番号'
+        required: true
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  poc-org-app-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: secrets 存在確認
+        id: check_secrets
+        env:
+          APP_ID: ${{ secrets.POC_ORG_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.POC_ORG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${APP_ID:-}" ]]; then
+            echo "::error::POC_ORG_APP_ID が未登録"
+            exit 1
+          fi
+          if [[ -z "${PRIVATE_KEY:-}" ]]; then
+            echo "::error::POC_ORG_PRIVATE_KEY が未登録"
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Organization 所有 App の installation token を取得
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.POC_ORG_APP_ID }}
+          private-key: ${{ secrets.POC_ORG_PRIVATE_KEY }}
+
+      - name: トークン発行元 identity 確認
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          echo "=== App identity の確認 ==="
+          gh api /app 2>&1 | head -30
+          echo ""
+          echo "=== Installation 情報 ==="
+          gh api /installation/repositories 2>&1 | head -20
+
+      - name: PR 番号を解決
+        id: resolve_pr
+        env:
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          DISPATCH_PR: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${EVENT_PR:-}" ]]; then
+            echo "pr_number=$EVENT_PR" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${DISPATCH_PR:-}" ]]; then
+            echo "pr_number=$DISPATCH_PR" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::PR 番号が決定できない"
+            exit 1
+          fi
+
+      - name: bundled review を POST (event=APPROVE)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.resolve_pr.outputs.pr_number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          echo "=== bundled review を post する ==="
+
+          # 最小ペイロード: event=APPROVE + body のみ、comments[] は空
+          body="🧪 H1 仮説検証 review (Organization 所有 App から post)。Reviews UI で緑バッジになれば仮説確定、灰色のままなら別の判定軸を探す。"
+
+          response=$(gh api -X POST "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+            -f event=APPROVE \
+            -f "body=${body}" \
+            ${HEAD_SHA:+-f "commit_id=${HEAD_SHA}"} \
+            2>&1)
+
+          echo "$response"
+          echo ""
+          echo "=== review 投稿後の reviewDecision 確認 ==="
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json reviewDecision,reviews \
+            --jq '{reviewDecision, reviews: [.reviews[] | {author: .author.login, state, authorAssociation}]}'
