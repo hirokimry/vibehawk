@@ -128,8 +128,11 @@ function buildSteps({ owner, repo }) {
     {
       id: 'secret-pem',
       label: 'VIBEHAWK_PRIVATE_KEY を生成・登録',
+      // Issue #112: `html_url`（= `https://github.com/apps/<slug>`）は公開インストール案内ページで
+      // 「Generate a private key」ボタンが存在しない。Private key は App 所有者専用の設定ページ
+      // `https://github.com/settings/apps/<slug>` でのみ生成できるため、こちらの URL を案内する。
       getUrl: (state) =>
-        `${state.credentials && state.credentials.html_url} （"Generate a private key" を押下し .pem をダウンロード後、Secrets に登録）`,
+        `https://github.com/settings/apps/${state.credentials && state.credentials.slug} （"Generate a private key" を押下し .pem をダウンロード後、Secrets に登録）`,
       getInstructions: () => 'Name: `VIBEHAWK_PRIVATE_KEY` / Value: ダウンロードした .pem 全文（-----BEGIN ... -----END を含む）',
       verify: () => verifySecret(repo, 'VIBEHAWK_PRIVATE_KEY'),
       // Private Key 自体は CLI が一切 touch しないため getValue / clipboard なし
