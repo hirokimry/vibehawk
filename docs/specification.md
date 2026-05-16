@@ -246,7 +246,7 @@ bundled review API の approve / request_changes 投稿（PR #122、補助情報
 
 `vibehawk` を required status check として branch protection に登録することは、**vibehawk 利用の根幹** である（merge gate 主軸を成立させる唯一の経路）。
 
-利用者は `Settings → Branches → Branch protection rules` で対象ブランチ（通常 `main`）を編集し、`Require status checks to pass before merging` を ON にした上で、検索ボックスに `vibehawk` と入力して required に追加する。初回登録時は `vibehawk` check が未発火だと検索候補に出ないため、先にダミー PR を立てて check を発火させてから登録する手順となる（README の setup ステップ 7 参照）。
+利用者は `Settings → Branches → Branch protection rules` で対象ブランチ（通常 `main`）を編集し、`Require status checks to pass before merging` を ON にした上で、検索ボックスに `vibehawk` と入力して required に追加する。初回登録時は `vibehawk` check が未発火だと検索候補に出ないため、先にダミー PR を立てて check を発火させてから登録する手順となる（README `⚡ クイックスタート` の「3. branch protection に `vibehawk` を required status check 登録（vibehawk 利用の根幹）」参照）。
 
 この登録を行わない場合、approve / request_changes は補助情報として post されるが、merge gate としては機能しない（bot review は branch protection の required reviewers に count されないため）。vibehawk を導入したら必ず本ステップを実施すること。
 
