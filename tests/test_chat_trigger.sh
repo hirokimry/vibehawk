@@ -336,15 +336,15 @@ fi
 
 # allowedTools（CodeRabbit PR #87 指摘: gh pr diff の取りこぼしを防ぐため明示的に列挙）
 # CodeRabbit PR #106 Major 指摘: gh api / jq は issue_comment 経路でのプロンプト注入リスクのため除外
-# Issue #135: `@vibehawk review` 経路の bundled review POST のため、`gh pr view` と
-#            POST + /repos/ パス限定の narrow `gh api -X POST repos/:*` を追加（汎用 gh api:* / jq:* は引き続き禁止）
+# Issue #135 セキュリティ修正: `@vibehawk review` 経路でも Claude prompt 内では API を呼ばず、
+#   payload をファイルに書いて後続 workflow step が決定論的に POST する設計に変更（Issue #121-C1
+#   fix と同じ思想）。これにより allowedTools は PR #106 baseline 4 項目を維持し、`gh api:*` /
+#   `jq:*` の禁止も継続できる。
 declare -a required_tools=(
   'cat:\*'
   'gh issue comment:\*'
   'gh pr comment:\*'
   'gh pr diff:\*'
-  'gh pr view:\*'
-  'gh api -X POST repos/:\*'
 )
 for tool in "${required_tools[@]}"; do
   if grep -E "Bash\(${tool}\)" "$CHAT_WORKFLOW" > /dev/null; then
@@ -355,29 +355,36 @@ for tool in "${required_tools[@]}"; do
 done
 
 # CodeRabbit PR #106 Major 指摘: gh api / jq が allowedTools に含まれないこと（外部入力プロンプト注入対策）
-# Issue #135 注: 汎用 `gh api:*` は引き続き禁止（chat 経路で任意エンドポイント操作を許すと
-#                ラベル変更等の 5 大方針 5 抵触リスクが残る）。narrow な `gh api -X POST repos/:*`
-#                のみ Issue #135 で許可（POST + /repos/ 配下のみ、上述の required_tools 参照）。
+# Issue #135 セキュリティ修正: `gh api -X POST repos/:*` は repos/ 以下の全 POST エンドポイント
+#   （labels, merge, comments 等）を許す過広パターンであり、PR #106 のセキュリティ境界を後退
+#   させるため不採用。bundled review POST は workflow step で決定論的に行う。
 declare -a forbidden_tools=(
   'gh api:\*'
   'jq:\*'
+  'gh api -X POST repos/:\*'
+  'gh pr view:\*'
 )
-for tool in "${forbidden_tools[@]}"; do
+declare -a forbidden_tool_reasons=(
+  '汎用 API 操作（CodeRabbit PR #106 Major: プロンプト注入リスク）'
+  '汎用 JSON 操作（CodeRabbit PR #106 Major: プロンプト注入時の任意 API ペイロード組立を防止）'
+  'repos/ 配下の全 POST エンドポイントを許す過広パターン（Issue #135 セキュリティ修正: prompt injection で labels/merge/comments 等の操作を許可してしまう）'
+  '不要（HEAD SHA は workflow step pr_head が fetch して prompt に渡す、Issue #135 セキュリティ修正）'
+)
+for i in "${!forbidden_tools[@]}"; do
+  tool="${forbidden_tools[$i]}"
+  reason="${forbidden_tool_reasons[$i]}"
   if grep -E "Bash\(${tool}\)" "$CHAT_WORKFLOW" > /dev/null; then
-    fail "allowedTools に Bash(${tool}) が含まれる（CodeRabbit PR #106 Major 指摘違反: issue_comment は外部入力でプロンプト注入で API 操作される）"
+    fail "allowedTools に Bash(${tool}) が含まれる（理由: ${reason}）"
   else
-    pass "allowedTools に Bash(${tool}) が含まれない（CodeRabbit PR #106 Major 指摘の最小権限化）"
+    pass "allowedTools に Bash(${tool}) が含まれない（理由: ${reason}）"
   fi
 done
 
 # CodeRabbit PR #87 第 3+4 ラウンド Major 指摘: allowedTools whitelist 完全一致検証
-# 第 3 ラウンドの head -1 限定では複数行 allowedTools を回避可能だったため、
-# claude_args 全体（複数行 YAML literal block scalar）から Bash(...) パターンを全部抽出
-# claude_args ブロック検出: claude_args: の次の `|` 行から、インデントが下がるまで
-# シンプルに全ファイルから Bash(...) を抽出（workflow 内に Bash(...) は claude_args 内のみのはず）
-# CodeRabbit PR #106 Major 指摘で gh api / jq を除外、Issue #135 で `@vibehawk review` 用に narrow な追加
+# Issue #135 セキュリティ修正で PR #106 baseline 4 項目に戻した（chat 経路では API 操作を一切
+# 行わず、payload ファイル出力のみ → workflow step が決定論 POST）。
 unexpected_tools=()
-expected_set='|cat:*|gh issue comment:*|gh pr comment:*|gh pr diff:*|gh pr view:*|gh api -X POST repos/:*|'
+expected_set='|cat:*|gh issue comment:*|gh pr comment:*|gh pr diff:*|'
 while IFS= read -r tool; do
   # tool は "cat:*" のような Bash(...) 内の中身
   if [[ -n "$tool" ]] && [[ "$expected_set" != *"|${tool}|"* ]]; then
@@ -386,7 +393,7 @@ while IFS= read -r tool; do
 done < <(grep -oE 'Bash\([^)]+\)' "$CHAT_WORKFLOW" | sed -E 's/^Bash\(//; s/\)$//')
 
 if [[ ${#unexpected_tools[@]} -eq 0 ]]; then
-  pass "allowedTools は許可 6 項目のみで構成（claude_args 全体走査、Bash(*) 等の危険な追加なし、Issue #135 narrow gh api 追加）"
+  pass "allowedTools は許可 4 項目のみで構成（PR #106 baseline 維持、Issue #135 セキュリティ修正で gh api / gh pr view を撤去）"
 else
   fail "allowedTools に許可外の項目: ${unexpected_tools[*]}"
 fi
@@ -451,6 +458,13 @@ fi
 # 利用者が指摘対応後に再レビューを依頼する正規導線として、chat 経路で
 # `@vibehawk review` コマンドを認識し、bundled review POST + check-runs POST 経路に
 # 切り替える分岐が実装されていることを検証する。
+#
+# セキュリティ設計（合議制レビュー H-1 への対応）:
+#   - Claude prompt は API を呼ばず、event / body の 2 ファイルに payload を書く
+#   - 後続 workflow step が payload を validate し、bundled review POST + check-runs POST を
+#     決定論的に実行する（Issue #121-C1 fix と同じ思想）
+#   - これによりプロンプト注入経由の任意 API 操作（labels / merge / issue-comments など
+#     5 大方針 5 抵触エンドポイントの POST）を構造的に防止する
 echo "=== Issue #135: @vibehawk review 再レビュー分岐 検証 ==="
 
 # prompt に IS_REVIEW_REQUEST 環境変数（@vibehawk review 検知結果）が渡される
@@ -461,6 +475,13 @@ else
   fail "prompt に IS_REVIEW_REQUEST が渡されていない（Issue #135、@vibehawk review コマンド検知の前提）"
 fi
 
+# prompt に HEAD_SHA 環境変数（workflow step pr_head が fetch した値）が渡される
+if grep -F 'HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に HEAD_SHA (steps.pr_head.outputs.head_sha) が渡される（Issue #135 セキュリティ修正、Claude 側で gh pr view を呼ばせない）"
+else
+  fail "prompt に HEAD_SHA が steps.pr_head.outputs.head_sha 経由で渡されていない（Issue #135 セキュリティ修正）"
+fi
+
 # prompt に再レビューモード判定指示が含まれる
 if grep -F "再レビューモード" "$CHAT_WORKFLOW" > /dev/null && \
    grep -F "@vibehawk review" "$CHAT_WORKFLOW" > /dev/null; then
@@ -469,17 +490,17 @@ else
   fail "prompt に再レビューモード分岐指示が含まれない（Issue #135）"
 fi
 
-# prompt に bundled review POST 指示が含まれる（chat 経路、@vibehawk review コマンド）
-if grep -F 'gh api -X POST' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'pulls/$ISSUE_NUMBER/reviews' "$CHAT_WORKFLOW" > /dev/null; then
-  pass "prompt に bundled review POST 指示（gh api -X POST .../reviews）が含まれる（Issue #135）"
+# prompt に payload ファイル出力指示が含まれる（API 呼び出しは行わない）
+if grep -F '/tmp/vibehawk-chat-review-event.txt' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F '/tmp/vibehawk-chat-review-body.txt' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に payload ファイル (event.txt / body.txt) 出力指示が含まれる（Issue #135 セキュリティ修正、Claude は API を呼ばない）"
 else
-  fail "prompt に bundled review POST 指示が含まれない（Issue #135、@vibehawk review で check 更新できない）"
+  fail "prompt に payload ファイル出力指示が含まれない（Issue #135 セキュリティ修正の前提）"
 fi
 
 # prompt に再レビュー時の event 判定指示（APPROVE / REQUEST_CHANGES）が含まれる
-if grep -F 'event=REQUEST_CHANGES' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'event=APPROVE' "$CHAT_WORKFLOW" > /dev/null; then
+if grep -F 'REQUEST_CHANGES' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'APPROVE' "$CHAT_WORKFLOW" > /dev/null; then
   pass "prompt に再レビュー event 判定（APPROVE / REQUEST_CHANGES）が含まれる（Issue #135）"
 else
   fail "prompt に再レビュー event 判定が含まれない（Issue #135）"
@@ -493,9 +514,15 @@ else
   fail "再レビュー prompt にマーカー注入指示が含まれない（Issue #57 / #135、インクリメンタルレビュー判定の前提）"
 fi
 
-# === Issue #135: @vibehawk review 経路の check-runs POST step ===
-# vibehawk-review.yml と同様、Claude prompt 内では check-runs を呼ばず、後続 workflow
-# step が決定論的に post する設計（Issue #121-C1 fix 思想を踏襲）。
+# prompt に外部 URL / 外部画像の埋め込み禁止指示（合議制レビュー M-2 への対応）
+if grep -F '外部 URL' "$CHAT_WORKFLOW" > /dev/null || \
+   grep -F '外部画像' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に外部 URL / 外部画像の埋め込み禁止指示が含まれる（Issue #135、check-run summary 経由の情報漏洩防止）"
+else
+  fail "prompt に外部 URL / 外部画像の埋め込み禁止指示が含まれない（Issue #135）"
+fi
+
+# === Issue #135 セキュリティ修正: prompt が API を呼ばないことの保証 ===
 
 # prompt 部分とそれ以外を分離（review.yml と同じパターン）
 CHAT_PROMPT="$(awk '/prompt:[[:space:]]*\|/{flag=1; next} /^[[:space:]]+claude_args:/{flag=0} flag' "$CHAT_WORKFLOW")"
@@ -507,6 +534,64 @@ if echo "$CHAT_PROMPT" | grep -F 'gh api -X POST' | grep -F 'check-runs' > /dev/
 else
   pass "prompt 内に check-runs POST 指示が含まれない（Issue #135、workflow step に移管）"
 fi
+
+# prompt 内に bundled review POST 指示も **存在しない** こと（Issue #135 セキュリティ修正、
+# H-1 への対応: Claude prompt から任意 API を呼ばせない）
+if echo "$CHAT_PROMPT" | grep -F 'gh api -X POST' | grep -F 'pulls' | grep -F 'reviews' > /dev/null; then
+  fail "prompt 内に bundled review POST 指示が混入している（Issue #135 セキュリティ修正、workflow step post_review に移管すべき）"
+else
+  pass "prompt 内に bundled review POST 指示が含まれない（Issue #135 セキュリティ修正、workflow step に移管）"
+fi
+
+# === Issue #135: pr_head workflow step（HEAD SHA を workflow 側で fetch） ===
+
+if grep -F 'id: pr_head' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "pr_head workflow step が存在する（Issue #135、HEAD SHA を workflow 側で fetch）"
+else
+  fail "pr_head workflow step が存在しない（Issue #135、Claude prompt 内で gh pr view を呼ばせないための前提）"
+fi
+
+# pr_head step は @vibehawk review + PR + secrets ready のときのみ実行
+PR_HEAD_BLOCK="$(awk '/id: pr_head/,/^[[:space:]]+- name:/' "$CHAT_WORKFLOW")"
+if echo "$PR_HEAD_BLOCK" | grep -F "steps.check_secrets.outputs.ready == 'true'" > /dev/null && \
+   echo "$PR_HEAD_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk review')" > /dev/null && \
+   echo "$PR_HEAD_BLOCK" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
+  pass "pr_head step の起動条件が secrets ready + @vibehawk review + PR である（Issue #135）"
+else
+  fail "pr_head step の起動条件が不適切（Issue #135）"
+fi
+
+# === Issue #135 セキュリティ修正: bundled review POST workflow step ===
+
+# bundled review POST が後続 workflow step に存在
+if echo "$CHAT_POST_PROMPT" | grep -F 'gh api -X POST' | grep -F 'pulls' | grep -F 'reviews' > /dev/null; then
+  pass "claude-code-action 後の workflow step に bundled review POST が含まれる（Issue #135 セキュリティ修正）"
+else
+  fail "claude-code-action 後の workflow step に bundled review POST が含まれない（Issue #135 セキュリティ修正の前提）"
+fi
+
+# bundled review POST step は payload ファイルを validate する（event 値検証）
+if echo "$CHAT_POST_PROMPT" | grep -F 'APPROVE' > /dev/null && \
+   echo "$CHAT_POST_PROMPT" | grep -F 'REQUEST_CHANGES' > /dev/null && \
+   echo "$CHAT_POST_PROMPT" | grep -F '不正な event 値' > /dev/null; then
+  pass "bundled review POST step が event 値を validate する（APPROVE / REQUEST_CHANGES のみ許可、Issue #135 セキュリティ修正）"
+else
+  fail "bundled review POST step が event 値を validate していない（Issue #135 セキュリティ修正）"
+fi
+
+# bundled review POST step は App Installation Token を使う（vibehawk-for-<owner>[bot] 名義で投稿するため）
+POST_REVIEW_BLOCK="$(awk '/id: post_review/,/^[[:space:]]+- name:/' "$CHAT_WORKFLOW")"
+if [[ -z "$POST_REVIEW_BLOCK" ]]; then
+  # 末尾 step の場合 awk が次の `- name:` を見つけられない → ファイル末尾までを切る
+  POST_REVIEW_BLOCK="$(awk '/id: post_review/,0' "$CHAT_WORKFLOW")"
+fi
+if echo "$POST_REVIEW_BLOCK" | grep -F 'steps.app-token.outputs.token' > /dev/null; then
+  pass "bundled review POST step が App Installation Token を使用（Issue #135、vibehawk-for-<owner>[bot] 名義投稿）"
+else
+  fail "bundled review POST step が App Installation Token を使用していない（Issue #135、bot 名義一貫性）"
+fi
+
+# === Issue #135: check-runs POST step（status check 更新） ===
 
 # 後続 workflow step に check-runs POST が含まれる
 if echo "$CHAT_POST_PROMPT" | grep -F 'gh api -X POST' | grep -F 'check-runs' > /dev/null; then
@@ -540,7 +625,7 @@ else
   fail "後続 step に conclusion 導出ロジックが含まれない（Issue #135、決定論的 status check の前提）"
 fi
 
-# 後続 step は @vibehawk review コマンドかつ PR の場合のみ実行される
+# check-runs step は @vibehawk review コマンドかつ PR の場合のみ実行される
 if echo "$CHAT_POST_PROMPT" | grep -F "contains(github.event.comment.body, '@vibehawk review')" > /dev/null && \
    echo "$CHAT_POST_PROMPT" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
   pass "後続 check-runs step は @vibehawk review かつ PR の場合のみ実行（Issue #135）"
@@ -548,7 +633,7 @@ else
   fail "後続 check-runs step の起動条件が不適切（Issue #135、通常 chat 応答時にも誤発火する可能性）"
 fi
 
-# 後続 step は GITHUB_TOKEN (デフォルト workflow token) を使う（App permission 状態に依存しない、Issue #121-C1 fix と同じ理由）
+# check-runs step は GITHUB_TOKEN を使う（App permission 状態に依存しない、Issue #121-C1 fix と同じ理由）
 if echo "$CHAT_POST_PROMPT" | grep -E 'GH_TOKEN:[[:space:]]*\$\{\{[[:space:]]*secrets\.GITHUB_TOKEN[[:space:]]*\}\}' > /dev/null; then
   pass "後続 check-runs step が secrets.GITHUB_TOKEN を使用（Issue #135、App permission 状態に依存しない）"
 else
