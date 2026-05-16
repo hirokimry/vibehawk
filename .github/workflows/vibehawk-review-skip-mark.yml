@@ -1,12 +1,16 @@
 # vibehawk PR skip mark — paths-ignore 該当 PR で required status check `vibehawk` を success post する
 #
-# 設計の主旨（Issue #157）:
+# 設計の主旨（Issue #157、Issue #160 で paths-ignore 範囲を縮小）:
 #   `vibehawk-review.yml` の `paths-ignore`（Issue #65 / PR #154）に該当する PR では
 #   workflow 自体が起動せず、required status check `vibehawk`（epic #138 / PR #147）が
 #   永久未投稿のまま branch protection で BLOCKED になる。
 #   本 workflow は全 PR で起動し、変更ファイルが `vibehawk-review.yml` の paths-ignore
 #   パターンに全てマッチする場合のみ `vibehawk` を success として post して merge gate を
 #   通過させる。マッチしない PR では何もしない（vibehawk-review.yml 本体側が `vibehawk` を post する）。
+#
+#   Issue #160 撤回: `**/*.md` と `CHANGELOG*` は merge gate の品質ゲート対象として
+#   paths-ignore から削除されたため、本 workflow の case 文からも同じく削除した。
+#   残る 5 パターン（lock 4 種 + dependabot.yml）は機械的更新でレビュー無意味なため引き続き対象。
 #
 # 同期必須（保守者向け）:
 #   下記 `paths-ignore 全マッチ判定` ステップの case 文は `vibehawk-review.yml` の
@@ -73,8 +77,6 @@ jobs:
           while IFS= read -r file; do
             [ -z "$file" ] && continue
             case "$file" in
-              *.md) ;;
-              CHANGELOG*) ;;
               .github/dependabot.yml) ;;
               package-lock.json|yarn.lock|pnpm-lock.yaml|bun.lockb) ;;
               *) all_match=false; break ;;
