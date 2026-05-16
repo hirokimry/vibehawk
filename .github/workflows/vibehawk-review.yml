@@ -4,7 +4,7 @@
 # branch protection 設定で `vibehawk` を required status check に追加することで
 # AI レビュー必須の merge gate を構築できる（これが vibehawk の merge gate 主軸）。
 #
-# 補助情報として APPROVED / REQUEST_CHANGES の review event も post するが、
+# 補助情報として APPROVE / REQUEST_CHANGES の review event（GitHub REST API の Create review が受け付ける命令形）も post するが、
 # merge gate としては status check `vibehawk` の conclusion を使う設計
 # （Issue #138 epic、Issue #121-C1 仕様確定）。
 
@@ -279,7 +279,7 @@ jobs:
                - 新規 inline 指摘に Critical/Major が 1 件でもある → `event=REQUEST_CHANGES`
                - それ以外（unresolved == 0 件 かつ 新規 inline が 0 件 または Minor/Trivial/Info のみ） → `event=APPROVE`
 
-            この event 決定の結果（APPROVED / CHANGES_REQUESTED）は、後続の `vibehawk bundled review を post` step が JSON から読み出して GitHub に POST し、さらに次の `vibehawk status check を post` step が status check の conclusion (success/failure/neutral) を導出して post する（Issue #121-C1 fix / Issue #152 fix、Claude prompt 内 POST は廃止し全て workflow step に移管した）。
+            この event 決定の結果（`APPROVE` / `REQUEST_CHANGES`、これらは GitHub REST API の Create review エンドポイントが受け付ける命令形の値）は、後続の `vibehawk bundled review を post` step が JSON から読み出して GitHub に POST し、さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix）。
             4. JSON ペイロードを `$GITHUB_WORKSPACE/vibehawk-review.json` に **書き出すだけ**（POST は絶対に実行しない）。`comments` は配列なので `-f`/`-F` の repeatable は使えず、`{event, body, commit_id, comments}` のフル JSON を 1 ファイルにまとめる:
 
             ```bash
@@ -384,7 +384,7 @@ jobs:
                - 新規 inline に Critical/Major が 1 件でもある → `event=REQUEST_CHANGES`、body 冒頭に `⚠️ vibehawk: 新規 Critical/Major M 件`
                - 新規 inline は Minor/Trivial/Info のみ（または 0 件） → `event=APPROVE`、body 冒頭に `✅ vibehawk: 未解決指摘なし`（新規 0 件）または `✅ vibehawk: 助言 N 件（要対応指摘なし）`（Minor 以下のみ）
 
-            この判定結果（APPROVED / CHANGES_REQUESTED）は `event` フィールドとして `vibehawk-review.json` に書き出され、後続の `vibehawk bundled review を post` step がそれを read して GitHub に POST する。さらに次の `vibehawk status check を post` step が POST 後の review state を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix）。
+            この判定結果（`APPROVE` / `REQUEST_CHANGES`、GitHub REST API の Create review エンドポイントが受け付ける命令形の値）は `event` フィールドとして `vibehawk-review.json` に書き出され、後続の `vibehawk bundled review を post` step がそれを read して GitHub に POST する。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix）。
 
             状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
 
@@ -498,10 +498,16 @@ jobs:
           # fallback に使う。
           # `gh api --paginate` の生 JSON を `jq -cs` で slurp 集約してから一括フィルタする
           # （prev_summary ステップと同じパターン、ページ横断集約の必要性は cli/cli#1268 / #10459）。
+          #
+          # PR #153 (Issue #152) CodeRabbit Major 指摘対応: 現在の HEAD_SHA に紐づく review のみを
+          # 抽出する。`.commit_id` で絞り込むことで、前回 run で投稿された別 commit の review を
+          # 誤って拾って status check に stale な conclusion が載るのを防ぐ。GitHub Reviews API
+          # では review オブジェクトに `commit_id` が含まれる。
           substantive_review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-            | jq -cs --arg bot "${BOT_LOGIN}" '
+            | jq -cs --arg bot "${BOT_LOGIN}" --arg head_sha "${HEAD_SHA}" '
                 [ .[][]
                   | select(.user.login == $bot)
+                  | select(.commit_id == $head_sha)
                   | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
                   | select((.body // "") | length > 0)
                 ]
@@ -513,9 +519,10 @@ jobs:
             review_json="${substantive_review_json}"
           else
             review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-              | jq -cs --arg bot "${BOT_LOGIN}" '
+              | jq -cs --arg bot "${BOT_LOGIN}" --arg head_sha "${HEAD_SHA}" '
                   [ .[][]
                     | select(.user.login == $bot)
+                    | select(.commit_id == $head_sha)
                   ]
                   | sort_by(.submitted_at)
                   | last // empty
