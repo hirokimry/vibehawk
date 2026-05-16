@@ -681,10 +681,17 @@ fi
 
 # 5. 新 step が JSON 必須キー検証（event / body / commit_id / comments(array)）を行う
 # Claude が壊れた JSON を書き出した場合に POST する前に check して step を skip する経路
-if echo "$WORKFLOW_POST_PROMPT" | grep -F 'jq -e' | grep -F '.event and .body and .commit_id' > /dev/null; then
-  pass "新 step が JSON 必須キー（event/body/commit_id/comments）を検証する（Issue #152 fix、破損 JSON での POST 防止）"
+# PR #153 CodeRabbit 追加 Major 指摘対応で検証を強化済み:
+# event 値が APPROVE/REQUEST_CHANGES/COMMENT のいずれかに限定、body/commit_id 非空、
+# comments[] の path/body 非空、line/side/start_line/start_side の型整合を jq で検証する。
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'jq -e' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "APPROVE"' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "REQUEST_CHANGES"' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "COMMENT"' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F '(.comments | type == "array")' > /dev/null; then
+  pass "新 step が GitHub Reviews API 契約に厳格な JSON 検証を行う（event 値限定 + body/commit_id 非空 + comments[] shape、Issue #152 fix + PR #153 強化）"
 else
-  fail "新 step が JSON 必須キー検証を行っていない（Issue #152 fix、破損 JSON での POST を防ぐため必須）"
+  fail "新 step の JSON 検証が GitHub Reviews API 契約に従っていない（event 値の APPROVE/REQUEST_CHANGES/COMMENT 限定 + comments[] shape 検証が必須、PR #153 CodeRabbit Major 指摘）"
 fi
 
 # 6. prompt から `gh api -X POST repos/.../pulls/.../reviews` の直接実行サンプルが削除されている

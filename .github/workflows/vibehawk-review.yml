@@ -465,9 +465,28 @@ jobs:
           set -euo pipefail
           PAYLOAD="${GITHUB_WORKSPACE}/vibehawk-review.json"
 
-          # JSON 構造検証: event / body / commit_id / comments(array) の必須キーが揃っているか
-          if ! jq -e '.event and .body and .commit_id and (.comments | type == "array")' "$PAYLOAD" > /dev/null; then
-            echo "::warning::vibehawk: vibehawk-review.json の必須キー (event/body/commit_id/comments) が欠落しています。bundled review POST を skip します（次の status check post が neutral に倒れます）"
+          # JSON 構造検証（PR #153 CodeRabbit Major 指摘対応で強化）:
+          # トップレベルキーの存在だけでは不十分（event="INVALID" や壊れた comments[] の shape を
+          # 通過させてしまい、後段の gh api POST が 422 で fail し status check post step に到達できなくなる）。
+          # GitHub Reviews API の契約に従って事前 validation する:
+          #   - .event は "APPROVE" / "REQUEST_CHANGES" / "COMMENT" のいずれか
+          #   - .body / .commit_id は非空文字列
+          #   - .comments は配列で、各要素は path/body 必須、line/side/start_line/start_side は型整合
+          if ! jq -e '
+            (.event == "APPROVE" or .event == "REQUEST_CHANGES" or .event == "COMMENT")
+            and (.body | type == "string" and length > 0)
+            and (.commit_id | type == "string" and length > 0)
+            and (.comments | type == "array")
+            and all(.comments[]?;
+              (.path | type == "string" and length > 0)
+              and (.body | type == "string" and length > 0)
+              and ((has("line") | not) or (.line | type == "number"))
+              and ((has("side") | not) or (.side == "LEFT" or .side == "RIGHT"))
+              and ((has("start_line") | not) or (.start_line | type == "number"))
+              and ((has("start_side") | not) or (.start_side == "LEFT" or .start_side == "RIGHT"))
+            )
+          ' "$PAYLOAD" > /dev/null; then
+            echo "::warning::vibehawk: vibehawk-review.json の検証に失敗しました（GitHub Reviews API 契約違反: event 値不正 / 必須キー欠落 / comments[] shape 不正など）。bundled review POST を skip します（次の status check post が neutral に倒れます）"
             exit 0
           fi
 

@@ -134,7 +134,7 @@ cat > "${TEST_TMP}/workspace/vibehawk-review.json" <<'JSON_EOF'
   "comments": []
 }
 JSON_EOF
-if run_step 2>&1 > "${TEST_TMP}/step-stdout-1.log"; then
+if run_step > "${TEST_TMP}/step-stdout-1.log" 2>&1; then
   pass "正常 JSON で step が exit 0"
 else
   fail "正常 JSON で step が非ゼロ終了"
@@ -156,7 +156,7 @@ cat > "${TEST_TMP}/workspace/vibehawk-review.json" <<'JSON_EOF'
   "comments": []
 }
 JSON_EOF
-if run_step 2>&1 > "${TEST_TMP}/step-stdout-2.log"; then
+if run_step > "${TEST_TMP}/step-stdout-2.log" 2>&1; then
   pass "必須キー欠如 JSON でも step が exit 0（warning を出して skip する設計）"
 else
   fail "必須キー欠如 JSON で step が非ゼロ終了（warning + skip 経路が動作していない）"
@@ -179,7 +179,7 @@ cat > "${TEST_TMP}/workspace/vibehawk-review.json" <<'JSON_EOF'
   "comments": "not-an-array"
 }
 JSON_EOF
-if run_step 2>&1 > "${TEST_TMP}/step-stdout-3.log"; then
+if run_step > "${TEST_TMP}/step-stdout-3.log" 2>&1; then
   pass "comments 型不正 JSON でも step が exit 0"
 else
   fail "comments 型不正 JSON で step が非ゼロ終了"
@@ -204,7 +204,7 @@ cat > "${TEST_TMP}/workspace/vibehawk-review.json" <<'JSON_EOF'
   ]
 }
 JSON_EOF
-if run_step 2>&1 > "${TEST_TMP}/step-stdout-4.log"; then
+if run_step > "${TEST_TMP}/step-stdout-4.log" 2>&1; then
   pass "REQUEST_CHANGES + inline 1 件で step が exit 0"
 else
   fail "REQUEST_CHANGES + inline 1 件で step が非ゼロ終了"
@@ -227,6 +227,103 @@ if grep -E "repos/[^ ]+/pulls/[0-9]+/reviews" "${TEST_TMP}/gh-call.log" > /dev/n
   pass "gh api 呼び出しが repos/.../pulls/N/reviews エンドポイントを叩く"
 else
   fail "gh api 呼び出しが reviews エンドポイントを叩いていない"
+fi
+
+# PR #153 CodeRabbit Major 指摘対応で強化された JSON 検証の追加検証
+# （event 値不正 / body 空文字 / commit_id 空文字 / comments[] shape 不正で POST されないこと）
+
+echo ""
+echo "--- ケース 5: event 値が不正（INVALID） → POST 0 回 ---"
+reset_logs
+cat > "${TEST_TMP}/workspace/vibehawk-review.json" <<'JSON_EOF'
+{
+  "event": "INVALID_EVENT",
+  "body": "test body",
+  "commit_id": "deadbeef",
+  "comments": []
+}
+JSON_EOF
+if run_step > "${TEST_TMP}/step-stdout-5.log" 2>&1; then
+  pass "event 値不正 JSON でも step が exit 0（warning + skip）"
+else
+  fail "event 値不正 JSON で step が非ゼロ終了"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "0" ]]; then
+  pass "event 値不正 JSON で gh api -X POST が呼ばれない（実測: $posts 回、GitHub API 契約違反の事前検知）"
+else
+  fail "event 値不正 JSON で gh api -X POST が呼ばれた（期待: 0, 実測: $posts、API 422 を招く）"
+fi
+
+echo ""
+echo "--- ケース 6: body が空文字 → POST 0 回 ---"
+reset_logs
+cat > "${TEST_TMP}/workspace/vibehawk-review.json" <<'JSON_EOF'
+{
+  "event": "APPROVE",
+  "body": "",
+  "commit_id": "deadbeef",
+  "comments": []
+}
+JSON_EOF
+if run_step > "${TEST_TMP}/step-stdout-6.log" 2>&1; then
+  pass "body 空文字 JSON でも step が exit 0"
+else
+  fail "body 空文字 JSON で step が非ゼロ終了"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "0" ]]; then
+  pass "body 空文字 JSON で gh api -X POST が呼ばれない（実測: $posts 回）"
+else
+  fail "body 空文字 JSON で gh api -X POST が呼ばれた（期待: 0, 実測: $posts）"
+fi
+
+echo ""
+echo "--- ケース 7: comments[].path が空文字 → POST 0 回 ---"
+reset_logs
+cat > "${TEST_TMP}/workspace/vibehawk-review.json" <<'JSON_EOF'
+{
+  "event": "REQUEST_CHANGES",
+  "body": "test body",
+  "commit_id": "deadbeef",
+  "comments": [
+    {"path": "", "line": 1, "body": "🟠 **Major**: test"}
+  ]
+}
+JSON_EOF
+if run_step > "${TEST_TMP}/step-stdout-7.log" 2>&1; then
+  pass "comments[].path 空文字 JSON でも step が exit 0"
+else
+  fail "comments[].path 空文字 JSON で step が非ゼロ終了"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "0" ]]; then
+  pass "comments[].path 空文字 JSON で gh api -X POST が呼ばれない（実測: $posts 回）"
+else
+  fail "comments[].path 空文字 JSON で gh api -X POST が呼ばれた（期待: 0, 実測: $posts）"
+fi
+
+echo ""
+echo "--- ケース 8: COMMENT event の正常 JSON → POST 1 回 ---"
+reset_logs
+cat > "${TEST_TMP}/workspace/vibehawk-review.json" <<'JSON_EOF'
+{
+  "event": "COMMENT",
+  "body": "<!-- vibehawk:summary -->\nテストコメント",
+  "commit_id": "cafebabe",
+  "comments": []
+}
+JSON_EOF
+if run_step > "${TEST_TMP}/step-stdout-8.log" 2>&1; then
+  pass "COMMENT event の正常 JSON で step が exit 0"
+else
+  fail "COMMENT event の正常 JSON で step が非ゼロ終了"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "COMMENT event の正常 JSON で gh api -X POST が 1 回だけ（実測: $posts 回、APPROVE/REQUEST_CHANGES/COMMENT 全て受理）"
+else
+  fail "COMMENT event の正常 JSON で POST 回数が想定外（期待: 1, 実測: $posts）"
 fi
 
 echo ""
