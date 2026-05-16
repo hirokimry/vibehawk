@@ -3,7 +3,7 @@
 #
 # 目的:
 #   `templates/.github/workflows/vibehawk-review-skip-mark.yml` が以下を満たすことを検証する:
-#     - paths-ignore 全マッチ判定の 7 パターン同期
+#     - paths-ignore 全マッチ判定の 5 パターン同期（Issue #160 で `**/*.md` / `CHANGELOG*` を撤回）
 #     - required status check `vibehawk` の success post
 #     - 最小権限 (checks: write のみ)、禁止権限不在、禁止トリガー不在
 #     - Fork PR 除外 / draft skip
@@ -142,11 +142,9 @@ else
   fail "draft skip ロジック (draft == false) が設定されていない"
 fi
 
-# paths-ignore 全マッチ判定の 7 パターン同期検証（vibehawk-review.yml と完全一致が必須）
-# case 文の各パターン存在チェック
+# paths-ignore 全マッチ判定の 5 パターン同期検証（vibehawk-review.yml と完全一致が必須）
+# case 文の各パターン存在チェック（Issue #160 で `*.md)` / `CHANGELOG*)` を撤回）
 declare -a required_case_patterns=(
-  '*.md)'
-  'CHANGELOG*)'
   '.github/dependabot.yml)'
   'package-lock.json|yarn.lock|pnpm-lock.yaml|bun.lockb)'
 )

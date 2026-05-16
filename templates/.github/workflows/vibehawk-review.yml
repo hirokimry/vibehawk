@@ -18,16 +18,16 @@ on:
   # secrets 漏洩経路にならない、Issue #135 参考事項）。
   pull_request:
     types: [opened, synchronize, ready_for_review, review_requested]
-    # paths-ignore: 推奨ノイズ抑制設定（Issue #65）
+    # paths-ignore: 推奨ノイズ抑制設定（Issue #65 → Issue #160 で縮小）
     # 以下のファイルのみが変更された PR では vibehawk auto-review をスキップする
     # （GitHub Actions レベルで workflow 自体を起動しない → API コスト 0）。
     # 利用者は本リストを自由に編集・追加・削除可能。コード変更を伴う PR
     # （paths-ignore 外のファイルを 1 つでも含む PR）では従来通り全レビューが走る。
     # 注: 「diff に含めるが LLM 個別レビューから除外」したい場合は本リストではなく
     # `.vibehawk.yaml` の `reviews.path_filters` を使う（両者は直交）。
+    # Issue #160 撤回: `**/*.md` と `CHANGELOG*` は merge gate の品質ゲート対象
+    # （specification.md / README / knowledge 等のレビュー必須）として paths-ignore から削除した。
     paths-ignore:
-      - '**/*.md'              # ドキュメントのみの修正（README / docs / etc.）
-      - 'CHANGELOG*'           # 自動生成 CHANGELOG（CHANGELOG.md / CHANGELOG-foo.md / 拡張子なしの CHANGELOG 等）
       - '.github/dependabot.yml'  # 依存自動更新の設定変更そのもの
       - 'package-lock.json'    # npm lock ファイル単独更新
       - 'yarn.lock'            # yarn lock ファイル単独更新
