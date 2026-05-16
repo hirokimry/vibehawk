@@ -798,4 +798,5 @@ module.exports = {
   displayWidth,
   normalizeNoteMessage,
   normalizeNoteTitle,
+  note,
 };
