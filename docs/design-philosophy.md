@@ -3,6 +3,143 @@
 > 本ドキュメントは vibehawk に導入された vibecorp プラグインの設計思想を引き継いでいます。
 > vibehawk 固有のカスタマイズはこのファイルへ追記してください。
 
+## 状態管理ポリシー（vibehawk 固有）
+
+vibehawk は専用データストアを持たない。状態はすべて GitHub の既存リソース（Issue / PR / Comment / Label / Workflow 状態）に置く。
+
+### 根拠
+
+- Mission「レビューツールに追加課金が要らない世界をつくる」の構造的根拠。専用 DB を持てば運用費が発生し、Value 1「利用者の契約だけで、完結させる」を裏切る
+- 利用者は既に GitHub に支払い済み。vibehawk が別の場所に状態を置いた瞬間、経済構造が崩れる
+
+### 含意
+
+- セッション間で保持したい情報は Issue/PR コメントまたはラベルに書く
+- 集計が必要な場合は GitHub API で都度取得する（キャッシュ層を独自に持たない）
+- 「DB を入れれば速い / 楽」という誘惑が来たら、それは Mission への裏切りになっていないかを問い直す
+
+## vibehawk 固有の設計判断
+
+### 価値の源流: 追加課金ゼロ
+
+開発者は AI に対して 3 つの支払い経路を持つ:
+
+1. AI レビュー専用 SaaS の月額（CodeRabbit Pro / Greptile 等）
+2. LLM API の従量課金（PR-Agent BYOK 等）
+3. LLM サブスクリプションの月額（Claude Pro / ChatGPT Plus 等、業務で既に日常利用）
+
+3 を既に払っている開発者にとって、1 と 2 は「同じ AI 機能に二重で金を払う」状態。vibehawk は 3 の枠内で完結し、1 と 2 をゼロ化する。
+
+### 実現条件 4 つ（既に揃っている）
+
+| # | 条件 | 状態 |
+|:-:|------|:----:|
+| 1 | LLM プロバイダー公式 Action がサブスクリプション OAuth に対応 | 公式リリース済み |
+| 2 | 公式ドキュメントが CI 自動利用を案内 | 規約・実装ともに OK |
+| 3 | レビュー機能が `workflow + プロンプト` だけで成立する技術スタック | 90%+ の機能が実装可能 |
+| 4 | 同等品質のレビュー実装が本番運用で実証済み | vibecorp 内で運用中 |
+
+### 競合不能構造
+
+| 競合タイプ | 真似できない理由 |
+|---|---|
+| LLM SaaS 競合 | 自社 LLM コスト丸かぶり → 赤字確定で無料化できない |
+| BYOK OSS 競合 | LLM プロバイダー公式 OAuth Action がないとサブスク枠で実行不可 → API 従量課金しか使えない |
+
+必須 3 点セット:
+
+1. LLM プロバイダー公式 Action
+2. サブスクリプション OAuth
+3. 同等品質のレビュープロンプト
+
+この 3 点が揃って OSS 配布されたものは現時点で市場に存在しない。
+
+## 認証経路の設計（経路 2 必須化、Issue #61 で確定）
+
+vibehawk は **利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token + Claude OAuth Token** の 2 系統 + 3 secrets 構成を採用する。配布方式の判断根拠は [`docs/secrets-handling.md`](secrets-handling.md) を参照（メジャーサービス比較 / GitHub 公式ガイドライン / CodeRabbit 事件教訓を網羅）。
+
+| 系統 | secret 名 | 役割 | 当事者 | 設定方法 |
+|---|---|---|---|---|
+| GitHub App ID | `VIBEHAWK_APP_ID` | App Installation Token 取得用 | 利用者本人の `vibehawk-for-<owner>` App | **利用者が GitHub Settings UI で手動登録** |
+| GitHub Private Key | `VIBEHAWK_PRIVATE_KEY` | App Installation Token 取得用 | 利用者本人の `vibehawk-for-<owner>` App | **利用者が GitHub Settings UI で手動登録** |
+| LLM 認証 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-code-action 経由の LLM 呼び出し | 利用者の Claude Pro / Max 契約 | **利用者が GitHub Settings UI で手動登録** |
+
+**設計判断（Why 経路 2 + 全手動）**
+
+- **利用者ごと独立 App**: 集中 SaaS App（CodeRabbit 等）が抱える「1 鍵漏洩で全利用者波及」の構造リスクを **構造的に回避**。Private Key 漏洩の影響範囲は利用者本人のリポジトリ群に限定される
+- **CLI が secret を一切 touch しない**: GitHub 公式ガイドライン（"native client must never ship private key"）に完全準拠。npm サプライチェーン攻撃 / typosquatting / gh CLI 権限借用といった Critical 攻撃面を **設計レベルで消滅** させる
+- **Value 1「利用者の契約だけで、完結させる」整合**: 利用者本人の契約・本人の App・本人の手動登録で完結。CEO のサーバー / Private Key / API キーが介在しない
+
+**Issue #22 認識見直しの経緯**
+
+Issue #22（2026-05-08）では「CEO の GitHub App Private Key を利用者に配布する設計」が OSS 配布不可能と判定され、`secrets.GITHUB_TOKEN` 1 系統経路（経路 1）に妥協した。ただし当時の判定は「集中 1 個の App Private Key を全利用者に配布」と「**利用者ごとに独立した App を利用者本人が作成・運用**」を区別していなかった。後者では Private Key 漏洩の影響範囲が利用者本人に限定されるため、Value 1 と整合する。
+
+2026-05-09 の C*O 統合議論で本認識見直しが共有され、CEO 判断により経路 2 必須化が確定した（Issue #72）。経路 1（`secrets.GITHUB_TOKEN` + `github-actions[bot]` 投稿）は OSS 利用者の標準経路として認めない。CLI による secret 自動書込はせず利用者が GitHub Settings UI で 3 secrets を手動登録する全手動方針を採用する（Issue #74 で `cli/oauth.js` の `gh secret set` 撤去済）。
+
+**v2 以降の拡張検討（参考）**
+
+将来 dogfooding / CEO 自動運用フローを拡張する場合も、本セクションの原則（CLI が secret を一切 touch しない / 利用者ごと独立 App / 利用者本人が GitHub Settings UI で手動登録）は維持する。Anthropic 公式 `claude` App の仕組み調査と業界動向追従は `docs/secrets-handling.md` § 9 関連 Issue で継続する。
+
+## localhost callback 採用根拠（Issue #37 追記）
+
+> **CTO sign-off**: 本セクションの設計根拠（POLICY.md 大方針 4 / GitHub App Manifest Flow 仕様 / Value 1 整合の 3 点）は CTO レビュー (Issue #37 / PR #96) で承認済み。命名統制理由は本セクション後半の `### 技術選定理由（Issue #37 追記）` に記載。
+
+`npx vibehawk install` は GitHub App Manifest Flow のコールバック先として **利用者ローカルの一時 HTTP サーバー（`127.0.0.1:8765`）** を使う。vibehawk 運営側は webhook 受信サーバーを持たない。CLI 実装は `cli/manifest.js` に閉じ、`callback_urls` / `redirect_url` は localhost に固定される。
+
+### 設計根拠
+
+1. **POLICY.md 大方針 4「専用 DB を持たない」と整合する唯一の選択肢**: webhook 受信サーバーを vibehawk 側で立てれば、callback の到着を保持・突合する状態管理が不可避になる（複数利用者が同時に install したら、どの一時 code が誰のものかを区別する必要が出る）。それは「内部 DB / ベクタ DB / 専用サーバーを一切持たない」という大方針 4 を構造的に破る。localhost callback なら状態は利用者本人のローカルプロセス内に閉じ、運用側はサーバーもストレージも持たずに済む（`docs/POLICY.md` § 大方針 4 参照）
+2. **GitHub App Manifest Flow の仕様で十分**: GitHub App Manifest Flow は `redirect_url` を任意の URL で指定でき、HTTPS 化された公開エンドポイントは要求されない。一時 `code` を `POST https://api.github.com/app-manifests/<code>/conversions` に渡す処理さえできれば App credentials が取得できるため、`127.0.0.1:8765` の素朴な HTTP サーバーで十分要件を満たす（公式仕様: `docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest`）
+3. **Value 1「利用者の契約だけで、完結させる」整合**: localhost callback は利用者本人のマシン内で完結し、vibehawk 運営側は通信経路にも一時 code にも一切関与しない。webhook サーバーを持つ瞬間、vibehawk が「利用者の install 行為を観測できる立場」になり、個人情報・利用統計を扱う運用者責任が発生する。localhost callback はその責任そのものを構造的に回避する
+
+### claude-code-action `/install-github-app` との比較
+
+claude-code-action は対話形式の `/install-github-app` コマンドで Anthropic 側が運用するエンドポイントを介して App 設置を案内する。vibehawk はこのアプローチを採用しない:
+
+| 観点 | claude-code-action `/install-github-app` | vibehawk localhost callback |
+|---|---|---|
+| 運用側サーバー | Anthropic 側のインフラが flow を仲介する | 運用側サーバーなし、利用者ローカルで完結 |
+| 障害時の影響範囲 | Anthropic 側の障害が全利用者に波及し得る | 利用者本人のローカルプロセスに閉じる |
+| Value 1 整合性 | サブスク契約と独立した運用者責任が発生 | 利用者の契約のみで完結 |
+
+claude-code-action は Anthropic サブスクリプションの一部として運用コストを集中管理できる立場だが、vibehawk は「運用者として課金される側に回らない」設計を Mission と直結させているため、同じ手法を採れない。
+
+### 含意
+
+- `127.0.0.1:8765` は利用者環境で一時占有される。同一ポートが先行プロセスで使われている場合、CLI は失敗する（`docs/SECURITY.md` のポート占有記述参照）
+- callback URL を localhost に固定する仕様は **「自宅サーバー化」を防ぐ構造的保証** も担う。運用側が将来 vibehawk のために webhook サーバーを立てたとしても、CLI が `callback_urls` を localhost で発行している限り利用者の callback は運用側に届かない
+- ブラウザ自動オープンとローカル listen の組合せは vibehawk CLI のセキュリティ要件として `docs/specification.md` § CLI 仕様にも記述する。本セクションは「なぜそう作ったか」の根拠を保持し、実装手順は仕様書側に置く責務分離
+
+## 命名統制（Issue #25 採用）
+
+`npx vibehawk install` で作成される GitHub App の名前は **`vibehawk-for-<owner>` 形式に固定** する。利用者は名前を自由にカスタマイズできない。
+
+### 設計根拠
+
+1. **GitHub Apps の名前ユニーク制約への対応**: GitHub Apps はプラットフォーム全体で名前ユニークが要求される。`vibehawk` 単独だと先着 1 名しか作成できない（公式仕様、`docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app` 参照）。`<owner>` 部分で名前空間を分離することで、すべての利用者がブランド `vibehawk` を含む App 名を持てる
+2. **ブランド統制**: 全 bot 名に `vibehawk` を必ず含むことで、利用者リポジトリ上で「vibehawk が動いている」ことが視認できる。命名カスタマイズを許容するとブランドが分散して特定不能になる
+3. **Value 3「強制しない」との競合の透明化**: 命名固定は本来 Value 3 と緊張する。これを `npx vibehawk install` 実行時に明示的に告知し、隠蔽せず利用者の選択肢として提示する（CPO 修正提案）
+
+### 技術選定理由（Issue #37 追記）
+
+`vibehawk-for-<owner>` の固定形式は、GitHub Apps プラットフォームの命名制約とブランド要件のトレードオフを最適化した結果である。各構成要素は単独でなく **同時に満たさなければならない** 要請の集合として理解する。
+
+| 構成要素 | 内容 | 何の制約に応じているか |
+|---|---|---|
+| GitHub Apps 名前ユニーク制約 | GitHub Apps はプラットフォーム全体で名前ユニークが要求される。`vibehawk` 単独では先着 1 名のみ作成可能となる | GitHub プラットフォーム側の不可動制約（`docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app`） |
+| `<owner>` プレフィックスでユニーク性を回避 | `<owner>` は GitHub user/org 命名規則（1-39 文字、英数字とハイフン）でプラットフォーム内ユニーク。`vibehawk-for-<owner>` の組合せも自動的にユニークになる | 上記制約を回避しつつ全利用者に共通形式を提供する設計判断 |
+| ブランド統制と利用者識別性の両立 | `vibehawk-` プレフィックスで「vibehawk が動いている」をブランド可視化、`-for-<owner>` サフィックスで「どの利用者の bot か」を識別可能。両者を 1 つの App 名文字列で同時に満たす | vibehawk の運用要件（bot コメント一覧で「vibehawk 由来」を grep 可能にする） |
+
+CodeRabbit の `coderabbitai[bot]` のような単一名空間アプローチとは設計の出発点が異なる。CodeRabbit は集中 SaaS App で 1 つの App を全利用者で共有するため、bot 名はブランド統制に最適化できる。vibehawk は **利用者ごと独立 App**（経路 2 必須化、Issue #61）を採用しているため、`<owner>` 部分による識別性が App 名に組み込まれる必要があり、この命名形式が必然となる。
+
+### Value 3 との関係
+
+vibehawk Value 3「強制しない」は **エンドユーザー体験**（生成コード形式・レビュー方針・口調等）に関する原則であり、本命名規則は **vibehawk ブランド側の統制要件** として位置づける。経路 2 必須化（Issue #61）により `npx vibehawk install` は OSS 利用者の標準導入経路となっており、命名規則は全利用者に一貫して適用される。利用者は導入時にこの命名統制を明示的に告知される（`npx vibehawk install` 実行時の同意プロンプト経由）。
+
+### 同名衝突時の挙動
+
+`vibehawk-for-<owner>` 名で同名 App が既に存在する場合、GitHub は自動的に連番を付与（`vibehawk-for-<owner>-2` 等）する場合がある。この際 CLI は `printResult` で「想定名と実際の名前が異なる」旨を警告表示する。利用者は既存の App を確認してから再実行することを推奨する。
+
 ## vibecorp とは
 
 vibecorp は「AIエージェントを組織化してプロダクト開発を回す」仕組みをプラグインとして提供する。

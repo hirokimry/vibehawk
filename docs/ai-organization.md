@@ -107,3 +107,44 @@ C-Level エージェントの下に専門分析員を配置し、詳細な分析
 - COO を追加し、全エージェントの連携・進捗管理を統括する
 - 全 C-suite + 分析員が稼働し、AI 組織としてフル稼働する
 - /vibecorp:ship-parallel で複数 Issue の並列処理が可能になる
+
+## プロダクト実行モデル（GitHub Actions 同期実行）
+
+> **注**: 本セクションは vibehawk **プロダクト自体の実行設計** であり、AI 組織運用とは性質が異なる。Issue #6 完了条件に従って本ファイルに配置するが、将来的に `docs/design-philosophy.md` への移動を検討する余地がある。
+
+vibehawk のプロダクト本体（PR レビュー実行基盤）は、GitHub Actions の workflow が PR イベントを受けて、その中で同期的に LLM を呼び、コメントを投稿して終了する。専用キューや別 runner は持たない。
+
+### 実行フロー
+
+```text
+PR が立つ
+  ↓
+GitHub Actions workflow が起動（pull_request イベント）
+  ↓
+ジョブ内で claude-code-action を直接呼ぶ
+  ↓
+LLM 呼び出し → レビュー結果生成
+  ↓
+gh api でコメント投稿・edit・resolve
+  ↓
+ジョブ終了
+```
+
+### 並列実行制御
+
+利用者の workflow ファイルで `concurrency:` を宣言する。新しい push が来たら古いレビューを中止する設計が推奨。
+
+```yaml
+concurrency:
+  group: vibehawk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+```
+
+### 採用理由
+
+| 観点 | 内容 |
+|---|---|
+| 5 大方針 4「DB 持たない」 | 専用キューサーバーを持たないことで完全整合 |
+| 「LLM 課金枠以外、追加課金ゼロ」 | GitHub Actions 標準機能だけで完結、追加インフラ費用ゼロ |
+| ジョブタイムアウト | 6 時間（GitHub Actions 標準）→ LLM レビューには十分 |
+| 業界標準 | claude-code-action / GitHub Super Linter / 多くの review bot OSS が同じ構造 |

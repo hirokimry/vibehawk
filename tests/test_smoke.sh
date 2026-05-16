@@ -31,6 +31,84 @@ for f in README.md MVV.md .coderabbit.yaml .claude/vibecorp.yml; do
   fi
 done
 
+# MVV.md のプレースホルダ検証（空テンプレでないことを保証）
+if [[ -f "MVV.md" ]]; then
+  if grep -F "（ここに" MVV.md > /dev/null; then
+    remaining=$(grep -nF "（ここに" MVV.md)
+    fail "MVV.md にプレースホルダが残っている:"$'\n'"$remaining"
+  else
+    pass "MVV.md にプレースホルダが残っていない"
+  fi
+fi
+
+# docs/specification.md に "vibehawk" が含まれる（Issue #5 反映確認）
+if [[ -f "docs/specification.md" ]]; then
+  if grep -F "vibehawk" docs/specification.md > /dev/null; then
+    pass "docs/specification.md に vibehawk 反映"
+  else
+    fail "docs/specification.md に vibehawk が反映されていない"
+  fi
+else
+  fail "docs/specification.md が存在しない"
+fi
+
+# docs/POLICY.md に「プロダクト方針（5 大方針）」見出しが含まれる
+if [[ -f "docs/POLICY.md" ]]; then
+  if grep -F "プロダクト方針（5 大方針）" docs/POLICY.md > /dev/null; then
+    pass "docs/POLICY.md に 5 大方針反映"
+  else
+    fail "docs/POLICY.md に 5 大方針が反映されていない"
+  fi
+else
+  fail "docs/POLICY.md が存在しない"
+fi
+
+# docs/SECURITY.md に vibehawk-for-<owner>[bot] が含まれる（Issue #61 経路 2 必須化反映確認）
+if [[ -f "docs/SECURITY.md" ]]; then
+  if grep -F "vibehawk-for-<owner>[bot]" docs/SECURITY.md > /dev/null; then
+    pass "docs/SECURITY.md に vibehawk-for-<owner>[bot] 反映"
+  else
+    fail "docs/SECURITY.md に vibehawk-for-<owner>[bot] が反映されていない"
+  fi
+else
+  fail "docs/SECURITY.md が存在しない"
+fi
+
+# docs/cost-analysis.md に PR サイズ閾値の .vibehawk.yaml キー名が含まれる
+if [[ -f "docs/cost-analysis.md" ]]; then
+  if grep -F "full_review_files: 30" docs/cost-analysis.md > /dev/null && \
+     grep -F "focused_review_files: 80" docs/cost-analysis.md > /dev/null && \
+     grep -F "skip_inline_files: 3000" docs/cost-analysis.md > /dev/null; then
+    pass "docs/cost-analysis.md に PR サイズ閾値反映"
+  else
+    fail "docs/cost-analysis.md に PR サイズ閾値が反映されていない"
+  fi
+else
+  fail "docs/cost-analysis.md が存在しない"
+fi
+
+# docs/specification.md にアーキテクチャ章が含まれる
+if [[ -f "docs/specification.md" ]]; then
+  if grep -F "## アーキテクチャ" docs/specification.md > /dev/null; then
+    pass "docs/specification.md にアーキテクチャ章反映"
+  else
+    fail "docs/specification.md にアーキテクチャ章が反映されていない"
+  fi
+else
+  fail "docs/specification.md が存在しない"
+fi
+
+# docs/ai-organization.md にプロダクト実行モデルが含まれる
+if [[ -f "docs/ai-organization.md" ]]; then
+  if grep -F "プロダクト実行モデル" docs/ai-organization.md > /dev/null; then
+    pass "docs/ai-organization.md にプロダクト実行モデル反映"
+  else
+    fail "docs/ai-organization.md にプロダクト実行モデルが反映されていない"
+  fi
+else
+  fail "docs/ai-organization.md が存在しない"
+fi
+
 # 後続テストは .claude/vibecorp.yml に依存するため、不在なら早期終了
 if [[ ! -f ".claude/vibecorp.yml" ]]; then
   echo "=== 結果: $PASSED passed, $FAILED failed ==="
