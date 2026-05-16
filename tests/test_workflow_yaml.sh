@@ -721,5 +721,47 @@ else
   fail "prompt に Issue #152 fix の言及が含まれない（bundled review POST 禁止の根拠が示されていない）"
 fi
 
+# Issue #65: paths-ignore による推奨ノイズ抑制設定
+# templates/.github/workflows/vibehawk-review.yml に推奨 paths-ignore を同梱し、
+# ドキュメントのみ・lock ファイルのみ・dependabot 自動更新のような PR では
+# vibehawk auto-review を GitHub Actions レベルでスキップする（API コスト 0）。
+# 利用者は本リストを自由に編集・追加・削除できる（コメントで明示）。
+
+# 1. paths-ignore: ブロックが存在する（on.pull_request 直下）
+# yq を使わず grep ベースで実装（CI 依存ゼロを優先、shell.md YAML パースの方針に従い
+# 固定行数 -A ではなく "^    paths-ignore:" を含む行の存在チェックのみとする）
+if grep -E "^[[:space:]]+paths-ignore:" "$WORKFLOW" > /dev/null; then
+  pass "paths-ignore: ブロックが存在する（Issue #65 推奨ノイズ抑制設定）"
+else
+  fail "paths-ignore: ブロックが存在しない（Issue #65、推奨ノイズ抑制設定の前提）"
+fi
+
+# 2. 推奨 7 パターン全てが含まれる
+declare -a required_path_patterns=(
+  "'**/*.md'"
+  "'CHANGELOG*'"
+  "'.github/dependabot.yml'"
+  "'package-lock.json'"
+  "'yarn.lock'"
+  "'pnpm-lock.yaml'"
+  "'bun.lockb'"
+)
+for pattern in "${required_path_patterns[@]}"; do
+  if grep -F "$pattern" "$WORKFLOW" > /dev/null; then
+    pass "paths-ignore に推奨パターン $pattern が含まれる（Issue #65）"
+  else
+    fail "paths-ignore に推奨パターン $pattern が含まれない（Issue #65）"
+  fi
+done
+
+# 3. 利用者が編集可能であることを示すコメントが含まれる
+# 受け入れ条件 #2「利用者が簡単に追加・削除できる位置に明確なコメント記載」を機械検証
+if grep -F "編集" "$WORKFLOW" > /dev/null && \
+   grep -F "Issue #65" "$WORKFLOW" > /dev/null; then
+  pass "paths-ignore に利用者向け編集可能コメントが含まれる（Issue #65 受け入れ条件 #2）"
+else
+  fail "paths-ignore に利用者向け編集可能コメントが含まれない（Issue #65 受け入れ条件 #2）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
