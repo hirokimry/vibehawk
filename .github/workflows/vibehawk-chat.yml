@@ -329,7 +329,11 @@ jobs:
       # Claude prompt から check-runs を呼ばない設計（Issue #121-C1 fix と同じ理由、
       # claude-code-action permission model で deny されるため）。
       - name: vibehawk status check を post（@vibehawk review 経路、Issue #135）
+        # always() 修飾: claude-code-action や post_review step が失敗しても、
+        # 直前の review 状態（または review 未投稿）に応じた status check を必ず更新する。
+        # required status check が永久ブロックされる UX 欠陥（Issue #135 起因）の再発防止。
         if: |
+          always() &&
           steps.check_secrets.outputs.ready == 'true' &&
           contains(github.event.comment.body, '@vibehawk review') &&
           github.event.issue.pull_request != null
