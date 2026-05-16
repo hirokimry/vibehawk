@@ -182,7 +182,7 @@ branch protection に `vibehawk` を required 追加した後、新規 PR を立
 
 - 順序: **3 secrets 全完了 → 初回 PR で vibehawk check 発火確認 → branch protection 追加** の順を厳守する
 - `npx vibehawk setup` ウィザードは 3 secrets 完了状態でのみ branch protection 案内を表示する（順序強制の UI 側実装、Issue #134）
-- secret の改行が壊れているケースが最も多い。エディタ間で改行コード（CRLF / LF）が変換される / フォーム貼付時に削除されるとなど。GitHub Secrets UI は値の visual feedback がないため、再登録時は `.pem` ファイルをそのままドラッグ&ドロップするか pbcopy / clip でクリップボード経由で貼付するのが安全
+- secret の改行が壊れているケースが最も多い。エディタ間で改行コード（CRLF / LF）が変換される / フォーム貼付時に削除されるなど。GitHub Secrets UI は値の visual feedback がないため、再登録時は `.pem` ファイルをそのままドラッグ&ドロップするか pbcopy / clip でクリップボード経由で貼付するのが安全
 
 ### 関連ドキュメント
 
