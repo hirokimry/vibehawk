@@ -612,6 +612,30 @@ else
   fail "app-install の getUrl が /installations/new を含まない"
 fi
 
+# Issue #112: secret-pem の getUrl が /settings/apps/<slug> を案内する
+# （`/apps/<slug>` は公開ページで「Generate a private key」ボタンが存在しないため、
+#  所有者専用の設定ページ `/settings/apps/<slug>` を案内する必要がある）
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const secretPem = steps.find((s) => s.id === "secret-pem");
+if (typeof secretPem.getUrl !== "function") { console.error("secret-pem.getUrl must be a function"); process.exit(1); }
+const url = secretPem.getUrl({ credentials: { slug: "vibehawk-for-alice", html_url: "https://github.com/apps/vibehawk-for-alice" } });
+if (typeof url !== "string" || !url.includes("https://github.com/settings/apps/vibehawk-for-alice")) {
+  console.error("getUrl must include /settings/apps/<slug>, got:", url);
+  process.exit(1);
+}
+// PR #148 CodeRabbit Major 対応: 公開 URL 否定アサートを完全URL一致に強化（trailing space 依存だと回帰を取りこぼす）
+if (url.includes("https://github.com/apps/vibehawk-for-alice")) {
+  console.error("getUrl must NOT use public /apps/<slug> URL (no Generate a private key button there), got:", url);
+  process.exit(1);
+}
+'; then
+  pass "secret-pem の getUrl が /settings/apps/<slug> を案内する（Issue #112: Private key 取得画面に直接遷移）"
+else
+  fail "secret-pem の getUrl が /settings/apps/<slug> を案内しない（Issue #112: Private key 生成ボタンが存在しない URL を案内している）"
+fi
+
 # assert 5: cli/verify.js の verifyAppInstallation export が維持されている
 # （将来 App JWT 経由で検証復活させる際の拡張余地、計画段階の設計判断）
 if node -e '
