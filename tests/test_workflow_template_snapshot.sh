@@ -121,6 +121,7 @@ done
 declare -a SYNC_PAIRS=(
   "templates/.github/workflows/vibehawk-review.yml|.github/workflows/vibehawk-review.yml"
   "templates/.github/workflows/vibehawk-chat.yml|.github/workflows/vibehawk-chat.yml"
+  "templates/.github/workflows/vibehawk-review-skip-mark.yml|.github/workflows/vibehawk-review-skip-mark.yml"
 )
 
 for pair in "${SYNC_PAIRS[@]}"; do
