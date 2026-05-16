@@ -13,6 +13,10 @@ permissions:
   pull-requests: write
   issues: write
   contents: read
+  # Issue #135: `@vibehawk review` コマンド検知時に後続 workflow step で check-runs を
+  # post するため checks: write を付与（vibehawk-review.yml と同じ理由）。デフォルト
+  # GITHUB_TOKEN にこの権限を付け、App installation の permission 状態に依存しない。
+  checks: write
 
 jobs:
   chat:
@@ -122,6 +126,25 @@ jobs:
 
           echo "language=$language" >> "$GITHUB_OUTPUT"
 
+      # Issue #135: `@vibehawk review` 経路で必要な PR HEAD SHA を workflow step で取得する。
+      # Claude prompt 内で `gh pr view` / `gh api` を呼ぶ必要をなくすことで、
+      # プロンプト注入経由の API 操作攻撃面を最小化する（Issue #121-C1 fix と同じ思想、
+      # `@vibehawk review` 関連のセキュリティレビュー指摘 H-1 への対応）。
+      - name: PR HEAD SHA を取得（@vibehawk review 経路、Issue #135）
+        id: pr_head
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk review') &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
       - name: claude-code-action でチャット応答
         if: steps.check_secrets.outputs.ready == 'true'
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
@@ -132,17 +155,84 @@ jobs:
             REPO: ${{ github.repository }}
             ISSUE_NUMBER: ${{ github.event.issue.number }}
             IS_PR: ${{ github.event.issue.pull_request != null }}
+            IS_REVIEW_REQUEST: ${{ contains(github.event.comment.body, '@vibehawk review') }}
+            HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
             TRIGGERING_USER: ${{ github.event.comment.user.login }}
             TRIGGERING_COMMENT_ID: ${{ github.event.comment.id }}
             COMMENT_COUNT: ${{ steps.thread_history.outputs.comment_count }}
             THREAD_HISTORY_FILE: ${{ steps.thread_history.outputs.history_file }}
             LANGUAGE: ${{ steps.vibehawk_config.outputs.language }}
 
-            🦅 vibehawk @mention チャット応答（Issue #11）
+            🦅 vibehawk @mention チャット応答（Issue #11 + Issue #135 再レビュー分岐）
 
             利用者が `@vibehawk` でメンションしました。スレッド全体を読んで応答してください。
 
-            ## スレッド履歴の取得（最重要）
+            ## モード判定（最重要、Issue #135）
+
+            コメント本文に `@vibehawk review` が含まれ、かつ `IS_PR=true` の場合は **再レビューモード** に切り替えてください（chat 応答ではなく review 経路を呼ぶ）。それ以外は通常の **chat 応答モード** です。
+
+            - `IS_REVIEW_REQUEST=true` かつ `IS_PR=true` → 再レビューモード（以下「再レビューモード」セクション参照）
+            - それ以外 → chat 応答モード（以下「chat 応答モード」セクション参照）
+
+            ## 再レビューモード（Issue #135、`@vibehawk review` コマンド）
+
+            利用者が指摘対応後の再レビューを依頼しています。PR の現状を分析し、レビュー結果を 2 つのテキストファイルに書き出してください。**Claude prompt は API を呼びません**（プロンプト注入経由の任意 API 操作攻撃面を最小化、Issue #121-C1 fix と同じ思想）。後続の workflow step が payload を validate して bundled review POST + check-runs POST を決定論的に実行します。
+
+            ### 手順
+
+            1. PR 全体の差分を取得して分析:
+
+               ```bash
+               gh pr diff $ISSUE_NUMBER
+               ```
+
+               severity 5 段階（🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info）の判定基準は vibehawk-review.yml と同じ（CodeRabbit 公式仕様準拠）。
+
+            2. event を決定:
+               - 新規 Critical / Major の指摘が 1 件でもある → `REQUEST_CHANGES`
+               - それ以外（指摘なし or Minor 以下のみ） → `APPROVE`
+
+            3. レビュー本文（REVIEW_BODY）を組み立てる。冒頭に「🦅 vibehawk: 再レビュー（@vibehawk review コマンドによる再発火）」を付け、利用者に再レビュー経路で更新されたことを明示してください。**末尾に必ず以下 2 行を含める**（Issue #57 / インクリメンタルレビュー判定の前提、`<HEAD_SHA>` は環境変数 `$HEAD_SHA` の実値を埋め込む）:
+
+               ```text
+               <!-- vibehawk:summary -->
+               <!-- vibehawk:sha=<HEAD_SHA の実値> -->
+               ```
+
+            4. レビュー結果を以下の 2 ファイルに書き出す（後続 workflow step が読み取って決定論的に POST します）:
+
+               - `/tmp/vibehawk-chat-review-event.txt` → event 値（`APPROVE` か `REQUEST_CHANGES` のいずれか 1 行のみ、余分な改行・空白なし）
+               - `/tmp/vibehawk-chat-review-body.txt` → REVIEW_BODY 全文（マーカー 2 行を含む完全な本文）
+
+               書き出しコマンド例（heredoc は単一引用符で囲み、bash の変数展開を抑止する。HEAD SHA は実値を埋め込む）:
+
+               ```bash
+               cat > /tmp/vibehawk-chat-review-event.txt <<'EOF'
+               REQUEST_CHANGES
+               EOF
+
+               cat > /tmp/vibehawk-chat-review-body.txt <<'EOF'
+               🦅 vibehawk: 再レビュー（@vibehawk review コマンドによる再発火）
+
+               （...severity 別件数を含むサマリ...）
+
+               <!-- vibehawk:summary -->
+               <!-- vibehawk:sha=abc123def... -->
+               EOF
+               ```
+
+            5. status check（`vibehawk` check-runs）の更新は後続の workflow step が決定論的に post します。Claude prompt 側で check-runs を呼ぶ必要はありません。
+
+            ### 再レビューモードでの禁止事項
+
+            - **API 呼び出しは一切行わない** — bundled review POST も check-runs POST も後続 workflow step に委譲する（プロンプト注入経由の API 操作攻撃面の最小化、`@vibehawk review` 関連セキュリティレビュー H-1 への対応）
+            - **chat 応答コメント（`gh issue comment` / `gh pr comment`）の投稿** — 再レビューモードでは payload ファイル 2 件の出力のみ（重複投稿・誤投稿の防止）
+            - **REVIEW_BODY 内に外部 URL / 外部画像を埋め込まない** — PR コメント本文に外部 URL を埋め込ませることで check-run summary 経由の情報漏洩を狙う攻撃を想定し、レビュー本文は GitHub 内リソースおよびテキストのみで構成する
+            - **inline 指摘**（`comments[]`）は省略 — chat 経路では payload は event + body + commit_id のみ。詳細な inline は通常の push trigger / `review_requested` ボタンによる review.yml 経路で行う
+
+            ## chat 応答モード（通常の `@vibehawk` メンション応答、Issue #11）
+
+            ### スレッド履歴の取得（最重要）
 
             まず以下のコマンドでスレッド全コメント（Issue 本文 + 全コメント、時系列）を読み込んでください:
 
@@ -152,7 +242,7 @@ jobs:
 
             JSON 形式で `[{user, created_at, body}, ...]` の配列が得られます。これが **会話の全文脈** です。
 
-            ## 応答方針
+            ### 応答方針
 
             - 過去のやり取りを **すべて踏まえた** 自然な多ターン会話
             - 短く端的な応答が基本（必要に応じて詳細展開）
@@ -160,7 +250,7 @@ jobs:
             - スレッドが Issue (`IS_PR=false`) なら Issue 本文（履歴の最初の要素）を中心に応答
             - LANGUAGE=ja の場合は日本語で応答、それ以外は英語
 
-            ## 投稿方法
+            ### 投稿方法
 
             ```bash
             gh issue comment $ISSUE_NUMBER --body "<応答本文>"
@@ -168,15 +258,161 @@ jobs:
             # gh pr comment $ISSUE_NUMBER --body "<応答本文>"
             ```
 
-            ## 無限ループ防止（最重要）
+            ## 無限ループ防止（最重要、両モード共通）
 
             - **応答本文に `@vibehawk` を含めないこと**（次回起動の if 条件で弾かれるが、念のため）
             - **vibehawk-for-* Bot 自身のメンションには反応しない**: トリガー条件側で弾かれているのでここまで来ないが、TRIGGERING_USER が `vibehawk-for-` で始まる場合は **何もせず終了** すること
 
-            ## 5 大方針との整合
+            ## 5 大方針との整合（両モード共通）
 
             - 5 大方針 2「コード生成は絶対しない」: 応答に **例示コード断片** や **GitHub Suggestions 構文** は OK だが、**Bot 自身が PR に commit を作らない** / docstring 全文生成しない / unit-test ファイル新設しない
             - 5 大方針 4「専用 DB なし」: 過去要約は作らない、スレッド全文を毎回読み込む（Phase 1 では `chat.max_thread_comments` 制限なし）
-            - 5 大方針 5「PR メタデータ操作なし」: label / milestone / description を変更しない
+            - 5 大方針 5「PR メタデータ操作なし」: label / milestone / description を変更しない（再レビューモードでも payload ファイル出力のみで API は呼ばない）
           claude_args: |
             --allowedTools "Bash(cat:*),Bash(gh issue comment:*),Bash(gh pr comment:*),Bash(gh pr diff:*)"
+
+      # Issue #135: @vibehawk review 経路の bundled review POST を決定論的に実行する。
+      # Claude prompt は review event と body を payload ファイル 2 件に書くだけで API は呼ばない。
+      # 本 step が payload を validate して POST する（プロンプト注入経由の任意 API 操作攻撃面を最小化、
+      # `@vibehawk review` 関連セキュリティレビュー H-1 / Issue #121-C1 fix と同じ思想）。
+      - name: vibehawk bundled review を post（@vibehawk review 経路、Issue #135）
+        id: post_review
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk review') &&
+          github.event.issue.pull_request != null
+        env:
+          # App Installation Token を使う: vibehawk-for-<owner>[bot] 名義で review を投稿するため
+          # （以前の review との一貫性を保つ、Issue #121 bundled review API 設計に整合）
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          EVENT_FILE="/tmp/vibehawk-chat-review-event.txt"
+          BODY_FILE="/tmp/vibehawk-chat-review-body.txt"
+
+          # Claude が payload を書いていない場合（モード判定ミス等）はスキップ
+          if [[ ! -f "$EVENT_FILE" ]] || [[ ! -f "$BODY_FILE" ]]; then
+            echo "::warning::vibehawk chat: payload ファイル (event or body) が存在しないため bundled review POST をスキップ"
+            exit 0
+          fi
+
+          # event の validate: APPROVE / REQUEST_CHANGES 限定（プロンプト注入で COMMENTED 等
+          # の予期しない event 値を埋め込まれることを防ぐ）。改行・余分な空白も除去。
+          event="$(head -1 "$EVENT_FILE" | tr -d '[:space:]')"
+          if [[ "$event" != "APPROVE" && "$event" != "REQUEST_CHANGES" ]]; then
+            echo "::error::vibehawk chat: 不正な event 値: ${event}（APPROVE / REQUEST_CHANGES のみ許可）"
+            exit 1
+          fi
+
+          # body の validate: 非空であること
+          body="$(cat "$BODY_FILE")"
+          if [[ -z "${body// /}" ]]; then
+            echo "::error::vibehawk chat: REVIEW_BODY が空です"
+            exit 1
+          fi
+
+          # commit_id は workflow step で fetch した HEAD_SHA を使う（Claude が改ざんできないよう
+          # workflow 側で固定）。bundled review POST は jq で payload を組み立てて --input - で渡す。
+          jq -n \
+            --arg event "$event" \
+            --arg body "$body" \
+            --arg commit_id "$HEAD_SHA" \
+            '{event: $event, body: $body, commit_id: $commit_id}' \
+            | gh api -X POST "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --input -
+
+      # Issue #135: `@vibehawk review` コマンド経路で bundled review POST 後に
+      # status check `vibehawk` を決定論的に更新する。vibehawk-review.yml の
+      # `vibehawk status check を post` step と同等のロジック。
+      # Claude prompt から check-runs を呼ばない設計（Issue #121-C1 fix と同じ理由、
+      # claude-code-action permission model で deny されるため）。
+      - name: vibehawk status check を post（@vibehawk review 経路、Issue #135）
+        # always() 修飾: claude-code-action や post_review step が失敗しても、
+        # 直前の review 状態（または review 未投稿）に応じた status check を必ず更新する。
+        # required status check が永久ブロックされる UX 欠陥（Issue #135 起因）の再発防止。
+        if: |
+          always() &&
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk review') &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
+
+          # PR HEAD SHA を取得（check-runs API は head_sha 必須）
+          HEAD_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+
+          # vibehawk-review.yml と同じ substantive review filter で
+          # 直前の Claude セッションが投稿した最新 review を取得する。
+          # bundled POST 後に副産物の空 COMMENTED review が混入する可能性があるため、
+          # state == APPROVED / CHANGES_REQUESTED かつ body 非空で絞り込む。
+          substantive_review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+            | jq -cs --arg bot "${BOT_LOGIN}" '
+                [ .[][]
+                  | select(.user.login == $bot)
+                  | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
+                  | select((.body // "") | length > 0)
+                ]
+                | sort_by(.submitted_at)
+                | last // empty
+              ')"
+
+          if [[ -n "${substantive_review_json}" ]]; then
+            review_json="${substantive_review_json}"
+          else
+            review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+              | jq -cs --arg bot "${BOT_LOGIN}" '
+                  [ .[][]
+                    | select(.user.login == $bot)
+                  ]
+                  | sort_by(.submitted_at)
+                  | last // empty
+                ')"
+          fi
+
+          # conclusion 導出表（vibehawk-review.yml と同じ）:
+          #   APPROVED         → success（merge OK）
+          #   CHANGES_REQUESTED → failure（merge ブロック）
+          #   COMMENTED 等その他 / review 未検出 → neutral（informational）
+          if [[ -z "${review_json}" ]]; then
+            conclusion="neutral"
+            title="vibehawk: review 未投稿（@vibehawk review）"
+            summary="@vibehawk review で再レビューが要求されましたが、bundled POST が確認できませんでした。chat workflow ログを確認してください。"
+          else
+            state="$(echo "${review_json}" | jq -r '.state // ""')"
+            body="$(echo "${review_json}" | jq -r '.body // ""')"
+
+            case "${state}" in
+              APPROVED)
+                conclusion="success"
+                title="vibehawk: APPROVED（@vibehawk review）"
+                ;;
+              CHANGES_REQUESTED)
+                conclusion="failure"
+                title="vibehawk: CHANGES_REQUESTED（@vibehawk review）"
+                ;;
+              *)
+                conclusion="neutral"
+                title="vibehawk: ${state}（@vibehawk review）"
+                ;;
+            esac
+            summary="${body}"
+          fi
+
+          # check-runs API の output.summary は最大 65535 文字。安全側で 60000 字で切る。
+          summary="${summary:0:60000}"
+
+          gh api -X POST "repos/${REPO}/check-runs" \
+            --field name="vibehawk" \
+            --field head_sha="${HEAD_SHA}" \
+            --field status="completed" \
+            --field conclusion="${conclusion}" \
+            --field "output[title]=${title}" \
+            --field "output[summary]=${summary}"

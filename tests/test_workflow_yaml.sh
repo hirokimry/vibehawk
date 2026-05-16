@@ -53,8 +53,11 @@ else
   fail "pull_request トリガーが設定されていない"
 fi
 
-# 必須イベントタイプ 3 種
-for evt in opened synchronize ready_for_review; do
+# 必須イベントタイプ 4 種（Issue #135: review_requested を追加）
+# review_requested は GitHub UI の "Re-request review" ボタン押下時に発火する。
+# 一度 vibehawk が failure を post すると required status check が永久ブロックされる
+# UX 欠陥（Issue #135 / PR #133）を解消する正規導線。
+for evt in opened synchronize ready_for_review review_requested; do
   if echo "$WORKFLOW_BODY" | grep -F "$evt" > /dev/null; then
     pass "イベントタイプ $evt が設定されている"
   else
