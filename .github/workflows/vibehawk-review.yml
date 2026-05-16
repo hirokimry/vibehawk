@@ -254,11 +254,13 @@ jobs:
             - INCREMENTAL_MODE=false かつ EXISTING_COMMENT_ID が空（初回レビュー）: PR 全体（base ブランチからの全差分 `git diff origin/$BASE_REF...HEAD`）をレビュー
             - INCREMENTAL_MODE=false かつ EXISTING_COMMENT_ID が設定済（force push / rebase 検出）: PR 全体を **完全再レビュー**（前回サマリは古い SHA に紐づいているため棄却し、最新差分で書き直す）
 
-            ## 投稿方法（最重要、Issue #121 で bundled review API に変更）
+            ## 投稿方法（最重要、Issue #152 で workflow step 移管に変更）
 
-            **全ての投稿は `POST /repos/X/Y/pulls/N/reviews` を 1 回呼ぶ bundled review に統合する。**
+            **bundled review POST は Claude prompt 内で実行しない。Claude は `$GITHUB_WORKSPACE/vibehawk-review.json` に JSON ペイロードを書き出すまでで終了し、後続の workflow step (`vibehawk bundled review を post`) が GitHub Reviews API を決定論的に 1 回だけ呼び出す。**
 
-            理由: GitHub UI は review event 配下にサマリ本文 + inline 指摘がバンドルされている場合のみ colored badge（APPROVED→緑 / CHANGES_REQUESTED→赤）で表示する。3 段階分離投稿（inline 個別 POST + サマリ issue comment + `gh pr review` 系コマンドでの approve / request-changes 発火）では review event が空になり muted badge になるため。
+            背景: 旧設計（Issue #121）では Claude prompt 内で `gh api -X POST repos/.../pulls/N/reviews` を直接実行していたが、LLM が本物のサマリ POST 前にテスト POST を複数回試し打ちする事象が PR #151 で観測された（同一 workflow run 内で本物の前に 4 回のノイズ review を投稿）。PR #128 と同じ「workflow step で決定論的に POST」パターンに移管することで、Claude のタスク完了条件から POST 動作を除外し、試し打ちの動機を構造的に消す（Issue #152）。
+
+            理由（GitHub UI 仕様）: GitHub UI は review event 配下にサマリ本文 + inline 指摘がバンドルされている場合のみ colored badge（APPROVED→緑 / CHANGES_REQUESTED→赤）で表示する。3 段階分離投稿（inline 個別 POST + サマリ issue comment + `gh pr review` 系コマンドでの approve / request-changes 発火）では review event が空になり muted badge になるため、bundled review POST に統合する設計自体は維持する（POST の実行主体だけが Claude → workflow step に移る）。
 
             ### 投稿フロー（INCREMENTAL_MODE 共通）
 
@@ -277,8 +279,8 @@ jobs:
                - 新規 inline 指摘に Critical/Major が 1 件でもある → `event=REQUEST_CHANGES`
                - それ以外（unresolved == 0 件 かつ 新規 inline が 0 件 または Minor/Trivial/Info のみ） → `event=APPROVE`
 
-            この event 決定の結果（APPROVED / CHANGES_REQUESTED）から、後続の GitHub Actions step が決定論的に status check の conclusion (success/failure/neutral) を導出して post する（Issue #121-C1 fix、Claude prompt 内 check-runs POST は permission_denial 多発のため廃止し workflow step に移管した）。
-            4. `gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews"` を **1 回だけ** 呼ぶ。`comments` は配列なので `-f`/`-F` の repeatable は使えず、`--input -` で JSON ペイロード全体を渡す:
+            この event 決定の結果（APPROVED / CHANGES_REQUESTED）は、後続の `vibehawk bundled review を post` step が JSON から読み出して GitHub に POST し、さらに次の `vibehawk status check を post` step が status check の conclusion (success/failure/neutral) を導出して post する（Issue #121-C1 fix / Issue #152 fix、Claude prompt 内 POST は廃止し全て workflow step に移管した）。
+            4. JSON ペイロードを `$GITHUB_WORKSPACE/vibehawk-review.json` に **書き出すだけ**（POST は絶対に実行しない）。`comments` は配列なので `-f`/`-F` の repeatable は使えず、`{event, body, commit_id, comments}` のフル JSON を 1 ファイルにまとめる:
 
             ```bash
             # comments_array.json は事前に jq で組み立てる（後述）
@@ -288,8 +290,10 @@ jobs:
               --arg commit_id "$HEAD_SHA" \
               --slurpfile comments comments_array.json \
               '{event: $event, body: $body, commit_id: $commit_id, comments: $comments[0]}' \
-              | gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews" --input -
+              > "$GITHUB_WORKSPACE/vibehawk-review.json"
             ```
+
+            このファイル書き出しまでが Claude のタスク完了条件です。`gh api -X POST repos/.../pulls/N/reviews` の直接実行は **絶対禁止**（後続 workflow step が決定論的に実行するため不要、Issue #152）。
 
             ### `comments[]` 配列の要素フォーマット
 
@@ -306,19 +310,20 @@ jobs:
 
             ### incremental（前回サマリあり）の扱い
 
-            GitHub Reviews API には review body の edit エンドポイントがない（PATCH 不可）。したがって incremental でも **新規 review を都度作成** する。前回 review は GitHub UI 上で履歴として残るが、最新 review が APPROVED/CHANGES_REQUESTED の最終結論となるため運用上問題ない。
+            GitHub Reviews API には review body の edit エンドポイントがない（PATCH 不可）。したがって incremental でも **新規 review を都度作成** する（workflow step 経由で 1 回 POST）。前回 review は GitHub UI 上で履歴として残るが、最新 review が APPROVED/CHANGES_REQUESTED の最終結論となるため運用上問題ない。
 
             旧 issue comment 形式のサマリ（Issue #121 以前）が PR に残っていた場合は、touch せず放置（自然消滅）。
 
-            **絶対禁止**:
+            **絶対禁止**（Issue #152 fix で強化）:
+            - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/reviews` で bundled review を直接 POST する（**bundled review POST は workflow step が決定論的に行う、Claude prompt 内 POST は廃止**、Issue #152）
             - `gh pr comment` 系コマンドでサマリを別投稿する（重複・badge 失効の原因）
-            - `gh pr review` 系コマンドで review event を別発火する（本来 bundled で 1 回呼出に統合、approve / request-changes の発火経路は本 prompt の bundled POST のみ）
+            - `gh pr review` 系コマンドで review event を別発火する（本来 bundled で 1 回呼出に統合、approve / request-changes の発火経路は workflow step の bundled POST のみ）
             - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/comments` で inline を個別投稿する（バンドルから外れ muted badge の原因）
             - 旧 issue comment 形式のサマリを edit する経路（issue comment 経路は撤廃、bundled review に統一）
 
-            ## status check 投稿は workflow step が決定論的に行う（Issue #121-C1 fix）
+            ## status check 投稿も workflow step が決定論的に行う（Issue #121-C1 fix）
 
-            Claude prompt 内では check-runs API を **絶対に呼ばない**。check-runs POST は claude-code-action の次の step（`vibehawk status check を post`）が GitHub Actions の GITHUB_TOKEN を使って実行する。Claude prompt から POST を呼ぶ旧設計は claude-code-action の permission model により deny されるため、本 prompt は bundled review POST まででタスク完了とすること。
+            Claude prompt 内では check-runs API を **絶対に呼ばない**。check-runs POST は claude-code-action の次の次の step（`vibehawk status check を post`）が GitHub Actions の GITHUB_TOKEN を使って実行する。Claude prompt から POST を呼ぶ旧設計は claude-code-action の permission model により deny されるため、本 prompt は JSON 書き出しまででタスク完了とすること。
 
             ## サマリ本文（REVIEW_BODY）の必須要件
 
@@ -366,6 +371,8 @@ jobs:
 
             **重要制約**: 他者・他 Bot のレビュースレッドには **絶対に resolveReviewThread を呼ばない**（誤 resolve は信頼破壊）。投稿者 ID チェックを必ず実施。
 
+            **補足**: 本 prompt で唯一許可される POST は `gh api graphql` 経由の `resolveReviewThread` mutation のみ（bundled review POST は workflow step に移管済み、Issue #152）。`gh api -X POST repos/.../pulls/N/reviews` 等の REST POST は一切実行しない。
+
             ## review event 決定（auto_resolve 後の unresolved 数 + 新規 inline の severity で）
 
             auto_resolve 完了後、bundled review POST の **直前** に event を決定する:
@@ -377,7 +384,7 @@ jobs:
                - 新規 inline に Critical/Major が 1 件でもある → `event=REQUEST_CHANGES`、body 冒頭に `⚠️ vibehawk: 新規 Critical/Major M 件`
                - 新規 inline は Minor/Trivial/Info のみ（または 0 件） → `event=APPROVE`、body 冒頭に `✅ vibehawk: 未解決指摘なし`（新規 0 件）または `✅ vibehawk: 助言 N 件（要対応指摘なし）`（Minor 以下のみ）
 
-            この判定結果（APPROVED / CHANGES_REQUESTED）は後続の workflow step が読み取り、status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix）。
+            この判定結果（APPROVED / CHANGES_REQUESTED）は `event` フィールドとして `vibehawk-review.json` に書き出され、後続の `vibehawk bundled review を post` step がそれを read して GitHub に POST する。さらに次の `vibehawk status check を post` step が POST 後の review state を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix）。
 
             状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
 
@@ -421,9 +428,52 @@ jobs:
             - `git log --oneline origin/$BASE_REF..HEAD`（PR 全体の commit 一覧）
             - `gh pr diff $PR_NUMBER`（PR 全体の差分）
 
-            Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります。コード生成（docstring 全文 / unit-test ファイル新設 / 自動 commit）は **絶対に禁止**（5 大方針 2）。
+            Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります（bundled review POST は workflow step が App Installation Token を使って実行するため、bot 名義は維持される）。コード生成（docstring 全文 / unit-test ファイル新設 / 自動 commit）は **絶対に禁止**（5 大方針 2）。
+
+            ## タスク完了条件（Issue #152 fix）
+
+            本 prompt のタスクは以下で完了する:
+
+            1. （INCREMENTAL_MODE=true なら）auto_resolve で旧指摘を resolved 化
+            2. event を決定（APPROVED / REQUEST_CHANGES）
+            3. `$GITHUB_WORKSPACE/vibehawk-review.json` に `{event, body, commit_id, comments}` を書き出す
+
+            **`gh api -X POST` で bundled review を POST しない**。POST は workflow の次の step が決定論的に 1 回実行する。POST を試し打ちで実行すると同一 workflow run 内で利用者の PR に複数の review が残る（PR #151 で観測されたノイズ事象、Issue #152）。
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
+
+      - name: vibehawk bundled review を post（Issue #152 fix）
+        # Issue #152 fix: 旧設計では Claude prompt 内で `gh api -X POST .../pulls/N/reviews` を
+        # 直接実行していたが、LLM が本物のサマリ POST 前にテスト POST を試し打ちする事象が
+        # PR #151 で観測された（同一 workflow run 内で本物の前に 4 回のノイズ review が残る）。
+        # PR #128 の status check 移管と同じパターンで、Claude には JSON ペイロード組み立てまで
+        # させ、本 step が App Installation Token を使って決定論的に 1 回だけ POST する。
+        # App Installation Token を使うことで投稿者名義 `vibehawk-for-<owner>[bot]` を維持する。
+        # hashFiles でファイル存在を確認し、Claude が書き出しに失敗した場合は step を skip して
+        # 次の status check post step が neutral に倒れるようにする（次回 push で再実行可能）。
+        if: steps.check_secrets.outputs.ready == 'true' && hashFiles('vibehawk-review.json') != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          PAYLOAD="${GITHUB_WORKSPACE}/vibehawk-review.json"
+
+          # JSON 構造検証: event / body / commit_id / comments(array) の必須キーが揃っているか
+          if ! jq -e '.event and .body and .commit_id and (.comments | type == "array")' "$PAYLOAD" > /dev/null; then
+            echo "::warning::vibehawk: vibehawk-review.json の必須キー (event/body/commit_id/comments) が欠落しています。bundled review POST を skip します（次の status check post が neutral に倒れます）"
+            exit 0
+          fi
+
+          event="$(jq -r '.event' "$PAYLOAD")"
+          comments_count="$(jq -r '.comments | length' "$PAYLOAD")"
+          echo "vibehawk: bundled review を post します（event=${event}, comments=${comments_count} 件）"
+
+          # 決定論的に 1 回だけ POST（試し打ちなし、Issue #152）
+          gh api -X POST "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --input "$PAYLOAD"
+
+          echo "vibehawk: bundled review を post しました"
 
       - name: vibehawk status check を post（Issue #121-C1 fix）
         # Claude prompt 内 check-runs POST は claude-code-action の permission model で
