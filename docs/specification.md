@@ -242,6 +242,20 @@ bundled review API の approve / request_changes 投稿（PR #122、補助情報
 
 `check_secrets` 未設定時は step 自体が `if: steps.check_secrets.outputs.ready == 'true'` ガードで skip され、check 自体が post されない（既存ガード継承）。
 
+#### paths-ignore 該当 PR への fallback（Issue #157）
+
+`vibehawk-review.yml` の `paths-ignore`（Issue #65、`**/*.md` / `CHANGELOG*` / `.github/dependabot.yml` / `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` / `bun.lockb`）に全マッチする PR では本 workflow 自体が GitHub Actions レベルで起動せず、上記の `vibehawk` status check post step も実行されない。これだけだと required status check `vibehawk` が永久未投稿で PR が構造的にマージ不能になる（PR #156 で観測）。
+
+これを解消するため、別 workflow `vibehawk-review-skip-mark.yml` が全 PR で起動し、変更ファイルが `vibehawk-review.yml` の `paths-ignore` パターンに全マッチする場合のみ `vibehawk` check を `success` で post する。マッチしない PR では skip-mark 側は no-op（vibehawk-review.yml 本体側が `vibehawk` を post するため競合しない）。これにより「`.md` だけの PR は LLM API コスト 0 を維持しつつ merge gate を通過できる」状態を実現する。
+
+skip-mark workflow の判定 case 文と `vibehawk-review.yml` の `paths-ignore` リストは二重定義のため、利用者がリストを編集する際は両方を手動同期する必要がある。同期は以下 3 箇所:
+
+1. `templates/.github/workflows/vibehawk-review-skip-mark.yml` の case 文
+2. `.github/workflows/vibehawk-review-skip-mark.yml` の case 文（templates との完全一致が `tests/test_workflow_template_snapshot.sh` で強制）
+3. `tests/test_workflow_skip_mark.sh` のパターン一覧
+
+同期忘れの失敗モードは常に「PR が BLOCKED」方向のみで、merge gate 誤通過は構造上発生しない。
+
 #### 利用者側オペ（branch protection への登録）
 
 `vibehawk` を required status check として branch protection に登録することは、**vibehawk 利用の根幹** である（merge gate 主軸を成立させる唯一の経路）。
