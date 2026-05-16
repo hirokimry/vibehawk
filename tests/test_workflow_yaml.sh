@@ -736,10 +736,8 @@ else
   fail "paths-ignore: ブロックが存在しない（Issue #65、推奨ノイズ抑制設定の前提）"
 fi
 
-# 2. 推奨 7 パターン全てが含まれる
+# 2. 推奨 5 パターン全てが含まれる（Issue #65 → Issue #160 で `**/*.md` / `CHANGELOG*` を撤回）
 declare -a required_path_patterns=(
-  "'**/*.md'"
-  "'CHANGELOG*'"
   "'.github/dependabot.yml'"
   "'package-lock.json'"
   "'yarn.lock'"
