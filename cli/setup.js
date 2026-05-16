@@ -639,10 +639,15 @@ async function run({ argv = process.argv.slice(3) } = {}) {
     '🎉 セットアップ完了'
   );
 
-  // Issue #134: 3 secrets が揃った状態のみ branch protection 誘導を表示する
-  // （未登録 secrets がある状態で branch protection に追加すると全 PR が永続 pending で
-  // 完全停止する事故が起きるため、順序強制として secrets 完了を gate にする）
-  const branchProtectionGated = unregisteredSecrets.length === 0 && !workflowSkipped;
+  // Issue #134: 3 secrets が揃った状態のみ branch protection 誘導を表示する。
+  // 未登録 secrets がある状態で branch protection に追加すると全 PR が永続 pending で
+  // 完全停止する事故が起きるため、順序強制として secrets 完了を gate にする。
+  //
+  // workflow ステップは「既存検出によるスキップ（冪等再実行で normal）」と「PR 作成失敗の
+  // スキップ（abnormal）」が両方とも summary.status='skipped' になるため、ここの gate には
+  // 含めない（PR #151 で指摘された誤表示への対策）。workflow が未配置でも `vibehawk` check は
+  // 発火できないだけで、branch protection 設定自体の案内はしてよい。
+  const branchProtectionGated = unregisteredSecrets.length === 0;
   if (branchProtectionGated) {
     clack.note(
       [
@@ -666,9 +671,9 @@ async function run({ argv = process.argv.slice(3) } = {}) {
   } else {
     clack.note(
       [
-        '⚠️ branch protection への `vibehawk` 登録（vibehawk 利用の根幹）は未登録 secrets / workflow があるため案内をスキップしました。',
+        '⚠️ branch protection への `vibehawk` 登録（vibehawk 利用の根幹）は未登録 secrets があるため案内をスキップしました。',
         '',
-        '未登録項目を上記の手順で補完してから、`npx vibehawk setup` を再実行するか、',
+        '未登録 secrets を上記の手順で補完してから、`npx vibehawk setup` を再実行するか、',
         `Branch protection 設定（https://github.com/${repo}/settings/branches）で手動補完してください。`,
       ].join('\n'),
       '⚠️ 次のステップ（順序）'
