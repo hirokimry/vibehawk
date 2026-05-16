@@ -91,10 +91,11 @@ permission_kv="$(awk '
   }
 ' "$CHAT_WORKFLOW" | sort -u)"
 
-expected_permission_kv="$(printf '%s\n' 'contents: read' 'issues: write' 'pull-requests: write' | sort -u)"
+# Issue #135: `@vibehawk review` 経路で後続 step が check-runs を post するため checks: write を追加
+expected_permission_kv="$(printf '%s\n' 'contents: read' 'issues: write' 'pull-requests: write' 'checks: write' | sort -u)"
 
 if [[ "$permission_kv" == "$expected_permission_kv" ]]; then
-  pass "permissions は key:value 完全一致 (pull-requests:write / issues:write / contents:read)"
+  pass "permissions は key:value 完全一致 (pull-requests:write / issues:write / contents:read / checks:write)"
 else
   fail "permissions の key:value が完全一致しない: 実際=[$(echo "$permission_kv" | tr '\n' '|')], 期待=[$(echo "$expected_permission_kv" | tr '\n' '|')]"
 fi
@@ -104,6 +105,7 @@ declare -a required_perm_labels=(
   "pull-requests: write"
   "issues: write"
   "contents: read"
+  "checks: write"
 )
 for label in "${required_perm_labels[@]}"; do
   if echo "$permission_kv" | grep -F "$label" > /dev/null; then
@@ -204,12 +206,14 @@ while IFS= read -r line; do
   if [[ "$state" == "check_secrets" ]] && [[ "$current_step_is_check_secrets" == "0" ]]; then
     state="after_check_secrets"
   fi
-  # ガード検出
-  if [[ "$line" == *"if: steps.check_secrets.outputs.ready == 'true'"* ]]; then
+  # ガード検出（単一行 `if:` および block-folded `if: |` 内のいずれも検知）
+  # Issue #135: `@vibehawk review` 経路の check-runs POST step は多条件 AND を
+  # 多行 `if: |` で書くため、`if:` プレフィックスを必須としない形に緩める
+  if [[ "$line" == *"steps.check_secrets.outputs.ready == 'true'"* ]]; then
     current_step_has_ready_guard=1
   fi
   # プレースホルダ投稿ステップは ready != 'true' で実行される設計
-  if [[ "$line" == *"if: steps.check_secrets.outputs.ready != 'true'"* ]]; then
+  if [[ "$line" == *"steps.check_secrets.outputs.ready != 'true'"* ]]; then
     current_step_is_placeholder=1
   fi
 done < "$CHAT_WORKFLOW"
@@ -332,11 +336,15 @@ fi
 
 # allowedTools（CodeRabbit PR #87 指摘: gh pr diff の取りこぼしを防ぐため明示的に列挙）
 # CodeRabbit PR #106 Major 指摘: gh api / jq は issue_comment 経路でのプロンプト注入リスクのため除外
+# Issue #135: `@vibehawk review` 経路の bundled review POST のため、`gh pr view` と
+#            POST + /repos/ パス限定の narrow `gh api -X POST repos/:*` を追加（汎用 gh api:* / jq:* は引き続き禁止）
 declare -a required_tools=(
   'cat:\*'
   'gh issue comment:\*'
   'gh pr comment:\*'
   'gh pr diff:\*'
+  'gh pr view:\*'
+  'gh api -X POST repos/:\*'
 )
 for tool in "${required_tools[@]}"; do
   if grep -E "Bash\(${tool}\)" "$CHAT_WORKFLOW" > /dev/null; then
@@ -347,6 +355,9 @@ for tool in "${required_tools[@]}"; do
 done
 
 # CodeRabbit PR #106 Major 指摘: gh api / jq が allowedTools に含まれないこと（外部入力プロンプト注入対策）
+# Issue #135 注: 汎用 `gh api:*` は引き続き禁止（chat 経路で任意エンドポイント操作を許すと
+#                ラベル変更等の 5 大方針 5 抵触リスクが残る）。narrow な `gh api -X POST repos/:*`
+#                のみ Issue #135 で許可（POST + /repos/ 配下のみ、上述の required_tools 参照）。
 declare -a forbidden_tools=(
   'gh api:\*'
   'jq:\*'
@@ -364,9 +375,9 @@ done
 # claude_args 全体（複数行 YAML literal block scalar）から Bash(...) パターンを全部抽出
 # claude_args ブロック検出: claude_args: の次の `|` 行から、インデントが下がるまで
 # シンプルに全ファイルから Bash(...) を抽出（workflow 内に Bash(...) は claude_args 内のみのはず）
-# CodeRabbit PR #106 Major 指摘で gh api / jq を除外したため expected_set も縮小
+# CodeRabbit PR #106 Major 指摘で gh api / jq を除外、Issue #135 で `@vibehawk review` 用に narrow な追加
 unexpected_tools=()
-expected_set='|cat:*|gh issue comment:*|gh pr comment:*|gh pr diff:*|'
+expected_set='|cat:*|gh issue comment:*|gh pr comment:*|gh pr diff:*|gh pr view:*|gh api -X POST repos/:*|'
 while IFS= read -r tool; do
   # tool は "cat:*" のような Bash(...) 内の中身
   if [[ -n "$tool" ]] && [[ "$expected_set" != *"|${tool}|"* ]]; then
@@ -375,7 +386,7 @@ while IFS= read -r tool; do
 done < <(grep -oE 'Bash\([^)]+\)' "$CHAT_WORKFLOW" | sed -E 's/^Bash\(//; s/\)$//')
 
 if [[ ${#unexpected_tools[@]} -eq 0 ]]; then
-  pass "allowedTools は許可 4 項目のみで構成（claude_args 全体走査、Bash(*) 等の危険な追加なし、CodeRabbit PR #106 Major 反映）"
+  pass "allowedTools は許可 6 項目のみで構成（claude_args 全体走査、Bash(*) 等の危険な追加なし、Issue #135 narrow gh api 追加）"
 else
   fail "allowedTools に許可外の項目: ${unexpected_tools[*]}"
 fi
@@ -434,6 +445,127 @@ if grep -F 'LANGUAGE=ja' "$CHAT_WORKFLOW" > /dev/null && \
   pass "prompt に LANGUAGE=ja → 日本語応答 / それ以外 → 英語応答の指示が含まれる"
 else
   fail "prompt の locale 別応答指示が不足"
+fi
+
+# === Issue #135: `@vibehawk review` 再レビュー分岐の検証 ===
+# 利用者が指摘対応後に再レビューを依頼する正規導線として、chat 経路で
+# `@vibehawk review` コマンドを認識し、bundled review POST + check-runs POST 経路に
+# 切り替える分岐が実装されていることを検証する。
+echo "=== Issue #135: @vibehawk review 再レビュー分岐 検証 ==="
+
+# prompt に IS_REVIEW_REQUEST 環境変数（@vibehawk review 検知結果）が渡される
+if grep -F "IS_REVIEW_REQUEST:" "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F "contains(github.event.comment.body, '@vibehawk review')" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に IS_REVIEW_REQUEST (contains '@vibehawk review') が渡される（Issue #135）"
+else
+  fail "prompt に IS_REVIEW_REQUEST が渡されていない（Issue #135、@vibehawk review コマンド検知の前提）"
+fi
+
+# prompt に再レビューモード判定指示が含まれる
+if grep -F "再レビューモード" "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F "@vibehawk review" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に再レビューモード分岐指示が含まれる（Issue #135）"
+else
+  fail "prompt に再レビューモード分岐指示が含まれない（Issue #135）"
+fi
+
+# prompt に bundled review POST 指示が含まれる（chat 経路、@vibehawk review コマンド）
+if grep -F 'gh api -X POST' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'pulls/$ISSUE_NUMBER/reviews' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に bundled review POST 指示（gh api -X POST .../reviews）が含まれる（Issue #135）"
+else
+  fail "prompt に bundled review POST 指示が含まれない（Issue #135、@vibehawk review で check 更新できない）"
+fi
+
+# prompt に再レビュー時の event 判定指示（APPROVE / REQUEST_CHANGES）が含まれる
+if grep -F 'event=REQUEST_CHANGES' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'event=APPROVE' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に再レビュー event 判定（APPROVE / REQUEST_CHANGES）が含まれる（Issue #135）"
+else
+  fail "prompt に再レビュー event 判定が含まれない（Issue #135）"
+fi
+
+# prompt に SHA マーカー注入指示（再レビューでも Issue #57 と整合）
+if grep -F 'vibehawk:summary' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'vibehawk:sha=' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "再レビュー prompt に種別マーカー / SHA マーカー注入指示が含まれる（Issue #57 / #135）"
+else
+  fail "再レビュー prompt にマーカー注入指示が含まれない（Issue #57 / #135、インクリメンタルレビュー判定の前提）"
+fi
+
+# === Issue #135: @vibehawk review 経路の check-runs POST step ===
+# vibehawk-review.yml と同様、Claude prompt 内では check-runs を呼ばず、後続 workflow
+# step が決定論的に post する設計（Issue #121-C1 fix 思想を踏襲）。
+
+# prompt 部分とそれ以外を分離（review.yml と同じパターン）
+CHAT_PROMPT="$(awk '/prompt:[[:space:]]*\|/{flag=1; next} /^[[:space:]]+claude_args:/{flag=0} flag' "$CHAT_WORKFLOW")"
+CHAT_POST_PROMPT="$(awk '/^[[:space:]]+claude_args:/{flag=1} flag' "$CHAT_WORKFLOW")"
+
+# prompt 内に check-runs POST 指示は **存在しない** こと（review.yml の Issue #121-C1 fix を踏襲）
+if echo "$CHAT_PROMPT" | grep -F 'gh api -X POST' | grep -F 'check-runs' > /dev/null; then
+  fail "prompt 内に check-runs POST 指示が混入している（Issue #135、workflow step に移管する Issue #121-C1 fix 思想と整合せず）"
+else
+  pass "prompt 内に check-runs POST 指示が含まれない（Issue #135、workflow step に移管）"
+fi
+
+# 後続 workflow step に check-runs POST が含まれる
+if echo "$CHAT_POST_PROMPT" | grep -F 'gh api -X POST' | grep -F 'check-runs' > /dev/null; then
+  pass "claude-code-action 後の workflow step に check-runs POST が含まれる（Issue #135）"
+else
+  fail "claude-code-action 後の workflow step に check-runs POST が含まれない（Issue #135、@vibehawk review で check が更新できない）"
+fi
+
+# 後続 step の check run name は "vibehawk" 固定（branch protection との一致のため）
+if echo "$CHAT_POST_PROMPT" | grep -E 'name="vibehawk"|name=vibehawk' > /dev/null; then
+  pass "後続 step に check run name=\"vibehawk\" 固定指定が含まれる（Issue #135、branch protection 一致）"
+else
+  fail "後続 step に check run name=\"vibehawk\" 固定指定が含まれない（Issue #135）"
+fi
+
+# 後続 step の status="completed" 固定
+if echo "$CHAT_POST_PROMPT" | grep -F 'status="completed"' > /dev/null; then
+  pass "後続 step に status=\"completed\" 固定指定が含まれる（Issue #135）"
+else
+  fail "後続 step に status=\"completed\" 固定指定が含まれない（Issue #135）"
+fi
+
+# 後続 step の conclusion 導出ロジック（APPROVED→success / CHANGES_REQUESTED→failure / 他→neutral）
+if echo "$CHAT_POST_PROMPT" | grep -F 'APPROVED)' > /dev/null && \
+   echo "$CHAT_POST_PROMPT" | grep -F 'CHANGES_REQUESTED)' > /dev/null && \
+   echo "$CHAT_POST_PROMPT" | grep -E 'conclusion="success"' > /dev/null && \
+   echo "$CHAT_POST_PROMPT" | grep -E 'conclusion="failure"' > /dev/null && \
+   echo "$CHAT_POST_PROMPT" | grep -E 'conclusion="neutral"' > /dev/null; then
+  pass "後続 step に conclusion 導出ロジック（APPROVED→success / CHANGES_REQUESTED→failure / 他→neutral）が含まれる（Issue #135）"
+else
+  fail "後続 step に conclusion 導出ロジックが含まれない（Issue #135、決定論的 status check の前提）"
+fi
+
+# 後続 step は @vibehawk review コマンドかつ PR の場合のみ実行される
+if echo "$CHAT_POST_PROMPT" | grep -F "contains(github.event.comment.body, '@vibehawk review')" > /dev/null && \
+   echo "$CHAT_POST_PROMPT" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
+  pass "後続 check-runs step は @vibehawk review かつ PR の場合のみ実行（Issue #135）"
+else
+  fail "後続 check-runs step の起動条件が不適切（Issue #135、通常 chat 応答時にも誤発火する可能性）"
+fi
+
+# 後続 step は GITHUB_TOKEN (デフォルト workflow token) を使う（App permission 状態に依存しない、Issue #121-C1 fix と同じ理由）
+if echo "$CHAT_POST_PROMPT" | grep -E 'GH_TOKEN:[[:space:]]*\$\{\{[[:space:]]*secrets\.GITHUB_TOKEN[[:space:]]*\}\}' > /dev/null; then
+  pass "後続 check-runs step が secrets.GITHUB_TOKEN を使用（Issue #135、App permission 状態に依存しない）"
+else
+  fail "後続 check-runs step が secrets.GITHUB_TOKEN を使用していない（Issue #135、checks: write はデフォルト workflow token に付与する設計）"
+fi
+
+# substantive review filter（@vibehawk review 経路でも空 COMMENTED 副産物の誤拾い対策、Issue #121 追加修正を踏襲）
+if echo "$CHAT_POST_PROMPT" | grep -F 'substantive_review_json' > /dev/null; then
+  pass "後続 check-runs step に substantive_review_json 変数が導入されている（Issue #135、Issue #121 追加修正の踏襲）"
+else
+  fail "後続 check-runs step に substantive_review_json 変数が導入されていない（Issue #135）"
+fi
+
+if echo "$CHAT_POST_PROMPT" | grep -F '.state == "APPROVED" or .state == "CHANGES_REQUESTED"' > /dev/null; then
+  pass "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込む（Issue #135、Issue #121 追加修正の踏襲）"
+else
+  fail "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込んでいない（Issue #135）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

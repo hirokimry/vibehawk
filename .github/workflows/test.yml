@@ -2,7 +2,11 @@ name: test
 
 on:
   push:
+  # Issue #135: 再レビュー依頼（"Re-request review" ボタン）時に CI も再発火するよう
+  # types を明示。デフォルト [opened, synchronize, reopened] に review_requested を追加。
+  # CEO 指示「test / vibehawk が再発火するといいな」を反映。
   pull_request:
+    types: [opened, synchronize, reopened, review_requested]
 
 concurrency:
   group: test-${{ github.head_ref || github.ref_name }}
