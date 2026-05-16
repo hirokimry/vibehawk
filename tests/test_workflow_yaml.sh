@@ -642,5 +642,84 @@ else
   fail "substantive review が無い場合の fallback ロジックが含まれない（Issue #121 追加修正、初回 review 未投稿などの edge case 対応）"
 fi
 
+# Issue #152 fix: bundled review POST を workflow step に移管
+# 旧設計では Claude prompt 内で `gh api -X POST .../pulls/N/reviews` を直接実行していたが、
+# LLM の試し打ち POST が PR #151 で観測された（同一 run 内で本物の前に 4 回のノイズ review が残る）。
+# PR #128 と同じ「workflow step で決定論的に POST」パターンに移管し、Claude には JSON
+# ペイロード組み立てまでさせ、後続 workflow step が App Installation Token で 1 回だけ POST する。
+
+# 1. 新 step「vibehawk bundled review を post」が存在する
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'vibehawk bundled review を post' > /dev/null; then
+  pass "新 step「vibehawk bundled review を post」が存在する（Issue #152 fix）"
+else
+  fail "新 step「vibehawk bundled review を post」が存在しない（Issue #152 fix、bundled review POST の workflow step 移管が前提）"
+fi
+
+# 2. 新 step の if 条件に hashFiles('vibehawk-review.json') が含まれる
+# claude-code-action が JSON 書き出しに失敗した場合の skip 経路（次の status check が neutral に倒れる）
+if echo "$WORKFLOW_POST_PROMPT" | grep -F "hashFiles('vibehawk-review.json')" > /dev/null; then
+  pass "新 step の if 条件に hashFiles('vibehawk-review.json') が含まれる（Issue #152 fix、Claude 書き出し失敗時の安全な skip）"
+else
+  fail "新 step の if 条件に hashFiles('vibehawk-review.json') が含まれない（Issue #152 fix、JSON 不在時の skip 経路が必須）"
+fi
+
+# 3. 新 step が App Installation Token（steps.app-token.outputs.token）を使う
+# bot 名義 vibehawk-for-<owner>[bot] を維持するため必須（GITHUB_TOKEN を使うと github-actions[bot] 名義になる）
+if echo "$WORKFLOW_POST_PROMPT" | grep -E 'GH_TOKEN:[[:space:]]*\$\{\{[[:space:]]*steps\.app-token\.outputs\.token[[:space:]]*\}\}' > /dev/null; then
+  pass "新 step が App Installation Token (steps.app-token.outputs.token) を使う（Issue #152 fix、bot 名義投稿維持）"
+else
+  fail "新 step が App Installation Token を使っていない（Issue #152 fix、bot 名義 vibehawk-for-<owner>[bot] 維持に必須）"
+fi
+
+# 4. 新 step が gh api -X POST pulls/$PR_NUMBER/reviews を --input で post する
+# 注: grep に "--input" を渡すと flag と解釈されるため `-e -- --input` ではなく "-e '\\-\\-input'" 形式を使う
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'gh api -X POST' | grep -F '/pulls/' | grep -F '/reviews' | grep -E '\-\-input' > /dev/null; then
+  pass "新 step が gh api -X POST .../pulls/.../reviews --input で post する（Issue #152 fix、決定論的 1 回 POST）"
+else
+  fail "新 step が決定論的 bundled review POST を行っていない（Issue #152 fix、gh api -X POST --input が前提）"
+fi
+
+# 5. 新 step が JSON 必須キー検証（event / body / commit_id / comments(array)）を行う
+# Claude が壊れた JSON を書き出した場合に POST する前に check して step を skip する経路
+# PR #153 CodeRabbit 追加 Major 指摘対応で検証を強化済み:
+# event 値が APPROVE/REQUEST_CHANGES/COMMENT のいずれかに限定、body/commit_id 非空、
+# comments[] の path/body 非空、line/side/start_line/start_side の型整合を jq で検証する。
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'jq -e' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "APPROVE"' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "REQUEST_CHANGES"' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "COMMENT"' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F '(.comments | type == "array")' > /dev/null; then
+  pass "新 step が GitHub Reviews API 契約に厳格な JSON 検証を行う（event 値限定 + body/commit_id 非空 + comments[] shape、Issue #152 fix + PR #153 強化）"
+else
+  fail "新 step の JSON 検証が GitHub Reviews API 契約に従っていない（event 値の APPROVE/REQUEST_CHANGES/COMMENT 限定 + comments[] shape 検証が必須、PR #153 CodeRabbit Major 指摘）"
+fi
+
+# 6. prompt から `gh api -X POST repos/.../pulls/.../reviews` の直接実行サンプルが削除されている
+# Claude prompt 内で bundled review を直接 POST する経路は撤廃すべき（Issue #152）
+# 注: 「絶対禁止」セクションの記述（"... reviews で bundled review を直接 POST する"）は許容する。
+# 検証したいのは「実行サンプル（コードフェンス内の bash コマンド）が残っていないこと」のため
+# gh api -X POST と pulls/.../reviews と --input が同一行（実行コマンド形式）にあるかをチェックする。
+if echo "$WORKFLOW_PROMPT" | grep -F 'gh api -X POST' | grep -F '/pulls/' | grep -F '/reviews' | grep -E '\-\-input' > /dev/null; then
+  fail "prompt 内に bundled review POST 実行サンプル（gh api -X POST ... pulls/.../reviews ... --input）が残っている（Issue #152 fix、workflow step に移管すべき）"
+else
+  pass "prompt 内に bundled review POST 実行サンプルが残っていない（Issue #152 fix、workflow step に移管済み）"
+fi
+
+# 7. prompt に「vibehawk-review.json を書き出す」指示が含まれる
+# Claude のタスク完了条件が JSON 書き出しまでであることを明示
+if echo "$WORKFLOW_PROMPT" | grep -F 'vibehawk-review.json' > /dev/null; then
+  pass "prompt に vibehawk-review.json 書き出し指示が含まれる（Issue #152 fix、Claude のタスク完了条件）"
+else
+  fail "prompt に vibehawk-review.json 書き出し指示が含まれない（Issue #152 fix、Claude が POST 直接実行に戻ってしまう）"
+fi
+
+# 8. prompt の「絶対禁止」リストに Issue #152 の bundled review POST 禁止が明示されている
+# LLM の試し打ちを構造的に防止するため、明示的に禁止を書く必要がある
+if echo "$WORKFLOW_PROMPT" | grep -F 'Issue #152' > /dev/null; then
+  pass "prompt に Issue #152 fix の言及が含まれる（bundled review POST 禁止の根拠を明示）"
+else
+  fail "prompt に Issue #152 fix の言及が含まれない（bundled review POST 禁止の根拠が示されていない）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
