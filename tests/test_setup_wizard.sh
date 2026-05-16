@@ -625,7 +625,8 @@ if (typeof url !== "string" || !url.includes("https://github.com/settings/apps/v
   console.error("getUrl must include /settings/apps/<slug>, got:", url);
   process.exit(1);
 }
-if (url.includes("github.com/apps/vibehawk-for-alice ")) {
+// PR #148 CodeRabbit Major 対応: 公開 URL 否定アサートを完全URL一致に強化（trailing space 依存だと回帰を取りこぼす）
+if (url.includes("https://github.com/apps/vibehawk-for-alice")) {
   console.error("getUrl must NOT use public /apps/<slug> URL (no Generate a private key button there), got:", url);
   process.exit(1);
 }
