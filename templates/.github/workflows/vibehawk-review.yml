@@ -1,3 +1,13 @@
+# === branch protection との関係 ===
+# このワークフローは check-runs API で status check 名 `vibehawk` を post する
+# （下記 "vibehawk status check を post" ステップ参照）。利用者は GitHub の
+# branch protection 設定で `vibehawk` を required status check に追加することで
+# AI レビュー必須の merge gate を構築できる（これが vibehawk の merge gate 主軸）。
+#
+# 補助情報として APPROVED / REQUEST_CHANGES の review event も post するが、
+# merge gate としては status check `vibehawk` の conclusion を使う設計
+# （Issue #138 epic、Issue #121-C1 仕様確定）。
+
 name: vibehawk PR auto-review
 
 on:
@@ -18,7 +28,7 @@ permissions:
   checks: write
 
 jobs:
-  review:
+  vibehawk-review:
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
     steps:

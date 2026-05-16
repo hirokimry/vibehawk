@@ -46,8 +46,8 @@ vibehawk は以下の利用者層を主要ターゲットとする:
 | PR auto-review トリガー | PR が立ったら自動でレビューを始める（open / synchronize / ready_for_review） |
 | PR 全体サマリコメント（walkthrough） | PR 冒頭に「変更概要 + 何を見たか」のサマリを 1 個投稿、push 毎に edit で最新化 |
 | inline comment 投稿 | コードの行を指して指摘を書く。severity 絵文字付き、Suggestions 構文（` ```suggestion `）の生成も可 |
-| approve 発行 | レビューが OK なら approve を発行する（sticky review state により request_changes と自動切替） |
-| request_changes 発行 | 未解決指摘があれば request_changes を発行する（sticky review state により approve と自動切替） |
+| approve 発行 | レビューが OK なら approve を発行する（sticky review state により request_changes と自動切替）。**補助情報の発行**であり、merge gate 主軸は下記「status check 投稿（required status check）」を参照（Issue #138 / #121-C1 で確定した位置付け） |
+| request_changes 発行 | 未解決指摘があれば request_changes を発行する（sticky review state により approve と自動切替）。**補助情報の発行**であり、merge gate 主軸は下記「status check 投稿（required status check）」を参照 |
 | インクリメンタルレビュー | 2 回目以降は前回見た範囲を覚えていて、新しい変更だけ見る |
 | severity 5 段階の判定軸 | Critical / Major / Minor / Trivial / Info の付け方ルール（CodeRabbit 互換） |
 | 日本語レビュー（locale 対応） | 日本語でコメントを書く（設定で切替可） |
@@ -56,7 +56,7 @@ vibehawk は以下の利用者層を主要ターゲットとする:
 | path_instructions | パス別のカスタムレビュー観点を Bot に注入 |
 | @mention チャット応答 | 「@bot ここどうする？」に Bot が返事する（issue_comment トリガー） |
 | 状態管理（GitHub をストアとして使う） | PR コメント・resolved 状態などを GitHub 上で直接読み書きする |
-| status check 投稿（required status check） | bundled review に加えて `check-runs` API で "vibehawk" check を post（branch protection の `required_status_checks` に登録することで merge gating を確実に効かせる、Issue #121-C1） |
+| status check 投稿（required status check） | **merge gate の主軸**。`check-runs` API で `vibehawk` という固定 name の check を post し、利用者は branch protection の `required_status_checks` に登録することで AI レビュー必須 merge gate を構築する。AI が `required_approving_review_count` をバイパスする構造を避けるため、approve / request_changes 経路ではなく status check 経路を主軸に置く設計（Issue #121-C1 / #138） |
 
 ### 補助機能
 
@@ -187,6 +187,8 @@ fi
 
 ### sticky review state
 
+> **位置付け（Issue #138 / #121-C1 確定）**: 本節の approve / request_changes 発行は **補助情報**。利用者の merge gate 主軸は次節「status check 仕様」で定義される `vibehawk` check の conclusion 側にある。本節のロジックは sticky review state による状態同期と、conclusion 導出（次節 §「conclusion 導出表」）の input として残す。
+
 未解決の指摘が残っていれば「直して」（request_changes）、全部解決していれば「OK」（approve）を毎回発行し直す。状態は GitHub 側にあるので Bot 側の永続化不要。
 
 ```text
@@ -198,7 +200,9 @@ fi
 
 ### status check 仕様（Issue #121-C1、required status check による merge gating）
 
-bundled review API の approve / request_changes 投稿（PR #122）に加え、`POST /repos/X/Y/check-runs` API で **status check** を post する。bot review は GitHub の構造仕様により branch protection の required reviewers に count されないため、merge gating を確実に効かせるには status check 側で required 指定する必要がある（CodeRabbit が `required_status_checks: ["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
+> **位置付け（Issue #138 確定）**: 本節は vibehawk の **merge gate 主軸** を定義する。前節「sticky review state」の approve / request_changes 発行は補助情報であり、利用者が branch protection で実際に gate するのは本節の `vibehawk` status check の conclusion である（業界 4 社調査で確認された AI レビューの `required_approving_review_count` バイパス構造を回避する設計判断、Issue #138 / #136 / #137 議論参照）。
+
+bundled review API の approve / request_changes 投稿（PR #122、補助情報）に加え、`POST /repos/X/Y/check-runs` API で **status check** を post する。bot review は GitHub の構造仕様により branch protection の required reviewers に count されないため、merge gating を確実に効かせるには status check 側で required 指定する必要がある（CodeRabbit が `required_status_checks: ["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
 
 #### check run の投稿者と認証経路（Issue #121-C1 fix）
 
@@ -240,7 +244,11 @@ bundled review API の approve / request_changes 投稿（PR #122）に加え、
 
 #### 利用者側オペ（branch protection への登録）
 
-利用者は `Settings → Branches → Branch protection rules` で対象ブランチ（通常 `main`）を編集し、`Require status checks to pass before merging` を ON にした上で、検索ボックスに `vibehawk` と入力して required に追加する。初回登録時は `vibehawk` check が未発火だと検索候補に出ないため、先にダミー PR を立てて check を発火させてから登録する手順となる（README の setup ステップ 7 参照）。
+`vibehawk` を required status check として branch protection に登録することは、**vibehawk 利用の根幹** である（merge gate 主軸を成立させる唯一の経路）。
+
+利用者は `Settings → Branches → Branch protection rules` で対象ブランチ（通常 `main`）を編集し、`Require status checks to pass before merging` を ON にした上で、検索ボックスに `vibehawk` と入力して required に追加する。初回登録時は `vibehawk` check が未発火だと検索候補に出ないため、先にダミー PR を立てて check を発火させてから登録する手順となる（README `⚡ クイックスタート` の「3. branch protection に `vibehawk` を required status check 登録（vibehawk 利用の根幹）」参照）。
+
+この登録を行わない場合、approve / request_changes は補助情報として post されるが、merge gate としては機能しない（bot review は branch protection の required reviewers に count されないため）。vibehawk を導入したら必ず本ステップを実施すること。
 
 ### @mention チャット応答
 
@@ -317,7 +325,9 @@ concurrency:
 
 #### 投稿者表示（経路 2 必須化、Issue #61 で確定）
 
-vibehawk が投稿するレビューコメントの投稿者は **`vibehawk-for-<owner>[bot]`** 名義に固定される（命名統制 Issue #25）。利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token（`actions/create-github-app-token@v2` 経由）で認証される。
+vibehawk が投稿するレビューコメント・review event（approve / request_changes）の投稿者は **`vibehawk-for-<owner>[bot]`** 名義に固定される（命名統制 Issue #25）。利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token（`actions/create-github-app-token@v2` 経由）で認証される。
+
+一方、merge gate 主軸である **status check（`vibehawk` という固定 name の check）の投稿者は `github-actions[bot]`** であり、認証経路はワークフローのデフォルト `GITHUB_TOKEN`（`permissions.checks: write` 付き）を使う（Issue #121-C1 fix、設計根拠は §「check run の投稿者と認証経路」参照）。投稿者表示が経路ごとに異なるが、check の `name` が `vibehawk` で固定されているため、利用者が branch protection 設定で識別する際の一貫性は維持される。
 
 CEO の GitHub App Private Key を利用者に配布する設計（Issue #22 の旧実装）と異なり、**利用者自身が GitHub App Manifest Flow で自前の App を作成** し、その App の Private Key を **利用者本人が GitHub Settings UI で対象リポジトリの Secrets に手動登録** する。Private Key の漏洩影響は利用者本人のリポジトリに限定される（独立 App の構造的利点、`docs/secrets-handling.md` § 7 参照）。
 

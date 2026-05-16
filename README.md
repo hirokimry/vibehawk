@@ -2,12 +2,13 @@
 
 > 鷹のように観察し、追加課金ゼロで PR レビューを届ける OSS プロダクト
 
-**vibehawk** は **追加課金ゼロの PR 自動レビュー OSS プロダクト**。利用者が既に契約している LLM サブスクリプション枠（Claude Pro / Max）の **内側だけ** で動作し、AI レビュー専用 SaaS の月額や LLM API の従量課金を発生させない。
+**vibehawk** は **branch protection の required status check として動く AI PR レビュアー** であり、**追加課金ゼロの OSS**。利用者は GitHub の branch protection で `vibehawk` を required status check に追加するだけで「AI レビューが OK を出さないと merge できない」merge gate を構築できる。利用者が既に契約している LLM サブスクリプション枠（Claude Pro / Max）の **内側だけ** で動作し、AI レビュー専用 SaaS の月額や LLM API の従量課金を発生させない。
 
 vibe シリーズ（vibecorp / vibemux / vibehawk）の一員として、CodeRabbit の「うさぎ（速さ・量）」に対し「鷹（精度・観察力・全体俯瞰）」のメタファーで対置する。
 
 ## 30 秒サマリ
 
+- 🦅 **CI required で gate**: branch protection の required status check として merge gate を構築（merge gate 主軸、Issue #138 / #121-C1）
 - 🦅 **追加課金ゼロ**: 利用者の Claude Pro / Max OAuth トークン内で完結、運営側サーバー・専用 DB なし
 - 🦅 **観察に徹する**: PR メタデータ（label / milestone 等）は書き換えず、レビュー & 修正提案のみを届ける
 - 🦅 **公式の道だけ歩く**: 裏 API・スクレイピングなし、claude-code-action 経由の OAuth 経路のみサポート
@@ -15,11 +16,32 @@ vibe シリーズ（vibecorp / vibemux / vibehawk）の一員として、CodeRab
 
 Mission / Vision / Value は [`MVV.md`](MVV.md)、詳細仕様は [`docs/specification.md`](docs/specification.md)、プロダクト方針は [`docs/POLICY.md`](docs/POLICY.md) を参照。
 
+## 🧭 設計思想: 人間 review 必須要件をバイパスしない
+
+vibehawk は GitHub の `required_approving_review_count`（人間レビュー必須件数）を AI で満たす設計を **意図的に避ける**。AI が approve を発行できる設計だと「人間レビュー必須要件のバイパス」と見なされる構造的リスクがあり、業界 4 社（Copilot / Gemini / Claude Code Review / Cursor BugBot）の AI レビューも同じ理由で APPROVE 経路を回避している。
+
+vibehawk は Anthropic が公式ドキュメントで案内している「自前 CI で gate する」設計思想（`claude-code-review` workflow）を OSS としてパッケージ化したもの（Anthropic 提携・公認製品ではない）。merge gate の **主軸は status check** であり、`approve` / `request_changes` は補助情報として post されるが merge gating には使わない（Issue #138 / #121-C1、詳細: [`docs/specification.md § status check 仕様`](docs/specification.md)）。
+
 ## ⚡ クイックスタート
 
 vibehawk は **利用者ごとに独立した GitHub App（`vibehawk-for-<owner>`）** を利用者本人が作成・運用する構造（命名統制、詳細・非対称性の開示は [`docs/design-philosophy.md § 命名統制`](docs/design-philosophy.md) 参照）。投稿者は `vibehawk-for-<owner>[bot]` 名義になる。
 
 > **対応 OS**: macOS / Linux / Windows（PowerShell / CMD / Git Bash）
+
+### 使い方の全体像
+
+**vibehawk を使う = リポジトリの branch protection に `vibehawk` を required status check として追加すること** がゴール。これにより「AI レビューの conclusion が `success` でない PR は merge できない」merge gate が成立する。
+
+```text
+[ステップ 1]                  [ステップ 2]                  [ステップ 3 ← ゴール]
+App / secrets / workflow    →   初回 PR 発火で           →   branch protection に
+を準備（前提準備）              `vibehawk` check 発火           `vibehawk` を required 登録
+                                                              （vibehawk 利用の根幹）
+```
+
+GitHub の仕様上、`vibehawk` check が一度発火していないと branch protection の検索候補に出ないため、ステップ 3 は初回 PR 発火後に実施する手順順序になる。
+
+### 1. App / secrets / workflow を準備（前提準備）
 
 対話型ウィザード `npx vibehawk setup` が全 6 ステップ（App 作成 → リポジトリインストール → 3 secrets 登録 → workflow PR）を 1 コマンドに集約する（Issue #91）:
 
@@ -37,9 +59,19 @@ npx vibehawk setup --owner alice --repo alice/my-app --dry-run
 
 App ID / OAuth Token は **OS ネイティブのクリップボードに stdin 経由でコピー**（Cmd+V / Ctrl+V で貼付可能）。OAuth Token の値はクリップボードコピー失敗時でも stdout に出さない（CISO Critical 条件、[`docs/SECURITY.md`](docs/SECURITY.md) 参照）。
 
-### （推奨）branch protection に `vibehawk` を required status check 登録
+### 2. 初回 PR で `vibehawk` check を発火
 
-vibehawk は bundled review API による approve / request_changes 投稿に加え、`POST /repos/X/Y/check-runs` で `vibehawk` という check run を post する。GitHub の構造仕様により bot review は branch protection の required reviewers に count されないため、merge gating には status check 側で required 指定が必須（CodeRabbit が `["CodeRabbit", "test"]` で行っているのと同じ仕組み）。設定手順は `Settings → Branches → Branch protection rules` から `Require status checks to pass before merging` を ON にし、検索ボックスに `vibehawk` を入力して required に追加する（Issue #121-C1、詳細: [`docs/specification.md § status check 仕様`](docs/specification.md)）。
+`.github/workflows/vibehawk-review.yml` 配置後、リポジトリに初回 PR を立てると workflow が起動し `vibehawk-for-<owner>[bot]` 名義でレビューを post する。同時に `check-runs` API で `vibehawk` という status check も post される（投稿者表示は `github-actions[bot]`、check の `name` は `vibehawk` 固定のため branch protection 設定上の識別性は維持される）。
+
+### 3. branch protection に `vibehawk` を required status check 登録（vibehawk 利用の根幹）
+
+**このステップが vibehawk 利用の根幹**。前のステップはこのステップを機能させるための前提準備にすぎない。本ステップを実施しないと vibehawk は補助情報（approve / request_changes）を post するのみで merge gate として機能しない。
+
+vibehawk は `POST /repos/X/Y/check-runs` API で `vibehawk` という名前の status check を post する（**merge gate の主軸**）。これに加えて approve / request_changes を **補助情報** として post するが、GitHub の構造仕様により bot review は branch protection の `required_approving_review_count` に count されないため、merge gating を確実に効かせるには status check 側で required 指定が必須（CodeRabbit が `["CodeRabbit", "test"]` で行っているのと同じ仕組み、Issue #121-C1 / #138）。
+
+設定手順は `Settings → Branches → Branch protection rules` から `Require status checks to pass before merging` を ON にし、検索ボックスに `vibehawk` を入力して required に追加する（詳細: [`docs/specification.md § status check 仕様`](docs/specification.md)）。
+
+**この登録を行わない場合**、vibehawk は補助情報を post するのみで merge gate として機能しない（bot review は required reviewers に count されないため）。vibehawk を導入したら必ず本ステップまで完了させること。
 
 導入時のトラブル（連番衝突 / ポート占有 / secret 登録ミス / Private Key 取扱）は [`docs/troubleshooting.md`](docs/troubleshooting.md) を参照。
 
@@ -75,12 +107,13 @@ vibehawk は経路 2（利用者ごとに独立した `vibehawk-for-<owner>` App
 
 ## 🛠️ 機能概要
 
-vibehawk は PR が作成・更新されるたびに `vibehawk-for-<owner>[bot]` 名義で以下を実行する:
+vibehawk は PR が作成・更新されるたびに以下を実行する:
 
-- **PR レビューサマリ**: PR 単位の総評コメントを review summary として投稿
+- **required status check**: `vibehawk` 名で check run を post（**merge gate 主軸**、Issue #121-C1 / #138。投稿者: `github-actions[bot]`、認証: workflow デフォルト `GITHUB_TOKEN` + `permissions.checks: write`）
+- **PR レビューサマリ**: PR 単位の総評コメントを review summary として `vibehawk-for-<owner>[bot]` 名義で投稿
 - **インライン指摘**: 行レベルの severity 付きコメント（CodeRabbit 互換 5 段階: 🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info）
+- **approve / request_changes**: **補助情報** として post（merge gating には使わない、`required_approving_review_count` バイパス回避のため）
 - **@mention チャット応答**: PR コメントで `@vibehawk-for-<owner>` メンションすると応答
-- **required status check**: `vibehawk` 名で check run を post（merge gating 対応、Issue #121-C1）
 - **メタデータ非操作**: PR の label / milestone / description / assignee 等は変更しない（MVV Value 2「観察する、書き換えない」）
 - **指摘・強制しない設計**: severity を付けるが、直すか流すかの裁量は利用者に委ねる（MVV Value 3「指摘する、強制しない」）
 - **CLI が secret を書き込まない設計**（Issue #72）: 利用者が GitHub Settings UI で 3 secrets（`VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`）を手動登録（判断根拠は [`docs/secrets-handling.md`](docs/secrets-handling.md) 参照）
@@ -109,5 +142,5 @@ vibehawk は PR が作成・更新されるたびに `vibehawk-for-<owner>[bot]`
 ## 📜 ライセンス / ステータス / 免責
 
 - **ライセンス**: MIT
-- **ステータス**: 開発中（Phase 1 基盤構築 + OSS 配布対応）。Issue #7 で実行基盤、#22 で OSS 配布可能化、#24 で `npx vibehawk install` 基盤、#91 で `setup` ウィザード（1 コマンド導入）、#121-C1 で required status check を順次積み上げ
+- **ステータス**: 開発中（Phase 1 基盤構築 + OSS 配布対応）。Issue #7 で実行基盤、#22 で OSS 配布可能化、#24 で `npx vibehawk install` 基盤、#91 で `setup` ウィザード（1 コマンド導入）、#121-C1 で required status check、#138 で status check 主軸 positioning を順次積み上げ
 - **免責**: vibehawk は MIT のもと **無保証** で提供。CLI 配布物（`npx vibehawk install` / `npx vibehawk setup-token`）の利用は **すべてご利用者の自己責任**。免責範囲（スクリプト誤動作 / GitHub App 作成失敗 / クリップボード経由のトークン受け渡し / secrets 登録運用 / GitHub・Anthropic 側の障害）の詳細は [`docs/POLICY.md § 免責条項（Issue #32）`](docs/POLICY.md) を参照

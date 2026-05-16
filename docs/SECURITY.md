@@ -64,14 +64,22 @@ vibehawk は **利用者ごとに独立した GitHub App `vibehawk-for-<owner>` 
 
 ```text
 利用者リポジトリの GitHub Actions
-   ├─ ① GitHub 認証（PR コメント投稿）
+   ├─ ① GitHub 認証（PR コメント / review 投稿）
    │    └─ App Installation Token（vibehawk-for-<owner>）
    │       └─ VIBEHAWK_APP_ID + VIBEHAWK_PRIVATE_KEY（利用者本人の App）
    │       → 投稿者: vibehawk-for-<owner>[bot]
    │
+   ├─ ① ' status check 投稿経路（merge gate 主軸、Issue #121-C1）
+   │    └─ workflow デフォルトの GITHUB_TOKEN（workflow.permissions に checks: write 付与）
+   │       → 投稿者: github-actions[bot]、check name は `vibehawk` 固定
+   │       （App permission の後付け追加が利用者の再 install を要求するのを避けるため、
+   │         App Installation Token ではなくデフォルト GITHUB_TOKEN 経路を採用）
+   │
    └─ ② Anthropic 認証（LLM 呼び出し）
         └─ CLAUDE_CODE_OAUTH_TOKEN（利用者の Claude Pro / Max 枠）
 ```
+
+経路 ① と ① ' は投稿者表示が異なるが、branch protection は status check の `name`（`vibehawk` 固定）で識別するため、利用者の merge gate 設定上の識別性は維持される。詳細設計根拠は `docs/specification.md` §「check run の投稿者と認証経路（Issue #121-C1 fix）」を参照。
 
 | 系統 | secret 名 | 役割 | 当事者 | 設定方法 |
 |---|---|---|---|---|
@@ -154,7 +162,14 @@ CEO 判断（2026-05-09）により、経路 2（利用者ごと独立 App + 3 s
 - `secrets: write` — GitHub Secrets 書込権限を持たない（CLI が touch しない方針 Issue #72 / #74 と整合）
 - `workflows: write` — workflow ファイル書換権限を持たない（PR 経由配置のみ Issue #58）
 
-**`vibehawk-review.yml` workflow が要求しない権限**（GitHub Actions workflow/job permissions、上記 App permissions とは別の制約軸）:
+**`vibehawk-review.yml` workflow が要求する権限**（GitHub Actions workflow/job permissions、上記 App permissions とは別の制約軸）:
+
+- `pull-requests: write` — review event / inline comment 投稿（App Installation Token 経路と重複付与、`pull_request` イベントで `secrets.GITHUB_TOKEN` 経路の動作担保）
+- `issues: write` — issue_comment 投稿
+- `contents: read` — チェックアウト・差分取得
+- `checks: write` — **status check post（Issue #121-C1、merge gate 主軸）**。`check-runs` API で `vibehawk` という固定 name の check を発火するためにデフォルト `GITHUB_TOKEN` に付与する。App Installation Token の `checks: write` 経路（PR #125 初版が依存していた）は採用しない（App permission を後付け追加すると既存利用者が App を再 install しないと反映されないため、利用者影響を回避する設計判断）
+
+**`vibehawk-review.yml` workflow が要求しない権限**:
 
 - `id-token: write` — Actions OIDC token 発行権限を付与しない（`actions/create-github-app-token@v2` は App Private Key からローカル JWT 生成 → API exchange で動作するため OIDC 不要）
 
