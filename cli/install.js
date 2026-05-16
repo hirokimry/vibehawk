@@ -427,6 +427,32 @@ function printResult(credentials, expectedAppName, repo) {
   console.log('利用者は GitHub App Settings ページから手動で Private Key を生成・ダウンロードし、');
   console.log('Settings UI で VIBEHAWK_PRIVATE_KEY として登録してください（経路 2 必須化で必要）。');
   console.log('');
+  // Issue #134: branch protection 登録が vibehawk 利用の根幹。install 完了画面で
+  // 次のステップとして明示し、利用者の repo の branch protection 設定 URL を直リンクで提示する。
+  // 順序強制: 3 secrets 全完了 → 初回 PR で vibehawk check 発火 → branch protection 追加。
+  console.log('=== 🎯 vibehawk 利用の根幹: branch protection 登録（最重要） ===');
+  console.log('');
+  console.log('vibehawk は status check `vibehawk` を post しますが、利用者の repo の branch');
+  console.log('protection で required 指定しないと merge gate として機能しません。bot review は');
+  console.log('required reviewers に count されないため、status check 経路が merge gate の主軸です。');
+  console.log('');
+  console.log('順序:');
+  console.log('  1. 上記 3 secrets が全て登録済みであることを確認');
+  console.log('  2. 対象リポジトリで初回 PR を作成して `vibehawk` check を一度発火させる');
+  console.log('     （GitHub の仕様上、未発火の check 名は branch protection の検索候補に出ません）');
+  console.log('  3. 下記 URL を開き Branch protection rules で');
+  console.log('     `Require status checks to pass before merging` を ON →');
+  console.log('     検索ボックスに `vibehawk` を入力して required に追加');
+  console.log('');
+  if (repo) {
+    console.log(`  Branch protection 設定 URL: https://github.com/${repo}/settings/branches`);
+  } else {
+    console.log('  対象リポジトリの Settings → Branches → Branch protection rules');
+  }
+  console.log('');
+  console.log('この登録を行わない場合、vibehawk は指摘を post するのみで merge を止めません。');
+  console.log('詳細とトラブルシューティングは docs/troubleshooting.md を参照してください。');
+  console.log('');
   // Issue #91: REDACT 処理は redactCredentials() に切り出し（CISO Critical 条件）
   redactCredentials(credentials);
 }

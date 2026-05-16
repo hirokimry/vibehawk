@@ -120,6 +120,17 @@ vibehawk は PR が作成・更新されるたびに以下を実行する:
 
 機能仕様の詳細は [`docs/specification.md`](docs/specification.md)、PR レビュー設計の根拠と vibecorp との関係は [`docs/design-philosophy.md`](docs/design-philosophy.md) を参照。
 
+### 再レビューを依頼する（Issue #135）
+
+vibehawk が一度 `failure` を post すると、利用者が指摘に対応しても再レビュー無しに status check の conclusion を更新できないため、merge が永久にブロックされる UX 欠陥がある（Issue #135 / PR #133）。これを解消する正規導線として、以下 2 経路で vibehawk を再発火できる:
+
+- **経路 1: "Re-request review" ボタン**: PR ページの Reviewers セクションから vibehawk-for-<owner> 横の 🔄 ボタンを押す → `pull_request: review_requested` トリガーで `vibehawk-review.yml` が再発火し、最新差分でレビュー＋status check を更新する
+- **経路 2: `@vibehawk review` コメント**: PR コメントで `@vibehawk review` と書いて投稿 → `vibehawk-chat.yml` が `@vibehawk review` を検知し、bundled review POST と status check 更新を実行する
+
+どちらの経路でも status check `vibehawk` の conclusion が最新差分に基づいて再評価される。空コミット push という workaround は不要。
+
+> **利用者向けアップデート手順**: 既に vibehawk を導入済みのリポジトリは、`templates/.github/workflows/vibehawk-review.yml` および `templates/.github/workflows/vibehawk-chat.yml` の最新版を `.github/workflows/` に上書きコピーして PR を出すこと（再 install は不要、追加 secret 設定も不要）。
+
 ### メンテナー向け運用
 
 利用者がリポジトリのメンテナー（OWNER）として vibehawk を運用する場合、自身の PR ごとに claude-code-action が起動して Claude Pro / Max 枠を消費する dogfooding 構造となる。OSS 開発活発化時に個人契約枠がボトルネック化する懸念に対する `if:` 条件による PR 除外等の推奨設定は [`docs/maintainer-quota-policy.md`](docs/maintainer-quota-policy.md) を参照。

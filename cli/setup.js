@@ -773,10 +773,51 @@ async function run({ argv = process.argv.slice(3) } = {}) {
     '🎉 セットアップ完了'
   );
 
+  // Issue #134: 3 secrets が揃った状態のみ branch protection 誘導を表示する。
+  // 未登録 secrets がある状態で branch protection に追加すると全 PR が永続 pending で
+  // 完全停止する事故が起きるため、順序強制として secrets 完了を gate にする。
+  //
+  // workflow ステップは「既存検出によるスキップ（冪等再実行で normal）」と「PR 作成失敗の
+  // スキップ（abnormal）」が両方とも summary.status='skipped' になるため、ここの gate には
+  // 含めない（PR #151 で指摘された誤表示への対策）。workflow が未配置でも `vibehawk` check は
+  // 発火できないだけで、branch protection 設定自体の案内はしてよい。
+  const branchProtectionGated = unregisteredSecrets.length === 0;
+  if (branchProtectionGated) {
+    clack.note(
+      [
+        '🎯 vibehawk 利用の根幹: branch protection に `vibehawk` を required status check として登録',
+        '',
+        'この登録を行わない場合、vibehawk は指摘を post するのみで merge を止めません',
+        '（bot review は required reviewers に count されないため、status check 経路が merge gate の主軸です）。',
+        '',
+        '手順:',
+        '  1. 対象リポジトリで初回 PR を作成して `vibehawk` check を一度発火させる',
+        `     （GitHub の仕様上、未発火の check 名は branch protection の検索候補に出ません）`,
+        '  2. 下記 URL を開き Branch protection rules で `Require status checks to pass before merging` を ON',
+        `     → 検索ボックスに \`vibehawk\` を入力して required に追加`,
+        '',
+        `   Branch protection 設定: https://github.com/${repo}/settings/branches`,
+        '',
+        '詳細手順とトラブルシューティングは docs/troubleshooting.md を参照してください。',
+      ].join('\n'),
+      '🎯 次のステップ（必須）'
+    );
+  } else {
+    clack.note(
+      [
+        '⚠️ branch protection への `vibehawk` 登録（vibehawk 利用の根幹）は未登録 secrets があるため案内をスキップしました。',
+        '',
+        '未登録 secrets を上記の手順で補完してから、`npx vibehawk setup` を再実行するか、',
+        `Branch protection 設定（https://github.com/${repo}/settings/branches）で手動補完してください。`,
+      ].join('\n'),
+      '⚠️ 次のステップ（順序）'
+    );
+  }
+
   clack.outro(
     skipped.length === 0
-      ? 'すべてのステップが完了しました。任意の PR を作成すると vibehawk-for-<owner>[bot] 名義でレビューが投稿されます。'
-      : 'ウィザード終了。未完了項目を補完してから動作確認してください。'
+      ? 'すべてのステップが完了しました。次は branch protection に `vibehawk` を required 追加してください（最重要、上記参照）。'
+      : 'ウィザード終了。未完了項目を補完してから branch protection 設定に進んでください。'
   );
 
   clearState(state);
