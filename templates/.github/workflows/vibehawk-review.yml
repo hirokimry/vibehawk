@@ -11,8 +11,13 @@
 name: vibehawk PR auto-review
 
 on:
+  # review_requested: GitHub UI の "Re-request review" ボタン押下時に発火する。
+  # 一度 vibehawk が failure を post すると required status check が永久ブロックされる
+  # 致命的 UX 欠陥（Issue #135 / PR #133）を解消するため、利用者が手動で再レビューを
+  # トリガーできる正規導線として追加（Fork PR は pull_request_target ではないため
+  # secrets 漏洩経路にならない、Issue #135 参考事項）。
   pull_request:
-    types: [opened, synchronize, ready_for_review]
+    types: [opened, synchronize, ready_for_review, review_requested]
 
 concurrency:
   group: vibehawk-${{ github.event.pull_request.number }}
