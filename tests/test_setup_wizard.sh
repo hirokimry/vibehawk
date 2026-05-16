@@ -1292,5 +1292,58 @@ else
   fail "setup.run の clack.note 呼び出しが表示幅補正を経由していない（Issue #104）"
 fi
 
+# Issue #104 完了条件: 実際の @clack/prompts に通したときに、出力ボックスの全行が
+# 表示幅基準で等幅になっていること（= 右端の │ / ╮ / ╯ が同じ列に揃う）。
+# clack の ANSI 着色を strip し、各行の表示幅が一致するかを assert する。
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+process.env.FORCE_COLOR = "0";
+const setup = require("./cli/setup");
+
+const chunks = [];
+const orig = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk) => { chunks.push(typeof chunk === "string" ? chunk : chunk.toString()); return true; };
+
+// 日本語 / 半角混在 / surrogate emoji / VS-16 emoji 混在の典型ケース
+setup.note(
+  [
+    "owner: hirokimry",
+    "repo:  alice/bob",
+    "mode:  通常実行",
+    "",
+    "CLI は secret を書き込みません（Issue #72 / #74）。",
+    "",
+    "ℹ️ Anthropic への送信について:",
+    "   本 CLI 自体は Anthropic に通信しません。",
+  ].join("\n"),
+  "🦅 vibehawk セットアップ計画"
+);
+
+process.stdout.write = orig;
+const output = chunks.join("");
+// ANSI escape を strip して列位置だけ見る
+const ansi = /\[[0-9;]*m/g;
+const lines = output.split("\n").map((l) => l.replace(ansi, ""));
+// clack は note() の前後にバー単独行（"│" のみ）を出す。これは右端揃いの対象外なので除外。
+const boxLines = lines.filter((l) => /[│╮╯]\s*$/.test(l) && setup.displayWidth(l.replace(/\s+$/, "")) > 2);
+if (boxLines.length < 3) {
+  console.error("expected at least 3 box lines (top + body + bottom), got:", boxLines.length);
+  console.error("output:\n" + output);
+  process.exit(1);
+}
+const widths = boxLines.map(setup.displayWidth);
+const uniq = Array.from(new Set(widths));
+if (uniq.length !== 1) {
+  console.error("box right edge not aligned. widths:", widths);
+  for (const l of boxLines) console.error(" w=" + setup.displayWidth(l) + " | " + l);
+  process.exit(1);
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "setup.note が日本語/emoji 混在文字列でも右端の │/╮/╯ を同じ表示列に揃える（Issue #104 完了条件）"
+else
+  fail "setup.note の右端枠線が揃わない（Issue #104 完了条件未達）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
