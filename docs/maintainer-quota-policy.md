@@ -3,6 +3,8 @@
 > このドキュメントは vibehawk の dogfooding 構造が抱える「メンテナー個人契約枠の消費」問題への公式対策方針を定義する Source of Truth です。
 > 本文書は **挙動を規定するポリシー** であり、テンプレートへの反映・コード変更は別 Issue で実装します。
 
+利用者がリポジトリのメンテナー（OWNER）として vibehawk を運用する場合、自身の PR ごとに claude-code-action が起動し、Claude Pro / Max 枠を消費する構造になる。OSS 開発が活発化するとメンテナー個人の契約枠がボトルネックとなりうるため、利用者推奨設定として `if:` 条件によるメンテナー PR 除外などのパターンを §4 で整理している。
+
 ## 1. 背景
 
 vibehawk は MVV.md Value 1「利用者の契約だけで、完結させる」に従い、利用者の Claude Pro / Max OAuth トークン（`CLAUDE_CODE_OAUTH_TOKEN`）を利用してレビューを実行する。
