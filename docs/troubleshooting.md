@@ -32,7 +32,7 @@ GitHub Apps はグローバルで名前ユニーク制約があり、同名 App 
 
 ### 注意事項
 
-CLI は連番命名を検出した時点で App credentials の Private Key を [REDACTED] 化してメモリから除去する（CISO Critical 条件、`docs/SECURITY.md` 参照）。利用者の手元・画面に Private Key が残存することはありません。
+CLI は連番命名を検出した時点で App credentials の Private Key を [REDACTED] 化してメモリから除去する（CISO Critical 条件、`docs/SECURITY.md` 参照）。利用者の手元・画面に Private Key が残存することはない。
 
 連番付き App を放置すると `docs/POLICY.md` の MUST 違反状態が継続し、商標使用許諾の取消条件に該当する可能性がある。発見次第すみやかに削除すること。
 
@@ -48,7 +48,7 @@ CLI は連番命名を検出した時点で App credentials の Private Key を 
 
 ### 原因
 
-`npx vibehawk install` は GitHub App Manifest Flow のコールバック先として `127.0.0.1:8765` で一時 HTTP サーバを起動する（CSRF / port hijacking 攻撃面を最小化するため loopback bind に固定、`docs/SECURITY.md § Manifest Flow のセキュリティ対策（Issue #59）` 参照）。同ポートが先行プロセスで占有されていると CLI は起動できない。
+`npx vibehawk install` は GitHub App Manifest Flow のコールバック先として `127.0.0.1:8765` で一時 HTTP サーバを起動する。同ポートが先行プロセスで占有されていると CLI は起動できない。`127.0.0.1` への loopback bind 固定（外部到達不能）と `crypto.randomBytes(32)` で生成した `state` パラメータ + `crypto.timingSafeEqual` による CSRF 防止の多層防御を実装している。設計詳細は `docs/SECURITY.md § Manifest Flow のセキュリティ対策（Issue #59）` 参照。
 
 ### 復旧手順
 
@@ -104,15 +104,16 @@ vibehawk CLI（`setup` / `install` / `setup-token` のいずれも）は **GitHu
 
 ## Private Key 取扱の CISO Critical 条件
 
-`npx vibehawk install` 実行中に CLI 側で Private Key を保持する局面（GitHub App Manifest Flow 完了直後）の取扱を以下にまとめる。
+`npx vibehawk install` / `npx vibehawk setup` 実行中に CLI 側で Private Key を一時取得する局面（GitHub App Manifest Flow 完了直後）の取扱を以下にまとめる。設計の Source of Truth は `docs/SECURITY.md` および `docs/secrets-handling.md § 1 採用方針` で、CLI は secret を一切 touch しない方針（メモリ・ファイル・環境変数のいずれにも保持しない）に従う。
 
 ### CISO Critical 条件
 
-CLI は GitHub App 作成完了後 / 命名統制衝突検出時のいずれの場合も、App credentials の Private Key を **メモリから除去** し、利用者の **手元・画面に Private Key が残存することはありません**。具体的には:
+CLI は GitHub App 作成完了後 / 命名統制衝突検出時のいずれの場合も、App credentials の Private Key を **画面に印字せず**、Manifest Flow 完了直後に `redactCredentials()` で **`[REDACTED]` 上書き** してメモリから除去する。利用者の手元・画面に Private Key が残存することはない。具体的には:
 
-- CLI は Private Key を **画面に印字しない**（CISO Critical 条件、`docs/SECURITY.md` 参照）
-- CLI は Private Key を **ローカルファイルに保存しない**（メモリ上のみで保持）
-- CLI プロセス終了時 / Ctrl+C キャンセル時にメモリ上の参照を即座に `null` 化し、[REDACTED] 化する
+- CLI は Private Key を **画面に印字しない**（CISO Critical 条件、`docs/SECURITY.md § install スクリプトの読み書き範囲（Issue #34）` 参照）
+- CLI は Private Key を **ローカルファイルに保存しない**（メモリ・ファイル・環境変数のいずれにも書き込まない、`docs/secrets-handling.md § 1`）
+- `redactCredentials()` を CLI run() return 直前に必ず呼び、`pem` / `client_secret` / `webhook_secret` を `[REDACTED]` で上書きする
+- `npx vibehawk setup` ウィザード経由でも同条件が適用される。`SIGINT` / `SIGTERM` ハンドラで `clearState()` を呼び `oauthToken` / `appIdString` / `credentials` をすべて null 化する（`docs/SECURITY.md § npx vibehawk setup ウィザード経路の追加 Critical 条件（Issue #91）` 参照）
 
 Private Key は GitHub の App Settings ページから `.pem` ファイルとして利用者本人がダウンロードする運用とする（`docs/secrets-handling.md § 1 採用方針`）。
 
