@@ -25,6 +25,140 @@ const MAX_RETRY = 5;
 // 5 分（300_000 ms）を客観的判定の閾値として使用する
 const DOGFOODING_TARGET_MS = 5 * 60 * 1000;
 
+// Issue #104: clack/prompts の note() は `String.prototype.length` 基準でボックス幅を計算し
+// 各行に空白パディングを敷くため、East Asian Wide / Emoji（表示幅 2 列 / `.length` 1 や 2）
+// が混じると右端の `│` が文字列ごとにズレる。外部依存（string-width 等）を追加せず、
+// 各行の `.length` を表示幅と一致させてから clack に渡すことで、内部パディングの過不足を
+// 抑え、右端の枠線を揃える（案 B: 自前で表示幅補正、依存追加なし）。
+//
+// 補正の鍵となる文字: Word Joiner（U+2060）。表示幅 0 で改行を引き起こさないため、
+// `.length` を増やす filler として安全に使える。
+const WIDTH_FILLER = '⁠';
+
+function isWideCodePoint(cp) {
+  // East Asian Wide / Fullwidth と、表示幅 2 列で確定している絵文字ブロックを列挙する。
+  // ambiguous なコードポイント（◇ など）は narrow 扱いとし、本ファイルで使う範囲では
+  // 実害がないことを枠線アライメントテストで検証する。
+  return (
+    (cp >= 0x1100 && cp <= 0x115F) || // Hangul Jamo
+    (cp >= 0x2E80 && cp <= 0x303E) || // CJK Radicals / Kangxi / CJK Symbols
+    (cp >= 0x3041 && cp <= 0x33FF) || // Hiragana / Katakana / CJK Strokes / Enclosed CJK
+    (cp >= 0x3400 && cp <= 0x4DBF) || // CJK Unified Ideographs Extension A
+    (cp >= 0x4E00 && cp <= 0x9FFF) || // CJK Unified Ideographs
+    (cp >= 0xA000 && cp <= 0xA4CF) || // Yi
+    (cp >= 0xAC00 && cp <= 0xD7A3) || // Hangul Syllables
+    (cp >= 0xF900 && cp <= 0xFAFF) || // CJK Compatibility Ideographs
+    (cp >= 0xFE30 && cp <= 0xFE4F) || // CJK Compatibility Forms
+    (cp >= 0xFF00 && cp <= 0xFF60) || // Fullwidth Forms
+    (cp >= 0xFFE0 && cp <= 0xFFE6) || // Fullwidth Signs
+    (cp >= 0x1F300 && cp <= 0x1F64F) || // Misc Symbols and Pictographs / Emoticons
+    (cp >= 0x1F680 && cp <= 0x1F6FF) || // Transport & Map
+    (cp >= 0x1F900 && cp <= 0x1F9FF) || // Supplemental Symbols and Pictographs
+    (cp >= 0x1FA00 && cp <= 0x1FAFF) || // Symbols and Pictographs Extended-A
+    (cp >= 0x20000 && cp <= 0x2FFFD) || // CJK Extension B+
+    (cp >= 0x30000 && cp <= 0x3FFFD)
+  );
+}
+
+function isStandaloneEmojiWide(cp) {
+  // Emoji_Presentation=Yes な BMP の代表的コードポイント。VS16 なしで 2 列表示される。
+  // setup.js で実際に使う ✅ ❌ ⏭️等の見落としを防ぐため明示列挙する。
+  return (
+    cp === 0x2705 || // ✅
+    cp === 0x274C || // ❌
+    cp === 0x274E || // ❎
+    cp === 0x2728 || // ✨
+    cp === 0x2753 || cp === 0x2754 || cp === 0x2755 || cp === 0x2757 || // ❓❔❕❗
+    cp === 0x2795 || cp === 0x2796 || cp === 0x2797 // ➕➖➗
+  );
+}
+
+function displayWidth(str) {
+  // 文字列の表示幅（端末で占有する列数）を算出する。サロゲートペアを 1 文字として扱うため
+  // Array.from で code point 単位に分解する。
+  const chars = Array.from(String(str == null ? '' : str));
+  let width = 0;
+  let prevWasWide = false;
+  for (const ch of chars) {
+    const cp = ch.codePointAt(0);
+    // VS16 (U+FE0F): emoji presentation 指定。直前が narrow なら 1 列広げて wide 扱いに
+    // 昇格させる（ℹ️ / ⚠️ / ⏭️ 等の互換絵文字対応）。
+    if (cp === 0xFE0F) {
+      if (!prevWasWide) {
+        width += 1;
+        prevWasWide = true;
+      }
+      continue;
+    }
+    if (cp === 0xFE0E) continue; // VS15: text presentation, 幅変えず
+    // Zero-width chars（ZWSP / ZWNJ / ZWJ / Word Joiner / BOM）
+    if (cp === 0x200B || cp === 0x200C || cp === 0x200D || cp === 0x2060 || cp === 0xFEFF) continue;
+    // Combining diacritical marks
+    if (cp >= 0x0300 && cp <= 0x036F) continue;
+    // Variation Selectors-1..14（U+FE00..U+FE0E）。VS16 は上で個別処理済み
+    if (cp >= 0xFE00 && cp <= 0xFE0E) continue;
+    // Control chars
+    if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0)) {
+      prevWasWide = false;
+      continue;
+    }
+    if (isWideCodePoint(cp) || isStandaloneEmojiWide(cp)) {
+      width += 2;
+      prevWasWide = true;
+    } else {
+      width += 1;
+      prevWasWide = false;
+    }
+  }
+  return width;
+}
+
+function normalizeLineForNote(line, targetDisplayWidth) {
+  // clack.note() は `.length` 基準でボックス幅 r = max(.length) + 2 を決め、各行を
+  // `' '.repeat(r - line.length)` で右側へ padding する。
+  // 各行の `.length` が表示幅と一致していれば、padding 数 = 表示幅の不足分と等しくなり、
+  // 右端の `│` が表示列で揃う。
+  // 1. 行の右側に半角スペースで「表示幅」を targetDisplayWidth に揃える
+  // 2. その後 `.length` を targetDisplayWidth に一致させるため Word Joiner で詰める
+  const w = displayWidth(line);
+  let padded = line + ' '.repeat(Math.max(0, targetDisplayWidth - w));
+  const stuff = targetDisplayWidth - padded.length;
+  if (stuff > 0) {
+    padded += WIDTH_FILLER.repeat(stuff);
+  }
+  return padded;
+}
+
+function normalizeNoteMessage(message) {
+  // 各行の表示幅を揃えてから `.length` を表示幅に一致させ、clack のパディング計算と
+  // 実表示幅の差分を 0 にする。
+  const lines = String(message == null ? '' : message).split('\n');
+  const widths = lines.map(displayWidth);
+  const target = widths.reduce((max, w) => (w > max ? w : max), 0);
+  return lines.map((line) => normalizeLineForNote(line, target)).join('\n');
+}
+
+function normalizeNoteTitle(title) {
+  // clack.note() は title 長も枠幅 r に算入する（i = title.length）。表示幅 > `.length`
+  // のタイトルを渡すと、`r - i - 1` に基づく dash 個数が表示上不足し、右端 `╮` の位置
+  // までもがズレる。タイトル側でも `.length` を表示幅に揃える。
+  if (title == null) return title;
+  const t = String(title);
+  const w = displayWidth(t);
+  const stuff = w - t.length;
+  if (stuff > 0) {
+    return t + WIDTH_FILLER.repeat(stuff);
+  }
+  return t;
+}
+
+function note(message, title) {
+  // Issue #104: clack.note() の表示幅崩れを正すため、message / title を表示幅基準で
+  // 正規化してから委譲する。テスト時に clack.note がモック差し替えされても、本関数経由
+  // 呼び出しのまま挙動を検証できる（mock が受け取る引数は正規化後の文字列）。
+  return clack.note(normalizeNoteMessage(message), normalizeNoteTitle(title));
+}
+
 function formatDuration(ms) {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return 'n/a';
   if (ms < 1000) return `${ms}ms`;
@@ -178,7 +312,7 @@ function buildSteps({ owner, repo }) {
         // 未登録でも workflow PR 自体は作成する（Issue #111「Step 6 で『OAuth token が未登録です。
         // 手動登録が必要です』と最終メッセージを出力しつつ workflow PR は作成する」要件）。
         if (state && state.oauthToken === '') {
-          clack.note(
+          note(
             [
               'CLAUDE_CODE_OAUTH_TOKEN が未登録です。手動登録が必要です。',
               `   GitHub Secrets UI: https://github.com/${repo}/settings/secrets/actions`,
@@ -216,7 +350,7 @@ function tryClipboardCopy(value, isSensitive) {
 function showClipboardFallback(value, isSensitive, reason) {
   // CISO Critical: isSensitive: true の値は絶対 stdout に出さない
   if (isSensitive) {
-    clack.note(
+    note(
       [
         'クリップボードへのコピーに失敗しました。',
         'GitHub Settings の入力欄に直接貼り付けてください。',
@@ -226,7 +360,7 @@ function showClipboardFallback(value, isSensitive, reason) {
       '⚠️ クリップボードコピー失敗'
     );
   } else {
-    clack.note(
+    note(
       `クリップボード未対応のため値を表示します:\n  ${value}\n\nGitHub Settings の入力欄にコピー&ペーストしてください。`,
       '⚠️ クリップボード未対応'
     );
@@ -256,7 +390,7 @@ async function chooseRetryAction() {
 }
 
 async function executeStep(step, state, summary, dryRun) {
-  clack.note(step.label, `[${state.stepIndex + 1}/${state.totalSteps}]`);
+  note(step.label, `[${state.stepIndex + 1}/${state.totalSteps}]`);
 
   // Issue #91 dogfooding 計測: 各ステップの所要時間を Date.now() で計測する
   const stepStartTime = Date.now();
@@ -343,7 +477,7 @@ async function executeStep(step, state, summary, dryRun) {
     if (value) {
       const cb = tryClipboardCopy(value, step.isSensitive);
       if (cb.success) {
-        clack.note('値をクリップボードにコピーしました（Cmd+V / Ctrl+V で貼付できます）', '📋 clipboard');
+        note('値をクリップボードにコピーしました（Cmd+V / Ctrl+V で貼付できます）', '📋 clipboard');
       } else {
         showClipboardFallback(value, step.isSensitive, cb.reason);
       }
@@ -358,7 +492,7 @@ async function executeStep(step, state, summary, dryRun) {
       if (step.getInstructions) {
         lines.push('', step.getInstructions(state));
       }
-      clack.note(lines.join('\n'), '👉 操作手順');
+      note(lines.join('\n'), '👉 操作手順');
     }
     for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
       const _enter = await pressEnter('完了したら Enter を押してください');
@@ -468,7 +602,7 @@ async function run({ argv = process.argv.slice(3) } = {}) {
 
   // 前提検証: gh CLI 認証
   if (!dryRun && !checkGhAuth()) {
-    clack.note(
+    note(
       'gh CLI が未認証です。別ターミナルで `gh auth login` を実行してから再実行してください。',
       '❌ 前提条件エラー'
     );
@@ -501,7 +635,7 @@ async function run({ argv = process.argv.slice(3) } = {}) {
   }
 
   // 同意 + プレビュー（npm AUP 遵守、CLI が secret を書き込まない宣言）
-  clack.note(
+  note(
     [
       `owner: ${owner}`,
       `repo:  ${repo}`,
@@ -528,7 +662,7 @@ async function run({ argv = process.argv.slice(3) } = {}) {
   if (dryRun) {
     const dryRunElapsedMs = Date.now() - wizardStartTime;
     const dryRunMeetsTarget = dryRunElapsedMs <= DOGFOODING_TARGET_MS;
-    clack.note(
+    note(
       [
         `所要時間: ${formatDuration(dryRunElapsedMs)}`,
         `dogfooding 目標: ${formatDuration(DOGFOODING_TARGET_MS)}（Issue #91 完了条件）`,
@@ -621,7 +755,7 @@ async function run({ argv = process.argv.slice(3) } = {}) {
     );
   }
 
-  clack.note(
+  note(
     [
       `完了: ${completed.length}/${STEPS.length}, スキップ: ${skipped.length}`,
       '',
@@ -701,4 +835,9 @@ module.exports = {
   // Issue #91 dogfooding 計測関連の export（テスト用）
   formatDuration,
   DOGFOODING_TARGET_MS,
+  // Issue #104 East Asian Width 補正関連の export（テスト用）
+  displayWidth,
+  normalizeNoteMessage,
+  normalizeNoteTitle,
+  note,
 };

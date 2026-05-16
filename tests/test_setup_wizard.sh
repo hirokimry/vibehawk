@@ -1158,6 +1158,193 @@ else
   fail "secret-token skip 後の workflow ステップで未登録案内が出力されない（PR #118 CodeRabbit Major 動的検証失敗）"
 fi
 
+# Issue #104: clack/prompts 枠線が日本語幅で崩れる問題のテスト
+# East Asian Width 補正で .length === displayWidth になることを検証する
+echo ""
+echo "=== Issue #104: 枠線崩れ修正（East Asian Width 補正） ==="
+
+if node -e '
+const setup = require("./cli/setup");
+
+// displayWidth: ASCII = 1 / Japanese = 2 / Surrogate emoji = 2 / VS-16 = 0
+const cases = [
+  ["", 0],
+  ["abc", 3],
+  ["あいう", 6],
+  ["a日本", 5],
+  ["🦅", 2],
+  ["ℹ️", 2],
+  ["owner: hirokimry", 16],
+  // "CLI は secret を書き込みません" = 3+1+2+1+6+1+2+14 = 30
+  ["CLI は secret を書き込みません", 30],
+];
+for (const [input, expected] of cases) {
+  const actual = setup.displayWidth(input);
+  if (actual !== expected) {
+    console.error("displayWidth mismatch:", JSON.stringify(input), "expected:", expected, "actual:", actual);
+    process.exit(1);
+  }
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "setup.displayWidth が East Asian Wide / surrogate emoji / VS-16 を正しく計算する（Issue #104）"
+else
+  fail "setup.displayWidth の計算が不正（Issue #104）"
+fi
+
+if node -e '
+const setup = require("./cli/setup");
+
+// normalizeNoteMessage: 全行で .length === max(displayWidth) となるよう揃える
+const input = [
+  "owner: hirokimry",
+  "CLI は secret を書き込みません",
+  "ℹ️ Anthropic への送信について:",
+].join("\n");
+const padded = setup.normalizeNoteMessage(input);
+const lines = padded.split("\n");
+const widths = lines.map(setup.displayWidth);
+const target = Math.max(...widths);
+for (const line of lines) {
+  if (line.length !== target) {
+    console.error("normalizeNoteMessage: .length !== target displayWidth", JSON.stringify(line), ".length:", line.length, "target:", target);
+    process.exit(1);
+  }
+  if (setup.displayWidth(line) !== target) {
+    console.error("normalizeNoteMessage: displayWidth !== target", JSON.stringify(line), "displayWidth:", setup.displayWidth(line), "target:", target);
+    process.exit(1);
+  }
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "setup.normalizeNoteMessage が全行の .length と displayWidth を最大幅に揃える（Issue #104）"
+else
+  fail "normalizeNoteMessage の整合が不正（Issue #104）"
+fi
+
+if node -e '
+const setup = require("./cli/setup");
+// normalizeNoteTitle: 表示幅 === .length になる
+const cases = ["セットアップ完了", "🦅 vibehawk セットアップ計画", "📋 clipboard"];
+for (const t of cases) {
+  const normalized = setup.normalizeNoteTitle(t);
+  if (normalized.length !== setup.displayWidth(normalized)) {
+    console.error("normalizeNoteTitle: .length !== displayWidth", JSON.stringify(t), "→", JSON.stringify(normalized));
+    process.exit(1);
+  }
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "setup.normalizeNoteTitle が title の .length を displayWidth に揃える（Issue #104）"
+else
+  fail "normalizeNoteTitle の整合が不正（Issue #104）"
+fi
+
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const noteCallArgs = [];
+require.cache[require.resolve("@clack/prompts")] = {
+  exports: {
+    intro: () => {},
+    outro: () => {},
+    text: async () => "mock",
+    select: async () => "retry",
+    note: (content, title) => { noteCallArgs.push({ content: String(content), title: String(title || "") }); },
+    spinner: () => ({ start: () => {}, stop: () => {} }),
+    cancel: () => {},
+    isCancel: () => false,
+    group: async () => {},
+  },
+};
+const setup = require("./cli/setup");
+
+setup.run({ argv: ["--owner", "alice", "--repo", "alice/bob", "--dry-run"] }).then(() => {
+  if (noteCallArgs.length === 0) {
+    console.error("expected at least 1 clack.note call");
+    process.exit(1);
+  }
+  // 全 note 呼び出しで「全行の .length === max displayWidth」が成立
+  for (const args of noteCallArgs) {
+    const lines = args.content.split("\n");
+    if (lines.length === 0) continue;
+    const widths = lines.map(setup.displayWidth);
+    const target = Math.max(...widths);
+    for (const line of lines) {
+      if (line.length !== target) {
+        console.error("clack.note content line not normalized:", JSON.stringify(args.title), ".length:", line.length, "target:", target, "line:", JSON.stringify(line));
+        process.exit(1);
+      }
+    }
+    // title 側も .length === displayWidth
+    if (args.title.length !== setup.displayWidth(args.title)) {
+      console.error("clack.note title not normalized:", JSON.stringify(args.title), ".length:", args.title.length, "displayWidth:", setup.displayWidth(args.title));
+      process.exit(1);
+    }
+  }
+  process.exit(0);
+}).catch((e) => {
+  console.error("setup.run threw:", e.message);
+  process.exit(1);
+});
+' > /dev/null 2>&1; then
+  pass "setup.run が全 clack.note 呼び出しで content の全行と title を表示幅に揃える（Issue #104）"
+else
+  fail "setup.run の clack.note 呼び出しが表示幅補正を経由していない（Issue #104）"
+fi
+
+# Issue #104 完了条件: 実際の @clack/prompts に通したときに、出力ボックスの全行が
+# 表示幅基準で等幅になっていること（= 右端の │ / ╮ / ╯ が同じ列に揃う）。
+# clack の ANSI 着色を strip し、各行の表示幅が一致するかを assert する。
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+process.env.FORCE_COLOR = "0";
+const setup = require("./cli/setup");
+
+const chunks = [];
+const orig = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk) => { chunks.push(typeof chunk === "string" ? chunk : chunk.toString()); return true; };
+
+// 日本語 / 半角混在 / surrogate emoji / VS-16 emoji 混在の典型ケース
+setup.note(
+  [
+    "owner: hirokimry",
+    "repo:  alice/bob",
+    "mode:  通常実行",
+    "",
+    "CLI は secret を書き込みません（Issue #72 / #74）。",
+    "",
+    "ℹ️ Anthropic への送信について:",
+    "   本 CLI 自体は Anthropic に通信しません。",
+  ].join("\n"),
+  "🦅 vibehawk セットアップ計画"
+);
+
+process.stdout.write = orig;
+const output = chunks.join("");
+// ANSI escape を strip して列位置だけ見る
+const ansi = /\[[0-9;]*m/g;
+const lines = output.split("\n").map((l) => l.replace(ansi, ""));
+// clack は note() の前後にバー単独行（"│" のみ）を出す。これは右端揃いの対象外なので除外。
+const boxLines = lines.filter((l) => /[│╮╯]\s*$/.test(l) && setup.displayWidth(l.replace(/\s+$/, "")) > 2);
+if (boxLines.length < 3) {
+  console.error("expected at least 3 box lines (top + body + bottom), got:", boxLines.length);
+  console.error("output:\n" + output);
+  process.exit(1);
+}
+const widths = boxLines.map(setup.displayWidth);
+const uniq = Array.from(new Set(widths));
+if (uniq.length !== 1) {
+  console.error("box right edge not aligned. widths:", widths);
+  for (const l of boxLines) console.error(" w=" + setup.displayWidth(l) + " | " + l);
+  process.exit(1);
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "setup.note が日本語/emoji 混在文字列でも右端の │/╮/╯ を同じ表示列に揃える（Issue #104 完了条件）"
+else
+  fail "setup.note の右端枠線が揃わない（Issue #104 完了条件未達）"
+fi
+
 # Issue #134: setup ウィザード完了時に branch protection 誘導が出る
 echo ""
 echo "=== Issue #134: setup 完了後 branch protection 誘導 ==="
