@@ -188,3 +188,26 @@ branch protection に `vibehawk` を required 追加した後、新規 PR を立
 
 - `secrets-handling.md` — secret 値の正規化と CLI 非保持の方針
 - `README.md § 3. branch protection に vibehawk を required status check 登録（vibehawk 利用の根幹）`
+
+## `.md` のみの PR がマージ不能 (BLOCKED) で止まる
+
+`.md` だけを変更した PR（例: ドキュメント修正・knowledge-pr の harvest PR）が `vibehawk` required status check 待ちで永久 BLOCKED になる場合がある。
+
+### 原因
+
+`vibehawk-review.yml` の `paths-ignore`（Issue #65）に該当する変更のみの PR では本 workflow が GitHub Actions レベルで起動せず、本来 post される `vibehawk` status check も投稿されない。
+
+通常は `vibehawk-review-skip-mark.yml`（Issue #157）が全 PR で起動し、paths-ignore 全マッチを検出して `vibehawk` を `success` で post する仕組みになっている。BLOCKED が継続するのは、利用者がリポジトリに skip-mark workflow を配置していない場合（古い templates 経由で setup した）。
+
+### 復旧手順
+
+1. 利用者リポジトリの `.github/workflows/vibehawk-review-skip-mark.yml` 存在を確認
+2. 未配置なら最新の `templates/.github/workflows/vibehawk-review-skip-mark.yml` をコピー
+3. PR ブランチに空コミット（または main 取り込み）を push して workflow を再 trigger
+4. Actions タブで `vibehawk PR skip mark` workflow が SUCCESS で完了することを確認
+5. PR の `vibehawk` check が SUCCESS に切り替わり auto-merge が発動
+
+### 関連ドキュメント
+
+- `specification.md § paths-ignore 該当 PR への fallback（Issue #157）`
+- Issue #157 / PR #158（skip-mark workflow 実装）
