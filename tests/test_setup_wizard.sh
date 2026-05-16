@@ -1158,5 +1158,139 @@ else
   fail "secret-token skip 後の workflow ステップで未登録案内が出力されない（PR #118 CodeRabbit Major 動的検証失敗）"
 fi
 
+# Issue #104: clack/prompts 枠線が日本語幅で崩れる問題のテスト
+# East Asian Width 補正で .length === displayWidth になることを検証する
+echo ""
+echo "=== Issue #104: 枠線崩れ修正（East Asian Width 補正） ==="
+
+if node -e '
+const setup = require("./cli/setup");
+
+// displayWidth: ASCII = 1 / Japanese = 2 / Surrogate emoji = 2 / VS-16 = 0
+const cases = [
+  ["", 0],
+  ["abc", 3],
+  ["あいう", 6],
+  ["a日本", 5],
+  ["🦅", 2],
+  ["ℹ️", 2],
+  ["owner: hirokimry", 16],
+  // "CLI は secret を書き込みません" = 3+1+2+1+6+1+2+14 = 30
+  ["CLI は secret を書き込みません", 30],
+];
+for (const [input, expected] of cases) {
+  const actual = setup.displayWidth(input);
+  if (actual !== expected) {
+    console.error("displayWidth mismatch:", JSON.stringify(input), "expected:", expected, "actual:", actual);
+    process.exit(1);
+  }
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "setup.displayWidth が East Asian Wide / surrogate emoji / VS-16 を正しく計算する（Issue #104）"
+else
+  fail "setup.displayWidth の計算が不正（Issue #104）"
+fi
+
+if node -e '
+const setup = require("./cli/setup");
+
+// normalizeNoteMessage: 全行で .length === max(displayWidth) となるよう揃える
+const input = [
+  "owner: hirokimry",
+  "CLI は secret を書き込みません",
+  "ℹ️ Anthropic への送信について:",
+].join("\n");
+const padded = setup.normalizeNoteMessage(input);
+const lines = padded.split("\n");
+const widths = lines.map(setup.displayWidth);
+const target = Math.max(...widths);
+for (const line of lines) {
+  if (line.length !== target) {
+    console.error("normalizeNoteMessage: .length !== target displayWidth", JSON.stringify(line), ".length:", line.length, "target:", target);
+    process.exit(1);
+  }
+  if (setup.displayWidth(line) !== target) {
+    console.error("normalizeNoteMessage: displayWidth !== target", JSON.stringify(line), "displayWidth:", setup.displayWidth(line), "target:", target);
+    process.exit(1);
+  }
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "setup.normalizeNoteMessage が全行の .length と displayWidth を最大幅に揃える（Issue #104）"
+else
+  fail "normalizeNoteMessage の整合が不正（Issue #104）"
+fi
+
+if node -e '
+const setup = require("./cli/setup");
+// normalizeNoteTitle: 表示幅 === .length になる
+const cases = ["セットアップ完了", "🦅 vibehawk セットアップ計画", "📋 clipboard"];
+for (const t of cases) {
+  const normalized = setup.normalizeNoteTitle(t);
+  if (normalized.length !== setup.displayWidth(normalized)) {
+    console.error("normalizeNoteTitle: .length !== displayWidth", JSON.stringify(t), "→", JSON.stringify(normalized));
+    process.exit(1);
+  }
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "setup.normalizeNoteTitle が title の .length を displayWidth に揃える（Issue #104）"
+else
+  fail "normalizeNoteTitle の整合が不正（Issue #104）"
+fi
+
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+const noteCallArgs = [];
+require.cache[require.resolve("@clack/prompts")] = {
+  exports: {
+    intro: () => {},
+    outro: () => {},
+    text: async () => "mock",
+    select: async () => "retry",
+    note: (content, title) => { noteCallArgs.push({ content: String(content), title: String(title || "") }); },
+    spinner: () => ({ start: () => {}, stop: () => {} }),
+    cancel: () => {},
+    isCancel: () => false,
+    group: async () => {},
+  },
+};
+const setup = require("./cli/setup");
+
+setup.run({ argv: ["--owner", "alice", "--repo", "alice/bob", "--dry-run"] }).then(() => {
+  if (noteCallArgs.length === 0) {
+    console.error("expected at least 1 clack.note call");
+    process.exit(1);
+  }
+  // 全 note 呼び出しで「全行の .length === max displayWidth」が成立
+  for (const args of noteCallArgs) {
+    const lines = args.content.split("\n");
+    if (lines.length === 0) continue;
+    const widths = lines.map(setup.displayWidth);
+    const target = Math.max(...widths);
+    for (const line of lines) {
+      if (line.length !== target) {
+        console.error("clack.note content line not normalized:", JSON.stringify(args.title), ".length:", line.length, "target:", target, "line:", JSON.stringify(line));
+        process.exit(1);
+      }
+    }
+    // title 側も .length === displayWidth
+    if (args.title.length !== setup.displayWidth(args.title)) {
+      console.error("clack.note title not normalized:", JSON.stringify(args.title), ".length:", args.title.length, "displayWidth:", setup.displayWidth(args.title));
+      process.exit(1);
+    }
+  }
+  process.exit(0);
+}).catch((e) => {
+  console.error("setup.run threw:", e.message);
+  process.exit(1);
+});
+' > /dev/null 2>&1; then
+  pass "setup.run が全 clack.note 呼び出しで content の全行と title を表示幅に揃える（Issue #104）"
+else
+  fail "setup.run の clack.note 呼び出しが表示幅補正を経由していない（Issue #104）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
