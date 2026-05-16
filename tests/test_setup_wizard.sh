@@ -1158,5 +1158,33 @@ else
   fail "secret-token skip 後の workflow ステップで未登録案内が出力されない（PR #118 CodeRabbit Major 動的検証失敗）"
 fi
 
+# Issue #134: setup ウィザード完了時に branch protection 誘導が出る
+echo ""
+echo "=== Issue #134: setup 完了後 branch protection 誘導 ==="
+
+if grep -q "branch protection に \`vibehawk\` を required status check として登録" cli/setup.js; then
+  pass "setup.js が branch protection 登録誘導の本文を含む（Issue #134）"
+else
+  fail "setup.js に branch protection 登録誘導がない（Issue #134）"
+fi
+
+if grep -q "settings/branches" cli/setup.js; then
+  pass "setup.js が branch protection 設定の直リンク（settings/branches）を含む（Issue #134）"
+else
+  fail "setup.js に branch protection 設定 URL がない（Issue #134）"
+fi
+
+if grep -q "Require status checks to pass before merging" cli/setup.js; then
+  pass "setup.js が branch protection の有効化キーワード（Require status checks）を案内する（Issue #134）"
+else
+  fail "setup.js に Require status checks 案内がない（Issue #134）"
+fi
+
+if grep -q "branchProtectionGated" cli/setup.js; then
+  pass "setup.js が 3 secrets 完了 gate で branch protection 案内を出し分ける（Issue #134）"
+else
+  fail "setup.js に branchProtectionGated gating がない（Issue #134）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

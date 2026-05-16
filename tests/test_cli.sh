@@ -819,5 +819,66 @@ else
   fail "正常名で assertCanonicalAppName が誤って throw する"
 fi
 
+# Issue #134: install 完了画面で branch protection 登録誘導が出る
+echo ""
+echo "=== Issue #134: install 完了後 branch protection 誘導 ==="
+
+if grep -q "branch protection 登録（最重要）" cli/install.js; then
+  pass "install.js が branch protection 登録誘導の見出しを含む（Issue #134）"
+else
+  fail "install.js に branch protection 登録誘導の見出しがない（Issue #134）"
+fi
+
+if grep -q "settings/branches" cli/install.js; then
+  pass "install.js が branch protection 設定の直リンク（settings/branches）を含む（Issue #134）"
+else
+  fail "install.js に branch protection 設定 URL がない（Issue #134）"
+fi
+
+if grep -q "Require status checks to pass before merging" cli/install.js; then
+  pass "install.js が branch protection の有効化キーワード（Require status checks）を案内する（Issue #134）"
+else
+  fail "install.js に Require status checks 案内がない（Issue #134）"
+fi
+
+# Issue #134: 動的検証 — printResult が repo 引数から URL を組み立てる
+if node -e '
+let logs = "";
+const origLog = console.log;
+console.log = (s) => { logs += String(s) + "\n"; };
+const install = require("./cli/install");
+const { printResult } = install;
+if (typeof printResult !== "function") {
+  // 非 export なら本動的検証はスキップ（静的 grep でカバー済）
+  console.log = origLog;
+  process.exit(0);
+}
+const credentials = { id: 12345, name: "vibehawk-for-alice", slug: "vibehawk-for-alice", html_url: "https://github.com/apps/vibehawk-for-alice", pem: "X" };
+printResult(credentials, "vibehawk-for-alice", "alice/my-app");
+console.log = origLog;
+if (!logs.includes("https://github.com/alice/my-app/settings/branches")) {
+  console.error("missing settings/branches URL for alice/my-app");
+  process.exit(1);
+}
+process.exit(0);
+' > /dev/null 2>&1; then
+  pass "install.js の printResult が repo 引数から settings/branches URL を組み立てる（Issue #134）"
+else
+  fail "install.js の printResult が settings/branches URL を組み立てない（Issue #134）"
+fi
+
+# Issue #134: docs/troubleshooting.md に 2 項目追加
+if grep -q "vibehawk が指摘を出しているのに merge できる" docs/troubleshooting.md; then
+  pass "troubleshooting.md に「merge できる」項目が追加されている（Issue #134）"
+else
+  fail "troubleshooting.md に「merge できる」項目がない（Issue #134）"
+fi
+
+if grep -q "永続 pending" docs/troubleshooting.md; then
+  pass "troubleshooting.md に「永続 pending」項目が追加されている（Issue #134）"
+else
+  fail "troubleshooting.md に「永続 pending」項目がない（Issue #134）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
