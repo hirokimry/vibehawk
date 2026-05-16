@@ -31,7 +31,13 @@ severity の **判定そのもの**（Critical / Major / Minor / Trivial / Info 
 
 ### 大方針 5: PR メタデータ操作はしない
 
-Bot が PR に対してできることは **`inline comment` / `review summary comment` / `approve / request_changes` の発行** のみ。**PR の label 付与 / milestone 設定 / description 補完 / assignee 操作などのメタデータ操作は一切しない**。これらは利用者リポジトリの運用設定に強く依存するため、利用者側で別の GitHub Actions として実装する責務。
+Bot が PR に対してできることは以下に限定する:
+
+- **`status check` の post**（**merge gate の主軸**。`check-runs` API で `vibehawk` という固定 name の check を発火し、利用者は branch protection の `required_status_checks` に登録することで AI レビュー必須 merge gate を構築する。Issue #121-C1 / #138 で確定した位置付け）
+- `inline comment` / `review summary comment` の発行（レビュー指摘の本体）
+- `approve / request_changes` の発行（**補助情報**。sticky review state により unresolved 数に応じて自動切替するが、merge gating は status check 側で行うため AI による「人間 review 必須要件のバイパス」構造を回避する設計）
+
+**PR の label 付与 / milestone 設定 / description 補完 / assignee 操作などのメタデータ操作は一切しない**。これらは利用者リポジトリの運用設定に強く依存するため、利用者側で別の GitHub Actions として実装する責務。
 
 ## 開発ポリシー
 
