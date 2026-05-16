@@ -1,0 +1,99 @@
+# vibehawk PR skip mark — paths-ignore 該当 PR で required status check `vibehawk` を success post する
+#
+# 設計の主旨（Issue #157）:
+#   `vibehawk-review.yml` の `paths-ignore`（Issue #65 / PR #154）に該当する PR では
+#   workflow 自体が起動せず、required status check `vibehawk`（epic #138 / PR #147）が
+#   永久未投稿のまま branch protection で BLOCKED になる。
+#   本 workflow は全 PR で起動し、変更ファイルが `vibehawk-review.yml` の paths-ignore
+#   パターンに全てマッチする場合のみ `vibehawk` を success として post して merge gate を
+#   通過させる。マッチしない PR では何もしない（vibehawk-review.yml 本体側が `vibehawk` を post する）。
+#
+# 同期必須（保守者向け）:
+#   下記 `paths-ignore 全マッチ判定` ステップの case 文は `vibehawk-review.yml` の
+#   `paths-ignore` リストと完全に同期させること。`vibehawk-review.yml` のリストを
+#   編集した場合、以下 3 箇所を手動で同時更新する必要がある:
+#     1. templates/.github/workflows/vibehawk-review-skip-mark.yml の case 文（本ファイル）
+#     2. .github/workflows/vibehawk-review-skip-mark.yml の case 文（templates との完全一致）
+#     3. tests/test_workflow_skip_mark.sh のパターン一覧
+#   同期忘れの失敗モードは常に「PR が BLOCKED」方向のみで、merge gate 誤通過は構造上発生しない。
+#
+# セキュリティ境界（CISO 承認済み）:
+#   - Fork PR 除外（`head.repo.full_name == github.repository`）
+#   - draft skip（`draft == false`）
+#   - 最小権限（`checks: write` / `pull-requests: read` / `contents: read` のみ）
+#   - 禁止権限不在（autonomous-restrictions §6）
+#   - GITHUB_TOKEN のみ使用（App Installation Token 不要）
+
+name: vibehawk PR skip mark
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, review_requested]
+
+concurrency:
+  group: vibehawk-skip-mark-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  checks: write
+  pull-requests: read
+  contents: read
+
+jobs:
+  skip-mark:
+    if: ${{ github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 変更ファイル一覧の取得
+        id: files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # PR の全変更ファイルパスを 1 行 1 ファイルで取得
+          gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename' > changed_files.txt
+          file_count=$(wc -l < changed_files.txt | tr -d ' ')
+          echo "count=${file_count}" >> "$GITHUB_OUTPUT"
+          echo "変更ファイル数: ${file_count}"
+          cat changed_files.txt
+
+      - name: paths-ignore 全マッチ判定
+        id: classify
+        env:
+          FILE_COUNT: ${{ steps.files.outputs.count }}
+        run: |
+          # vibehawk-review.yml の paths-ignore と完全に同期させること。
+          # case 文編集時は本ファイル冒頭コメント記載の 3 箇所同期手順に従う。
+          all_match=true
+          if [ "${FILE_COUNT}" -eq 0 ]; then
+            # ファイル変更ゼロは判定不能のため安全側で skip post を行わない
+            all_match=false
+          fi
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            case "$file" in
+              *.md) ;;
+              CHANGELOG*) ;;
+              .github/dependabot.yml) ;;
+              package-lock.json|yarn.lock|pnpm-lock.yaml|bun.lockb) ;;
+              *) all_match=false; break ;;
+            esac
+          done < changed_files.txt
+          echo "is_skip=${all_match}" >> "$GITHUB_OUTPUT"
+          echo "paths-ignore 全マッチ: ${all_match}"
+
+      - name: vibehawk status check を success で post（paths-ignore 全マッチ時のみ）
+        if: steps.classify.outputs.is_skip == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api -X POST "/repos/${REPO}/check-runs" \
+            -f name=vibehawk \
+            -f head_sha="${HEAD_SHA}" \
+            -f status=completed \
+            -f conclusion=success \
+            -f 'output[title]=vibehawk-review skipped (paths-ignore matched)' \
+            -f 'output[summary]=All changed files matched vibehawk-review.yml paths-ignore patterns (Issue #65). LLM review skipped to keep API cost at zero. Posted by vibehawk-review-skip-mark.yml (Issue #157).'
