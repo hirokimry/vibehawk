@@ -140,8 +140,10 @@ else
 fi
 
 # シナリオ 7: GITHUB_OUTPUT 未設定 → 非 0 終了
+# GitHub Actions runner では GITHUB_OUTPUT が親シェル env から子へ継承されるため、
+# 単に「assign しない」だけでは不十分。env -u GITHUB_OUTPUT で子 env から明示除去する（PR #185 と同じパターン）。
 set +e
-(cd "$WORK1" && FILES_COUNT=5 bash "$SCRIPT") >/dev/null 2>&1
+(cd "$WORK1" && env -u GITHUB_OUTPUT FILES_COUNT=5 bash "$SCRIPT") >/dev/null 2>&1
 err_rc=$?
 set -e
 if [[ "$err_rc" -ne 0 ]]; then

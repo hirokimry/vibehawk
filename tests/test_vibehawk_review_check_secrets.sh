@@ -96,8 +96,10 @@ else
 fi
 
 # 6. GITHUB_OUTPUT 未設定だと早期失敗する（set -u + : ${VAR:?msg}）
+# GitHub Actions runner では GITHUB_OUTPUT が親シェル env から子へ継承されるため、
+# 単に「assign しない」だけでは不十分。env -u GITHUB_OUTPUT で子 env から明示除去する（PR #185 と同じパターン）。
 set +e
-err_out="$(APP_ID=a PRIVATE_KEY=b OAUTH_TOKEN=c bash "$SCRIPT" 2>&1)"
+err_out="$(env -u GITHUB_OUTPUT APP_ID=a PRIVATE_KEY=b OAUTH_TOKEN=c bash "$SCRIPT" 2>&1)"
 err_rc=$?
 set -e
 if [[ "$err_rc" -ne 0 ]] && echo "$err_out" | grep -qF "GITHUB_OUTPUT"; then
