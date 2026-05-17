@@ -34,13 +34,49 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
+WORKFLOW_RAW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
 
-if [[ ! -f "$WORKFLOW" ]]; then
-  fail "${WORKFLOW} が存在しない"
+if [[ ! -f "$WORKFLOW_RAW" ]]; then
+  fail "${WORKFLOW_RAW} が存在しない"
   exit 1
 fi
-pass "${WORKFLOW} が存在する"
+pass "${WORKFLOW_RAW} が存在する"
+
+# Issue #176: ラッパー展開
+# `run: bash scripts/ci/vibehawk-review/<name>.sh` を当該 .sh の中身に inline 展開した
+# 「擬似 yaml」を作成する。本テストは awk で run ブロック本体を抽出して bash 実行するため、
+# wrapper-call 形式（1 行）のままでは run ブロックを抽出できない（line 1 のラッパー呼び出ししか
+# 取れない）。展開後の yaml に対して既存の awk 抽出ロジックを適用することで、Issue #176 の
+# 挙動不変リファクタを越えて本ステップ実行検証が維持される。
+WORKFLOW_EXPANDED_TMP="$(mktemp)"
+trap 'rm -f "$WORKFLOW_EXPANDED_TMP"' EXIT
+python3 - "$WORKFLOW_RAW" "$REPO_ROOT" > "$WORKFLOW_EXPANDED_TMP" <<'PYEOF'
+import sys, os, re
+
+src_path = sys.argv[1]
+repo_root = sys.argv[2]
+with open(src_path) as f:
+    yaml_text = f.read()
+
+pattern = re.compile(r'^(\s+)run:\s+bash\s+(scripts/ci/\S+\.sh)\s*$', re.MULTILINE)
+
+def replace(match):
+    indent = match.group(1)
+    rel = match.group(2).strip()
+    abs_path = os.path.join(repo_root, rel)
+    if os.path.isfile(abs_path):
+        with open(abs_path) as g:
+            content = g.read()
+        indented = ''.join(f"{indent}  {line}" for line in content.splitlines(keepends=True))
+        if not indented.endswith('\n'):
+            indented += '\n'
+        return f"{indent}run: |\n{indented.rstrip(chr(10))}"
+    return match.group(0)
+
+sys.stdout.write(pattern.sub(replace, yaml_text))
+PYEOF
+
+WORKFLOW="$WORKFLOW_EXPANDED_TMP"
 
 echo "=== Issue #152 / #164 新 step「vibehawk bundled review を post」の実行検証 ==="
 
