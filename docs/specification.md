@@ -191,12 +191,32 @@ fi
 
 未解決の指摘が残っていれば「直して」（request_changes）、全部解決していれば「OK」（approve）を毎回発行し直す。状態は GitHub 側にあるので Bot 側の永続化不要。
 
+#### event 判定の責務分離（Issue #166）
+
+event (APPROVE / REQUEST_CHANGES) の判定は **workflow step が決定論的に行う**（Claude prompt は判定しない）。Claude が確率的応答で event を誤決定する余地を構造的に消すため、Issue #166 で判定ロジックを Claude prompt から専用 workflow step `decide_event` に移管した。
+
+| 責務 | 主体 |
+|------|------|
+| body（severity 別件数を含むサマリ）と `comments[]`（severity 絵文字を冒頭付与した inline 指摘）の生成 | Claude prompt |
+| `event` フィールド（schema 上の placeholder、`COMMENT` 固定で返す） | Claude prompt |
+| reviewThreads の unresolved 数取得（`gh api graphql`）と `comments[].body` 冒頭絵文字（🔴/🟠）の severity 集計 | workflow step `decide_event` |
+| 上記 2 つから event 値（APPROVE / REQUEST_CHANGES）を算出 | workflow step `decide_event` |
+| Claude が返した event placeholder を `decide_event` 出力で jq により上書きしてから bundled POST | workflow step `vibehawk bundled review を post` |
+
+判定ルール（workflow step 内、`templates/.github/workflows/vibehawk-review.yml` の `decide_event` step 実装と一致）:
+
 ```text
-[Step 1] gh api で PR の全 review thread を取得
-[Step 2] resolved / unresolved の数をカウント
-[Step 3] unresolved == 0 なら gh pr review --approve
-[Step 4] unresolved >= 1 なら gh pr review --request-changes
+[Step 1] gh api graphql で reviewThreads(first: 100) を取得し、isResolved == false の数を jq でカウント
+[Step 2] comments[].body の冒頭絵文字 (🔴 Critical / 🟠 Major) を jq.startswith() で集計
+[Step 3] unresolved >= 1 → decided_event=REQUEST_CHANGES
+[Step 4] 新規 Critical/Major >= 1 → decided_event=REQUEST_CHANGES
+[Step 5] それ以外 → decided_event=APPROVE
+[Step 6] bundled POST step が jq --arg ev "$decided_event" '.event = $ev' で上書きしてから POST
 ```
+
+旧設計（Issue #121 時点）では上記 [Step 1]〜[Step 5] が Claude prompt 内で実行され、JSON の event フィールドに書き込まれていた。Issue #166 で判定主体を Claude → workflow step に移したことで、Claude の確率的応答に依存しない決定論的な event 決定が実現された。
+
+> **挙動不変性**: 判定ルール自体は旧 prompt 内ロジックの 1:1 移植であり、入力（unresolved 数 + Critical/Major 件数）が同じなら出力（APPROVE / REQUEST_CHANGES）も同じ。リファクタリングであり、merge gate の挙動は変わらない。
 
 ### status check 仕様（Issue #121-C1、required status check による merge gating）
 
@@ -238,10 +258,15 @@ bundled review API の approve / request_changes 投稿（PR #122、補助情報
 |---|---|---|
 | `APPROVED` | `success` | merge OK（LLM が指摘なしと判断して承認） |
 | `CHANGES_REQUESTED` | `failure` | merge ブロック（未解決指摘あり） |
-| `COMMENTED` 等その他 | `success` | LLM がコードを観察し指摘なしと判断した結果（防御的扱い、Issue #162）|
+| `COMMENTED` 等その他 | `success` | bundled POST が成立した防御的経路（Issue #162 / Issue #166）|
 | review 未検出（レビュー実行前・スキップ・bundled POST 失敗） | `neutral` | informational（required check では failure 扱いされない） |
 
-> **Issue #162**: 旧表では `COMMENTED` 等を `neutral` にしていたが、コードが綺麗で指摘 0 件の PR で `vibehawk` check が灰色「未投稿」表示になり MVV「merge gate を構築する道具」に矛盾していた（PR #159 で実証）。Claude prompt 側で「指摘 0 件でも `event=APPROVE`・空 `comments[]` で JSON 書き出し義務」を明示することで通常経路は `APPROVED → success` で緑になる。`COMMENTED` を `success` に倒すのは Claude が `event` を誤決定した場合の防御的フォールバック。`neutral` は「レビュー未実行・bundled POST 失敗」のみに限定する。
+> **Issue #162 + Issue #166 の合流**: 旧表では `COMMENTED` 等を `neutral` にしていたが、コードが綺麗で指摘 0 件の PR で `vibehawk` check が灰色「未投稿」表示になり MVV「merge gate を構築する道具」に矛盾していた（PR #159 で実証）。Issue #162 で「指摘 0 件でも `event=APPROVE` を強制」する prompt 強化を行い、Issue #166 で event 判定そのものを workflow step (`decide_event`) に移管した。現在の設計では:
+> - **Claude prompt は `event=COMMENT` placeholder を返す**（schema enum 通過用、Issue #166）
+> - **workflow step `decide_event` が APPROVE / REQUEST_CHANGES を決定論的に算出** し、bundled POST step が jq で `.event` を上書きしてから POST する
+> - 通常経路は `decide_event` の判定により `APPROVED → success` または `CHANGES_REQUESTED → failure` で確定する
+> - `COMMENTED → success` は **防御的フォールバック**: `decide_event` step の現行判定ルール（unresolved + Critical/Major → REQUEST_CHANGES / それ以外 → APPROVE）は `COMMENT` を出力するコードパスを持たないため、通常運用では `COMMENTED` 経路は発生しない。`decide_event` skip / `DECIDED_EVENT` 空時の上書き不発で Claude の `COMMENT` placeholder がそのまま POST された場合のみ到達する
+> - `neutral` は「レビュー未実行・bundled POST 失敗」のみに限定する
 
 `check_secrets` 未設定時は step 自体が `if: steps.check_secrets.outputs.ready == 'true'` ガードで skip され、check 自体が post されない（既存ガード継承）。
 
