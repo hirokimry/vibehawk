@@ -30,18 +30,58 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
+WORKFLOW_RAW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
 
 echo "=== templates/.github/workflows/vibehawk-review.yml 検証 ==="
 
 # ファイル存在（前提: 不在なら全後続テスト無意味）
-if [[ -f "$WORKFLOW" ]]; then
+if [[ -f "$WORKFLOW_RAW" ]]; then
   pass "templates/.github/workflows/vibehawk-review.yml が存在する"
 else
   fail "templates/.github/workflows/vibehawk-review.yml が存在しない"
   echo "=== 結果: $PASSED passed, $FAILED failed ==="
   exit 1
 fi
+
+# Issue #176: ラッパー展開
+# `run: bash scripts/ci/vibehawk-review/<name>.sh` のような wrapper-call 行は、
+# 当該 .sh の中身を本来の `run: |` ブロックの位置に inline 展開した「擬似 yaml」を
+# 作って、後続の `awk '/id: .../, /^[[:space:]]+- name:/'` ベースのテストが
+# step 内容を見られるようにする（Issue #176 の挙動不変リファクタの単体テスト維持）。
+# 展開は副作用のない tempfile に書き出し、$WORKFLOW 変数を切り替えるだけで済むため
+# 後続の awk / grep ロジックは無改変で動く。
+WORKFLOW_EXPANDED_TMP="$(mktemp)"
+trap 'rm -f "$WORKFLOW_EXPANDED_TMP"' EXIT
+python3 - "$WORKFLOW_RAW" "$REPO_ROOT" > "$WORKFLOW_EXPANDED_TMP" <<'PYEOF'
+import sys, os, re
+
+src_path = sys.argv[1]
+repo_root = sys.argv[2]
+with open(src_path) as f:
+    yaml_text = f.read()
+
+# ラッパー呼び出し行（例: `        run: bash scripts/ci/vibehawk-review/check-secrets.sh`）を
+# 当該 .sh の中身 inline 展開した `run: |` ブロックに置き換える。インデントは run: 行と同じ
+# leading whitespace の +2 スペース（GitHub Actions の標準）に揃える。
+pattern = re.compile(r'^(\s+)run:\s+bash\s+(scripts/ci/\S+\.sh)\s*$', re.MULTILINE)
+
+def replace(match):
+    indent = match.group(1)
+    rel = match.group(2).strip()
+    abs_path = os.path.join(repo_root, rel)
+    if os.path.isfile(abs_path):
+        with open(abs_path) as g:
+            content = g.read()
+        indented = ''.join(f"{indent}  {line}" for line in content.splitlines(keepends=True))
+        if not indented.endswith('\n'):
+            indented += '\n'
+        return f"{indent}run: |\n{indented.rstrip(chr(10))}"
+    return match.group(0)
+
+sys.stdout.write(pattern.sub(replace, yaml_text))
+PYEOF
+
+WORKFLOW="$WORKFLOW_EXPANDED_TMP"
 
 # コメント行を除外したワークフロー本文（行頭 # を除外）
 WORKFLOW_BODY="$(awk '!/^[[:space:]]*#/' "$WORKFLOW")"

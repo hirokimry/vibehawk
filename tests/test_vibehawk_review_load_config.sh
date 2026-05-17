@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# scripts/ci/vibehawk-review/load-config.sh の単体テスト。
+#
+# `.vibehawk.yaml` 不在時のデフォルト値、存在時のキーマッピング、
+# depth の段階的劣化（full / focused / lightweight / summary_only）を網羅する。
+#
+# 注意: load-config.sh は `.vibehawk.yaml` を CWD から読むため、各シナリオ
+# で隔離 tempdir に cd して実行する。
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT="${REPO_ROOT}/scripts/ci/vibehawk-review/load-config.sh"
+
+PASSED=0
+FAILED=0
+
+pass() {
+  echo "  ✓ $1"
+  PASSED=$((PASSED + 1))
+}
+
+fail() {
+  echo "  ✗ $1"
+  FAILED=$((FAILED + 1))
+}
+
+echo "=== scripts/ci/vibehawk-review/load-config.sh 単体テスト ==="
+
+if [[ -f "$SCRIPT" ]]; then
+  pass "load-config.sh が存在する"
+else
+  fail "load-config.sh が存在しない"
+  exit 1
+fi
+
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+run_in() {
+  # Usage: run_in <workdir> <files_count>
+  local workdir="$1" files_count="$2"
+  local output_file="${TMP_ROOT}/github_output"
+  : > "$output_file"
+  local stdout_file="${TMP_ROOT}/stdout"
+  local rc=0
+  (
+    cd "$workdir"
+    FILES_COUNT="$files_count" GITHUB_OUTPUT="$output_file" bash "$SCRIPT"
+  ) > "$stdout_file" 2>&1 || rc=$?
+  echo "$rc"
+}
+
+OUT="${TMP_ROOT}/github_output"
+
+# シナリオ 1: .vibehawk.yaml 不在 → デフォルト値 + depth=full
+WORK1="${TMP_ROOT}/case1"
+mkdir -p "$WORK1"
+rc=$(run_in "$WORK1" 5)
+if [[ "$rc" -eq 0 ]] \
+   && grep -qx "config_source=default" "$OUT" \
+   && grep -qx "language=en" "$OUT" \
+   && grep -qx "files_count=5" "$OUT" \
+   && grep -qx "depth=full" "$OUT" \
+   && grep -qFx "path_filters=[]" "$OUT" \
+   && grep -qFx "path_instructions=[]" "$OUT"; then
+  pass ".vibehawk.yaml 不在 → デフォルト値 + depth=full"
+else
+  fail "デフォルトシナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+fi
+
+# シナリオ 2: .vibehawk.yaml あり + language=ja + path_filters/instructions あり
+WORK2="${TMP_ROOT}/case2"
+mkdir -p "$WORK2"
+cat > "$WORK2/.vibehawk.yaml" <<'EOF'
+language: ja
+reviews:
+  size_limits:
+    full_review_files: 10
+    focused_review_files: 50
+    skip_inline_files: 1000
+  path_filters:
+    - "node_modules/**"
+    - "dist/**"
+  path_instructions:
+    - path: "src/auth/**"
+      instructions: "認証フロー観点で見て"
+EOF
+
+# python3 + pyyaml が利用可能か確認、なければスキップ
+if python3 -c "import yaml" 2>/dev/null; then
+  rc=$(run_in "$WORK2" 5)
+  if [[ "$rc" -eq 0 ]] \
+     && grep -qx "config_source=vibehawk" "$OUT" \
+     && grep -qx "language=ja" "$OUT" \
+     && grep -qx "files_count=5" "$OUT" \
+     && grep -qx "depth=full" "$OUT" \
+     && grep -qF 'path_filters=["node_modules/**","dist/**"]' "$OUT" \
+     && grep -qF 'path_instructions=[{"path":"src/auth/**","instructions":"認証フロー観点で見て"}]' "$OUT"; then
+    pass ".vibehawk.yaml 読込 → language=ja + path_filters/instructions が JSON 化される"
+  else
+    fail ".vibehawk.yaml 読込シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+  fi
+
+  # シナリオ 3: depth=focused（FILES_COUNT が full_review_files 以上、focused_review_files 未満）
+  rc=$(run_in "$WORK2" 20)
+  if [[ "$rc" -eq 0 ]] && grep -qx "depth=focused" "$OUT"; then
+    pass "FILES_COUNT=20 (10 ≤ < 50) → depth=focused"
+  else
+    fail "focused シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+  fi
+
+  # シナリオ 4: depth=lightweight（focused_review_files 以上、skip_inline_files 未満）
+  rc=$(run_in "$WORK2" 100)
+  if [[ "$rc" -eq 0 ]] && grep -qx "depth=lightweight" "$OUT"; then
+    pass "FILES_COUNT=100 (50 ≤ < 1000) → depth=lightweight"
+  else
+    fail "lightweight シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+  fi
+
+  # シナリオ 5: depth=summary_only（skip_inline_files 以上）
+  rc=$(run_in "$WORK2" 2000)
+  if [[ "$rc" -eq 0 ]] && grep -qx "depth=summary_only" "$OUT"; then
+    pass "FILES_COUNT=2000 (≥ 1000) → depth=summary_only"
+  else
+    fail "summary_only シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+  fi
+else
+  echo "  ! python3 + pyyaml が利用不可のため .vibehawk.yaml 読込シナリオをスキップ"
+fi
+
+# シナリオ 6: FILES_COUNT 未設定 → 0 として扱い depth=full
+rc=$(run_in "$WORK1" "")
+if [[ "$rc" -eq 0 ]] \
+   && grep -qx "files_count=0" "$OUT" \
+   && grep -qx "depth=full" "$OUT"; then
+  pass "FILES_COUNT 未設定 → 0 として扱い depth=full"
+else
+  fail "FILES_COUNT 未設定シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+fi
+
+# シナリオ 7: GITHUB_OUTPUT 未設定 → 非 0 終了
+set +e
+(cd "$WORK1" && FILES_COUNT=5 bash "$SCRIPT") >/dev/null 2>&1
+err_rc=$?
+set -e
+if [[ "$err_rc" -ne 0 ]]; then
+  pass "GITHUB_OUTPUT 未設定で非 0 終了する"
+else
+  fail "GITHUB_OUTPUT 未設定でも 0 終了してしまった"
+fi
+
+echo "=== 結果: $PASSED passed, $FAILED failed ==="
+[[ $FAILED -eq 0 ]]
