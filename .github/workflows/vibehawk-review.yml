@@ -458,6 +458,8 @@ jobs:
             2. event を決定（APPROVED / REQUEST_CHANGES）
             3. `$GITHUB_WORKSPACE/vibehawk-review.json` に `{event, body, commit_id, comments}` を書き出す
 
+            **指摘が 0 件であっても、このファイルは必ず書き出すこと**（`event=APPROVE`・`comments=[]` として出力）。JSON を書き出さない場合、後続の `vibehawk status check を post` step が review を見つけられず neutral に倒れ、required status check が灰色「未投稿」のまま残る（PR #159 で実証）。
+
             **`gh api -X POST` で bundled review を POST しない**。POST は workflow の次の step が決定論的に 1 回実行する。POST を試し打ちで実行すると同一 workflow run 内で利用者の PR に複数の review が残る（PR #151 で観測されたノイズ事象、Issue #152）。
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
