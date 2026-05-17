@@ -43,19 +43,7 @@ jobs:
         run: jq --version
 
       - name: 全テスト実行
-        run: |
-          shopt -s nullglob
-          files=(tests/test_*.sh)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "テストファイルが見つかりません"
-            exit 1
-          fi
-          failed=0
-          for f in "${files[@]}"; do
-            echo "=== $f ==="
-            bash "$f" || failed=1
-          done
-          exit "$failed"
+        run: bash scripts/ci/test/run-all-tests.sh
 
   # matrix ジョブの結果を集約し、Branch Protection の required check として機能する
   test:
@@ -63,12 +51,9 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
+      - uses: actions/checkout@v4
+
       - name: 全 matrix ジョブの成功を確認
-        run: |
-          result="${{ needs.test-matrix.result }}"
-          if [ "$result" = "success" ] || [ "$result" = "cancelled" ]; then
-            echo "test-matrix: $result"
-            exit 0
-          fi
-          echo "test-matrix が失敗しました: $result"
-          exit 1
+        env:
+          MATRIX_RESULT: ${{ needs.test-matrix.result }}
+        run: bash scripts/ci/test/verify-matrix-result.sh
