@@ -158,12 +158,17 @@ else
   fail "stdout に判定結果行が出ない: '$out'"
 fi
 
+# 異常系（必須環境変数の欠落検証）。
+# GitHub Actions runner では GITHUB_OUTPUT が親シェル env から子へ継承されるため、
+# 単に「assign しない」だけでは不十分。env -u <VAR> で子 env から明示的に除去する。
+# 参考: PR #184 の CI 失敗で発覚（macOS / Ubuntu の test-matrix）。
+
 # 10. 異常系: FILE_COUNT 未設定 → exit 非 0
 set +e
 err_out="$(
   GITHUB_OUTPUT="${WORK_DIR}/github_output" \
   CHANGED_FILES="${WORK_DIR}/changed_files.txt" \
-  bash "$TARGET" 2>&1
+  env -u FILE_COUNT bash "$TARGET" 2>&1
 )"
 err_code=$?
 set -e
@@ -178,7 +183,7 @@ set +e
 err_out="$(
   FILE_COUNT=0 \
   CHANGED_FILES="${WORK_DIR}/changed_files.txt" \
-  bash "$TARGET" 2>&1
+  env -u GITHUB_OUTPUT bash "$TARGET" 2>&1
 )"
 err_code=$?
 set -e

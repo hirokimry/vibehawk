@@ -119,13 +119,16 @@ else
   fail "output[summary] に出典が含まれない"
 fi
 
+# 異常系（必須環境変数の欠落検証）。
+# 念のため `env -u <VAR>` で子 env から明示的に除去する（PR #184 CI 失敗対策）。
+
 # 2. 異常系: HEAD_SHA 未設定 → exit 非 0
 set +e
 err_out="$(
   PATH="$STUB_DIR:$PATH" \
   GH_TOKEN=dummy \
   REPO=hirokimry/vibehawk \
-  bash "$TARGET" 2>&1
+  env -u HEAD_SHA bash "$TARGET" 2>&1
 )"
 err_code=$?
 set -e
@@ -141,7 +144,7 @@ err_out="$(
   PATH="$STUB_DIR:$PATH" \
   GH_TOKEN=dummy \
   HEAD_SHA=abc \
-  bash "$TARGET" 2>&1
+  env -u REPO bash "$TARGET" 2>&1
 )"
 err_code=$?
 set -e

@@ -129,6 +129,11 @@ else
   fail "stdout に件数行が出ない: '$out'"
 fi
 
+# 異常系（必須環境変数の欠落検証）。
+# GitHub Actions runner では GITHUB_OUTPUT が親シェル env から子へ継承されるため、
+# 単に「assign しない」だけでは不十分。env -u <VAR> で子 env から明示的に除去する。
+# 参考: PR #184 の CI 失敗で発覚（macOS / Ubuntu の test-matrix）。
+
 # 2. 異常系: PR_NUMBER 未設定で exit 非 0
 set +e
 err_out="$(
@@ -137,7 +142,7 @@ err_out="$(
   GH_TOKEN=dummy \
   REPO=hirokimry/vibehawk \
   GITHUB_OUTPUT="$GITHUB_OUTPUT_FILE" \
-  bash "$TARGET" 2>&1
+  env -u PR_NUMBER bash "$TARGET" 2>&1
 )"
 err_code=$?
 set -e
@@ -155,7 +160,7 @@ err_out="$(
   GH_TOKEN=dummy \
   PR_NUMBER=42 \
   GITHUB_OUTPUT="$GITHUB_OUTPUT_FILE" \
-  bash "$TARGET" 2>&1
+  env -u REPO bash "$TARGET" 2>&1
 )"
 err_code=$?
 set -e
@@ -173,7 +178,7 @@ err_out="$(
   GH_TOKEN=dummy \
   PR_NUMBER=42 \
   REPO=hirokimry/vibehawk \
-  bash "$TARGET" 2>&1
+  env -u GITHUB_OUTPUT bash "$TARGET" 2>&1
 )"
 err_code=$?
 set -e
