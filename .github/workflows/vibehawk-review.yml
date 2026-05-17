@@ -462,7 +462,7 @@ jobs:
             1. （INCREMENTAL_MODE=true なら）auto_resolve で旧指摘を resolved 化
             2. **最終 assistant message として `{event, body, commit_id, comments}` の schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`event` は placeholder `COMMENT` 固定、Issue #166）
 
-            **指摘が 0 件であっても、必ず schema 適合 JSON を最終 assistant message として返すこと**（`event=APPROVE`・`comments=[]` で OK）。応答が空になると `outputs.structured_output` が空となり後続 bundled POST step が skip → status check neutral に倒れ、required status check が灰色「未投稿」のまま残る（PR #159 で実証された Issue #164 の症状）。
+            **指摘が 0 件であっても、必ず schema 適合 JSON を最終 assistant message として返すこと**（`event=COMMENT`・`comments=[]` で OK、Issue #166 で placeholder 固定）。応答が空になると `outputs.structured_output` が空となり後続 bundled POST step が skip → status check neutral に倒れ、required status check が灰色「未投稿」のまま残る（PR #159 で実証された Issue #164 の症状）。
 
             **`gh api -X POST` で bundled review を POST しない**。POST は workflow の次の step が `outputs.structured_output` を読んで決定論的に 1 回実行する。POST を試し打ちで実行すると同一 workflow run 内で利用者の PR に複数の review が残る（PR #151 で観測されたノイズ事象、Issue #152）。
 
