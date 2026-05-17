@@ -197,7 +197,7 @@ jobs:
             source_label="vibehawk"
           fi
 
-          # デフォルト値（CodeRabbit 互換、docs/cost-analysis.md 段階的劣化型）
+          # デフォルト値（docs/cost-analysis.md 段階的劣化型、`.vibehawk.yaml` 不在時に適用）
           language="en"
           full_review_files=30
           focused_review_files=80
