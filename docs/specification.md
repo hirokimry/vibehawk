@@ -236,9 +236,12 @@ bundled review API の approve / request_changes 投稿（PR #122、補助情報
 
 | 直前 review の `state` | conclusion | 意味 |
 |---|---|---|
-| `APPROVED` | `success` | merge OK |
-| `CHANGES_REQUESTED` | `failure` | merge ブロック |
-| `COMMENTED` 等その他 / review 未検出 | `neutral` | informational（required check では failure 扱いされない） |
+| `APPROVED` | `success` | merge OK（LLM が指摘なしと判断して承認） |
+| `CHANGES_REQUESTED` | `failure` | merge ブロック（未解決指摘あり） |
+| `COMMENTED` 等その他 | `success` | LLM がコードを観察し指摘なしと判断した結果（防御的扱い、Issue #162）|
+| review 未検出（レビュー実行前・スキップ・bundled POST 失敗） | `neutral` | informational（required check では failure 扱いされない） |
+
+> **Issue #162**: 旧表では `COMMENTED` 等を `neutral` にしていたが、コードが綺麗で指摘 0 件の PR で `vibehawk` check が灰色「未投稿」表示になり MVV「merge gate を構築する道具」に矛盾していた（PR #159 で実証）。Claude prompt 側で「指摘 0 件でも `event=APPROVE`・空 `comments[]` で JSON 書き出し義務」を明示することで通常経路は `APPROVED → success` で緑になる。`COMMENTED` を `success` に倒すのは Claude が `event` を誤決定した場合の防御的フォールバック。`neutral` は「レビュー未実行・bundled POST 失敗」のみに限定する。
 
 `check_secrets` 未設定時は step 自体が `if: steps.check_secrets.outputs.ready == 'true'` ガードで skip され、check 自体が post されない（既存ガード継承）。
 
