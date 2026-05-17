@@ -110,11 +110,12 @@ jobs:
         if: steps.check_secrets.outputs.ready == 'true'
         run: |
           set -euo pipefail
+          # 設定ファイル選択（.vibehawk.yaml 単独受付、Issue #10 / #172）
+          # Issue #172 で .coderabbit.yaml フォールバック分岐を撤廃。
+          # `.vibehawk.yaml` 不在時は下記の default language ('en') に倒れる。
           config_file=""
           if [[ -f ".vibehawk.yaml" ]]; then
             config_file=".vibehawk.yaml"
-          elif [[ -f ".coderabbit.yaml" ]]; then
-            config_file=".coderabbit.yaml"
           fi
 
           language="en"

@@ -2,6 +2,15 @@
 
 vibehawk のリリース履歴。各バージョンの主要変更点を記録する。
 
+## Unreleased
+
+### 💥 BREAKING CHANGES
+
+- 💥 **#172 fix: `.coderabbit.yaml` フォールバック読み込みを撤廃**: vibehawk-review.yml / vibehawk-chat.yml の `vibehawk_config` step が読み込む設定ソースを `.vibehawk.yaml` 単独受付に絞った。`source_label` の値域も `vibehawk` / `default` の 2 値に縮退（旧 `coderabbit` 値は撤廃）
+  - **影響**: `.coderabbit.yaml` だけを持つ利用者は、本変更後は default 挙動（`language=en` / `full_review_files=30` / `focused_review_files=80` / `skip_inline_files=3000` / `path_filters=[]` / `path_instructions=[]`）に倒れる
+  - **移行**: 同スキーマで `.vibehawk.yaml` を新規作成すれば従前同等の設定を引き継げる
+  - **背景**: v0.1.0（Issue #10）で実装した CodeRabbit 互換読み込みは CEO 確定方針（2026-05-18）「互換機能は不要、削除すべき」に基づき撤廃。CodeRabbit と vibehawk は別プロダクトであり、vibehawk を利用するなら `.vibehawk.yaml` を配置するのが筋
+
 ## v0.1.0 - 2026-05-10
 
 ### 🚀 vibehawk が AI エージェントによる PR 自動レビューを実行できるようになった (Epic #1)

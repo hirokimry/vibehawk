@@ -58,6 +58,32 @@ vibehawk は以下の利用者層を主要ターゲットとする:
 | 状態管理（GitHub をストアとして使う） | PR コメント・resolved 状態などを GitHub 上で直接読み書きする |
 | status check 投稿（required status check） | **merge gate の主軸**。`check-runs` API で `vibehawk` という固定 name の check を post し、利用者は branch protection の `required_status_checks` に登録することで AI レビュー必須 merge gate を構築する。AI が `required_approving_review_count` をバイパスする構造を避けるため、approve / request_changes 経路ではなく status check 経路を主軸に置く設計（Issue #121-C1 / #138） |
 
+### 設定ソース仕様（Issue #10 / #172）
+
+vibehawk-review および vibehawk-chat の `vibehawk_config` step が読み込む設定ソースは `.vibehawk.yaml` 単独受付。
+
+| 観点 | 仕様 |
+|---|---|
+| 設定ファイル | `.vibehawk.yaml`（リポジトリルート、利用者が任意で配置） |
+| 不在時の挙動 | 下記 default 値で動作（設定ソース不在を許容） |
+| `source_label` 値域 | `vibehawk`（設定ファイルあり） / `default`（設定ファイル不在）の 2 値のみ。Claude prompt 内 `CONFIG_SOURCE` 変数として渡され、サマリ本文の冒頭に「使用設定: $CONFIG_SOURCE」として表示される |
+| 対象 workflow | `vibehawk-review.yml`（フル設定: language / size_limits / path_filters / path_instructions）と `vibehawk-chat.yml`（locale のみ: language） |
+
+#### default 値
+
+| キー | default |
+|---|---|
+| `language` | `en` |
+| `reviews.size_limits.full_review_files` | `30` |
+| `reviews.size_limits.focused_review_files` | `80` |
+| `reviews.size_limits.skip_inline_files` | `3000` |
+| `reviews.path_filters` | `[]` |
+| `reviews.path_instructions` | `[]` |
+
+#### Issue #172 における breaking change
+
+v0.1.0（Issue #10）で実装されていた `.coderabbit.yaml` 互換読み込みフォールバックは Issue #172 で撤廃された。`.coderabbit.yaml` だけを持つ利用者は、本変更後は default 挙動に倒れる（CodeRabbit と vibehawk は別プロダクトであり、vibehawk を利用するなら `.vibehawk.yaml` を配置するという CEO 確定方針）。移行先として `.vibehawk.yaml` を新規作成する（同スキーマ）。
+
 ### 補助機能
 
 | 機能 | 概要 | 状態 |

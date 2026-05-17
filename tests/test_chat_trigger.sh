@@ -398,9 +398,9 @@ else
   fail "allowedTools に許可外の項目: ${unexpected_tools[*]}"
 fi
 
-# CodeRabbit PR #87 第 5 ラウンド Major 指摘: locale 解決ルール検証
-# 仕様: .vibehawk.yaml 優先 → .coderabbit.yaml fallback → 未設定時 'en'
-# vibehawk_config ステップに 3 経路すべての分岐ロジックが存在することを確認
+# Issue #172: locale 解決ルール検証
+# 仕様: .vibehawk.yaml 単独 → 未設定時 'en'（CodeRabbit PR #87 で導入された .coderabbit.yaml fallback は #172 で撤廃）
+# vibehawk_config ステップに 2 経路すべての分岐ロジックが存在することを確認
 
 # vibehawk_config ステップが存在
 if grep -F 'id: vibehawk_config' "$CHAT_WORKFLOW" > /dev/null; then
@@ -409,19 +409,19 @@ else
   fail "vibehawk_config ステップが不在（locale 解決が機能しない）"
 fi
 
-# .vibehawk.yaml 優先のチェック（先に file -f .vibehawk.yaml を見る）
-if grep -F '.vibehawk.yaml' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F '.coderabbit.yaml' "$CHAT_WORKFLOW" > /dev/null; then
-  # 優先順序: .vibehawk.yaml が elif より先にあること
-  vibehawk_line="$(grep -nF '.vibehawk.yaml' "$CHAT_WORKFLOW" | head -1 | cut -d: -f1)"
-  coderabbit_line="$(grep -nF '.coderabbit.yaml' "$CHAT_WORKFLOW" | head -1 | cut -d: -f1)"
-  if [[ -n "$vibehawk_line" ]] && [[ -n "$coderabbit_line" ]] && [[ "$vibehawk_line" -lt "$coderabbit_line" ]]; then
-    pass "locale 解決優先順序: .vibehawk.yaml が .coderabbit.yaml より先に評価される"
-  else
-    fail "locale 解決優先順序が不正: .vibehawk.yaml(L${vibehawk_line:-?}) vs .coderabbit.yaml(L${coderabbit_line:-?})"
-  fi
+# .vibehawk.yaml 単独受付の検証（Issue #172 で .coderabbit.yaml fallback 撤廃）
+if grep -F '.vibehawk.yaml' "$CHAT_WORKFLOW" > /dev/null; then
+  pass ".vibehawk.yaml が参照される（locale 解決の単独設定ソース）"
 else
-  fail ".vibehawk.yaml / .coderabbit.yaml の両方が参照されていない"
+  fail ".vibehawk.yaml の参照が不足（locale 解決が機能しない）"
+fi
+
+# .coderabbit.yaml の読込経路（ファイル存在 check / config_file 代入）が撤廃されている
+if ! grep -F '[[ -f ".coderabbit.yaml" ]]' "$CHAT_WORKFLOW" > /dev/null && \
+   ! grep -F 'config_file=".coderabbit.yaml"' "$CHAT_WORKFLOW" > /dev/null; then
+  pass ".coderabbit.yaml の読込経路が存在しない（Issue #172 fallback 撤廃）"
+else
+  fail ".coderabbit.yaml の読込経路が残っている（Issue #172 で撤廃済のはず）"
 fi
 
 # 未設定時のデフォルト 'en' フォールバック
