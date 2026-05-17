@@ -466,12 +466,34 @@ else
   fail "vibehawk_config ステップが存在しない（Issue #10 未実装）"
 fi
 
-# Issue #10: .vibehawk.yaml 優先 / .coderabbit.yaml fallback
-if grep -F '.vibehawk.yaml' "$WORKFLOW" > /dev/null && \
-   grep -F '.coderabbit.yaml' "$WORKFLOW" > /dev/null; then
-  pass ".vibehawk.yaml / .coderabbit.yaml の両方が参照される（Issue #10）"
+# Issue #10 / #172: .vibehawk.yaml 単独受付（.coderabbit.yaml fallback は #172 で撤廃）
+if grep -F '.vibehawk.yaml' "$WORKFLOW" > /dev/null; then
+  pass ".vibehawk.yaml が参照される（Issue #10）"
 else
-  fail "設定ファイル両形式の参照が不足（Issue #10）"
+  fail ".vibehawk.yaml の参照が不足（Issue #10 未実装）"
+fi
+
+# Issue #172: .coderabbit.yaml の読込経路（ファイル存在 check / config_file 代入）が撤廃されている
+# （Issue 履歴を残す情報コメントとしての文字列言及は許容する）
+if ! grep -F '[[ -f ".coderabbit.yaml" ]]' "$WORKFLOW" > /dev/null && \
+   ! grep -F 'config_file=".coderabbit.yaml"' "$WORKFLOW" > /dev/null; then
+  pass ".coderabbit.yaml の読込経路が存在しない（Issue #172 fallback 撤廃）"
+else
+  fail ".coderabbit.yaml の読込経路が残っている（Issue #172 で撤廃済のはず）"
+fi
+
+# Issue #172: source_label の値域は vibehawk / default の 2 値のみ（coderabbit は撤廃）
+if grep -F 'source_label="vibehawk"' "$WORKFLOW" > /dev/null && \
+   grep -F 'source_label="default"' "$WORKFLOW" > /dev/null; then
+  pass "source_label の vibehawk / default 2 値が定義されている（Issue #172）"
+else
+  fail "source_label の値域定義が不足（Issue #172、vibehawk / default の両方が必須）"
+fi
+
+if ! grep -F 'source_label="coderabbit"' "$WORKFLOW" > /dev/null; then
+  pass "source_label=\"coderabbit\" の出力経路が存在しない（Issue #172）"
+else
+  fail "source_label=\"coderabbit\" の出力経路が残っている（Issue #172 で撤廃済のはず）"
 fi
 
 # Issue #10: PyYAML 可用性確認 + フォールバック pip install
