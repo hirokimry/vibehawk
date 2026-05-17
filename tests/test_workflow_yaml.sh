@@ -837,5 +837,159 @@ else
   fail "paths-ignore に利用者向け編集可能コメントが含まれない（Issue #65 受け入れ条件 #2）"
 fi
 
+# Issue #166: event 判定ロジックを Claude prompt から workflow step に移管
+# 旧設計（Issue #121）では Claude が prompt 内で severity 分布カウント + reviewThreads
+# の unresolved 数取得 + 判定ルールを実行して JSON の event フィールドに書き込んでいた。
+# これは Claude の確率的応答に依存しており、判定ミス・形式破りの余地が残っていた。
+# Issue #166 で同じ判定ロジックを workflow step (decide_event) で決定論的に再実装し、
+# bundled POST step が decide_event の出力で Claude の event フィールドを上書きする。
+
+# 1. 新 step「vibehawk event を決定」が存在する（Issue #166）
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'vibehawk event を決定' > /dev/null; then
+  pass "新 step「vibehawk event を決定」が存在する（Issue #166）"
+else
+  fail "新 step「vibehawk event を決定」が存在しない（Issue #166、event 判定の workflow step 移管が前提）"
+fi
+
+# 2. decide_event step に id: decide_event が宣言されている（後続 bundled POST step が steps.decide_event.outputs.decided_event を参照するために必須）
+if grep -E "^[[:space:]]+id:[[:space:]]*decide_event[[:space:]]*\$" "$WORKFLOW" > /dev/null; then
+  pass "decide_event step に id: decide_event が宣言されている（Issue #166、outputs 参照用）"
+else
+  fail "decide_event step に id: decide_event が宣言されていない（Issue #166、bundled POST step の outputs 参照に必須）"
+fi
+
+# 3. decide_event step が claude-code-action と bundled POST の間に配置されている
+# 順序: claude_review → decide_event → bundled POST
+# step header（`- name: ...`）の行番号で配置順を比較する。
+# 注意: prompt 本文内にも step 名のテキスト言及があるため、`grep -n '- name: vibehawk bundled review を post'`
+# のように step header の YAML 構造を含む完全形で検索する必要がある。
+claude_review_line=$(grep -n 'id: claude_review' "$WORKFLOW" | head -1 | cut -d: -f1)
+decide_event_line=$(grep -n '^[[:space:]]\+id:[[:space:]]*decide_event[[:space:]]*$' "$WORKFLOW" | head -1 | cut -d: -f1)
+bundled_post_line=$(grep -n '^[[:space:]]\+- name: vibehawk bundled review を post' "$WORKFLOW" | head -1 | cut -d: -f1)
+if [[ -n "$claude_review_line" && -n "$decide_event_line" && -n "$bundled_post_line" ]] \
+   && [[ "$claude_review_line" -lt "$decide_event_line" ]] \
+   && [[ "$decide_event_line" -lt "$bundled_post_line" ]]; then
+  pass "decide_event step が claude_review と bundled POST の間に配置されている（Issue #166、Claude 応答 → 判定 → POST の順序）"
+else
+  fail "decide_event step の配置順が想定外（claude_review=${claude_review_line:-N/A} / decide_event=${decide_event_line:-N/A} / bundled_post=${bundled_post_line:-N/A}、Issue #166）"
+fi
+
+# 4. decide_event step が check_secrets ガードと structured_output 非空ガードを継承
+# 後続の bundled POST と同じ if 条件を使うことで、Claude 応答が無い場合に skip する
+if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F "steps.check_secrets.outputs.ready == 'true'" > /dev/null \
+   && awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F "steps.claude_review.outputs.structured_output != ''" > /dev/null; then
+  pass "decide_event step が check_secrets.ready + structured_output 非空の二重ガードを継承（Issue #166、Claude 応答無し時の安全 skip）"
+else
+  fail "decide_event step のガード条件が想定外（Issue #166、check_secrets.ready + structured_output != '' の両方が必須）"
+fi
+
+# 5. decide_event step が GraphQL reviewThreads クエリを呼ぶ
+# auto_resolve mutation 後の最新 unresolved 状態を取得するため必須
+if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'gh api graphql' > /dev/null \
+   && awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'reviewThreads' > /dev/null \
+   && awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'isResolved' > /dev/null; then
+  pass "decide_event step が gh api graphql で reviewThreads.isResolved を取得（Issue #166）"
+else
+  fail "decide_event step が GraphQL reviewThreads クエリを呼んでいない（Issue #166、unresolved 数の決定論的取得に必須）"
+fi
+
+# 6. decide_event step が jq で comments[].body 冒頭絵文字 (🔴 / 🟠) を集計
+# severity の取り出しは Claude prompt が body 冒頭に絵文字を付与する仕様に依存
+if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'startswith("🔴")' > /dev/null \
+   && awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'startswith("🟠")' > /dev/null; then
+  pass "decide_event step が jq で comments[].body 冒頭絵文字 (🔴 Critical / 🟠 Major) を集計（Issue #166）"
+else
+  fail "decide_event step が Critical/Major 絵文字を jq で集計していない（Issue #166、severity 分布の決定論的算出に必須）"
+fi
+
+# 7. decide_event step が判定ルール 3 段階を実装
+# - unresolved >= 1 → REQUEST_CHANGES（最優先）
+# - 新規 Critical/Major あり → REQUEST_CHANGES
+# - それ以外 → APPROVE
+decide_block="$(awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW")"
+if echo "$decide_block" | grep -F 'unresolved_count' > /dev/null \
+   && echo "$decide_block" | grep -F 'critical_major_count' > /dev/null \
+   && echo "$decide_block" | grep -F 'decided_event="REQUEST_CHANGES"' > /dev/null \
+   && echo "$decide_block" | grep -F 'decided_event="APPROVE"' > /dev/null; then
+  pass "decide_event step が判定ルール 3 段階（unresolved + Critical/Major → REQUEST_CHANGES / それ以外 → APPROVE）を実装（Issue #166）"
+else
+  fail "decide_event step の判定ルール実装が想定外（Issue #166、旧 prompt 内ロジックの 1:1 移植が必須）"
+fi
+
+# 8. decide_event step が decided_event を GITHUB_OUTPUT に出力
+if echo "$decide_block" | grep -E 'echo "decided_event=' > /dev/null; then
+  pass "decide_event step が decided_event を GITHUB_OUTPUT に出力（Issue #166）"
+else
+  fail "decide_event step が decided_event を GITHUB_OUTPUT に出力していない（Issue #166、bundled POST step が参照できない）"
+fi
+
+# 9. bundled POST step の env に DECIDED_EVENT が含まれる
+# steps.decide_event.outputs.decided_event を run ブロックで参照するため env 受け渡しが必須
+# 注意: awk の範囲指定は step header（`- name: vibehawk bundled review を post`）から
+# 次の step header（status check post）まで。prompt 本文内の text 言及を拾わないように
+# `^[[:space:]]+- name:` の YAML 構造で範囲を切る。
+bundled_block="$(awk '/^[[:space:]]+- name: vibehawk bundled review を post/,/^[[:space:]]+- name: vibehawk status check/' "$WORKFLOW")"
+if echo "$bundled_block" | grep -E 'DECIDED_EVENT:[[:space:]]*\$\{\{[[:space:]]*steps\.decide_event\.outputs\.decided_event[[:space:]]*\}\}' > /dev/null; then
+  pass "bundled POST step の env に DECIDED_EVENT が steps.decide_event.outputs.decided_event から渡されている（Issue #166）"
+else
+  fail "bundled POST step の env に DECIDED_EVENT が渡されていない（Issue #166、event 上書きに必須）"
+fi
+
+# 10. bundled POST step が jq で .event を $DECIDED_EVENT に上書きする
+if echo "$bundled_block" | grep -F "jq --arg ev" > /dev/null \
+   && echo "$bundled_block" | grep -F '.event = $ev' > /dev/null; then
+  pass "bundled POST step が jq --arg ev '\$DECIDED_EVENT' '.event = \$ev' で event を上書きする（Issue #166）"
+else
+  fail "bundled POST step が jq による event 上書きを行っていない（Issue #166、決定論的 event 注入が前提）"
+fi
+
+# 11. bundled POST step が DECIDED_EVENT 空時の safe skip を実装
+# `grep -F '-z'` は `-z` を flag と解釈するため `grep -F -- '-z'` で明示的に区切る
+if echo "$bundled_block" | grep -F 'DECIDED_EVENT' | grep -F -- '-z' > /dev/null; then
+  pass "bundled POST step が DECIDED_EVENT 空時の safe skip を実装（Issue #166）"
+else
+  fail "bundled POST step が DECIDED_EVENT 空時の safe skip を実装していない（Issue #166、decide_event 失敗時の防御）"
+fi
+
+# 12. Claude prompt から旧 event 判定セクション「## review event 決定（auto_resolve 後の unresolved 数 + 新規 inline の severity で）」が撤廃されている
+# 旧見出しの正確な文字列が prompt 内に残っていないことを検証（書き換え後の Issue #166 見出しは「Issue #166 で workflow step に移管」を含む）
+if echo "$WORKFLOW_PROMPT" | grep -F '## review event 決定（auto_resolve 後の unresolved 数 + 新規 inline の severity で）' > /dev/null; then
+  fail "Claude prompt に旧 event 判定セクション見出しが残っている（Issue #166、workflow step 移管が前提）"
+else
+  pass "Claude prompt から旧 event 判定セクション見出しが撤廃されている（Issue #166）"
+fi
+
+# 13. Claude prompt に「event 判定は workflow step に移管」と Issue #166 の言及が含まれる
+if echo "$WORKFLOW_PROMPT" | grep -F 'Issue #166' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'workflow step' > /dev/null; then
+  pass "Claude prompt に Issue #166 の言及と workflow step 移管の説明が含まれる（Issue #166）"
+else
+  fail "Claude prompt に Issue #166 / workflow step 移管の言及が含まれない（Issue #166、Claude が旧経路に戻ってしまう）"
+fi
+
+# 14. Claude prompt が event placeholder として COMMENT 固定を指示
+if echo "$WORKFLOW_PROMPT" | grep -F 'placeholder' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'COMMENT' > /dev/null; then
+  pass "Claude prompt が event placeholder として COMMENT 固定を指示（Issue #166）"
+else
+  fail "Claude prompt が event placeholder 規約（COMMENT 固定）を指示していない（Issue #166）"
+fi
+
+# 15. Claude prompt のタスク完了条件から「event を決定」項目が削除されている
+# 旧設計では「2. event を決定（APPROVE / REQUEST_CHANGES / COMMENT）」がタスク完了条件に含まれていたが、
+# Issue #166 で workflow step に移管したため Claude のタスクからは外れる
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]+2\. event を決定' > /dev/null; then
+  fail "Claude prompt のタスク完了条件に旧「event を決定」項目が残っている（Issue #166、workflow step 移管で外すべき）"
+else
+  pass "Claude prompt のタスク完了条件から「event を決定」項目が削除されている（Issue #166）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
