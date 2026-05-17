@@ -43,9 +43,14 @@ trap 'rm -f "$WORKFLOW_EXPANDED_TMP"' EXIT
 python3 - "$WORKFLOW_RAW" "$REPO_ROOT" > "$WORKFLOW_EXPANDED_TMP" <<'PYEOF'
 import sys, os, re
 
+# Windows runner ではロケールが CP1252 で、open() / sys.stdout のデフォルト encoding が
+# CP1252 となるため、UTF-8 で書かれた yml / .sh（日本語コメント含む）を読み書きすると
+# UnicodeDecodeError になる。encoding を明示して runner OS 非依存にする。
+sys.stdout.reconfigure(encoding='utf-8')
+
 src_path = sys.argv[1]
 repo_root = sys.argv[2]
-with open(src_path) as f:
+with open(src_path, encoding='utf-8') as f:
     yaml_text = f.read()
 
 pattern = re.compile(r'^(\s+)run:\s+bash\s+(scripts/ci/\S+\.sh)\s*$', re.MULTILINE)
@@ -55,7 +60,7 @@ def replace(match):
     rel = match.group(2).strip()
     abs_path = os.path.join(repo_root, rel)
     if os.path.isfile(abs_path):
-        with open(abs_path) as g:
+        with open(abs_path, encoding='utf-8') as g:
             content = g.read()
         indented = ''.join(f"{indent}  {line}" for line in content.splitlines(keepends=True))
         if not indented.endswith('\n'):
