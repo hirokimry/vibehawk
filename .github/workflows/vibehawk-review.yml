@@ -179,7 +179,7 @@ jobs:
           echo "prev_sha=${prev_sha}" >> "$GITHUB_OUTPUT"
           echo "review_range=${review_range}" >> "$GITHUB_OUTPUT"
 
-      - name: vibehawk 設定読み込み（Issue #10 .vibehawk.yaml / .coderabbit.yaml fallback）
+      - name: vibehawk 設定読み込み（Issue #10 / #172 .vibehawk.yaml）
         id: vibehawk_config
         if: steps.check_secrets.outputs.ready == 'true'
         env:
@@ -187,18 +187,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 設定ファイル選択（.vibehawk.yaml 優先、.coderabbit.yaml フォールバック、Issue #10）
+          # 設定ファイル選択（.vibehawk.yaml 単独受付、Issue #10 / #172）
+          # Issue #172 で .coderabbit.yaml フォールバック分岐を撤廃。
+          # `.vibehawk.yaml` 不在時は下記のデフォルト値に倒れる。
           config_file=""
           source_label="default"
           if [[ -f ".vibehawk.yaml" ]]; then
             config_file=".vibehawk.yaml"
             source_label="vibehawk"
-          elif [[ -f ".coderabbit.yaml" ]]; then
-            config_file=".coderabbit.yaml"
-            source_label="coderabbit"
           fi
 
-          # デフォルト値（CodeRabbit 互換、docs/cost-analysis.md 段階的劣化型）
+          # デフォルト値（docs/cost-analysis.md 段階的劣化型、`.vibehawk.yaml` 不在時に適用）
           language="en"
           full_review_files=30
           focused_review_files=80
@@ -213,7 +212,7 @@ jobs:
             # YAML → JSON 変換
             config_json="$(python3 -c "import yaml,json; print(json.dumps(yaml.safe_load(open('$config_file')) or {}))")"
 
-            # キーマッピング（.vibehawk.yaml と .coderabbit.yaml で同じスキーマを使用）
+            # キーマッピング（.vibehawk.yaml のスキーマ、Issue #10）
             language="$(echo "$config_json" | jq -r '.language // "en"')"
             full_review_files="$(echo "$config_json" | jq -r '.reviews.size_limits.full_review_files // 30')"
             focused_review_files="$(echo "$config_json" | jq -r '.reviews.size_limits.focused_review_files // 80')"
@@ -438,7 +437,7 @@ jobs:
 
             ### 設定ソース表示
 
-            CONFIG_SOURCE が `vibehawk` / `coderabbit` / `default` のいずれかを示す。サマリ本文の冒頭に「使用設定: $CONFIG_SOURCE」を 1 行表示してください（利用者が設定の反映を確認できるよう透明化）。
+            CONFIG_SOURCE が `vibehawk` / `default` のいずれかを示す（Issue #172 で `.coderabbit.yaml` フォールバック撤廃）。サマリ本文の冒頭に「使用設定: $CONFIG_SOURCE」を 1 行表示してください（利用者が設定の反映を確認できるよう透明化）。
 
             ## レビュー範囲を確認するコマンド例
 
