@@ -5,10 +5,7 @@ language: ja-JP
 
 reviews:
   auto_review:
-    # Issue #164 検証期間中の一時停止（PR に CodeRabbit を挟ませない）。
-    # 検証完了後は true に戻し、branch protection の required_status_checks にも
-    # "CodeRabbit" を戻すこと。
-    enabled: false
+    enabled: true
     drafts: false
     auto_incremental_review: true
     base_branches:
@@ -37,4 +34,4 @@ reviews:
         If any requirements are not addressed, clearly point them out.
 
 chat:
-  auto_reply: false
+  auto_reply: true
