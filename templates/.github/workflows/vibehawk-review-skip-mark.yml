@@ -13,13 +13,15 @@
 #   残る 5 パターン（lock 4 種 + dependabot.yml）は機械的更新でレビュー無意味なため引き続き対象。
 #
 # 同期必須（保守者向け）:
-#   下記 `paths-ignore 全マッチ判定` ステップの case 文は `vibehawk-review.yml` の
-#   `paths-ignore` リストと完全に同期させること。`vibehawk-review.yml` のリストを
-#   編集した場合、以下 3 箇所を手動で同時更新する必要がある:
-#     1. templates/.github/workflows/vibehawk-review-skip-mark.yml の case 文（本ファイル）
-#     2. .github/workflows/vibehawk-review-skip-mark.yml の case 文（templates との完全一致）
-#     3. tests/test_workflow_skip_mark.sh のパターン一覧
+#   `scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh` の case 文は
+#   `vibehawk-review.yml` の `paths-ignore` リストと完全に同期させること。
+#   `vibehawk-review.yml` のリストを編集した場合、以下 2 箇所を手動で同時更新する必要がある:
+#     1. scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh の case 文
+#     2. tests/test_workflow_skip_mark.sh のパターン一覧
 #   同期忘れの失敗モードは常に「PR が BLOCKED」方向のみで、merge gate 誤通過は構造上発生しない。
+#
+#   インライン shell は Issue #178（エピック #174）で scripts/ci/vibehawk-review-skip-mark/
+#   配下の独立 .sh に切り出された。挙動は完全に同じ。
 #
 # セキュリティ境界（CISO 承認済み）:
 #   - Fork PR 除外（`head.repo.full_name == github.repository`）
@@ -48,42 +50,22 @@ jobs:
     if: ${{ github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
+      - name: リポジトリチェックアウト（scripts/ci/ 配下を runner に展開する）
+        uses: actions/checkout@v4
+
       - name: 変更ファイル一覧の取得
         id: files
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-        run: |
-          # PR の全変更ファイルパスを 1 行 1 ファイルで取得
-          gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename' > changed_files.txt
-          file_count=$(wc -l < changed_files.txt | tr -d ' ')
-          echo "count=${file_count}" >> "$GITHUB_OUTPUT"
-          echo "変更ファイル数: ${file_count}"
-          cat changed_files.txt
+        run: bash scripts/ci/vibehawk-review-skip-mark/list-changed-files.sh
 
       - name: paths-ignore 全マッチ判定
         id: classify
         env:
           FILE_COUNT: ${{ steps.files.outputs.count }}
-        run: |
-          # vibehawk-review.yml の paths-ignore と完全に同期させること。
-          # case 文編集時は本ファイル冒頭コメント記載の 3 箇所同期手順に従う。
-          all_match=true
-          if [ "${FILE_COUNT}" -eq 0 ]; then
-            # ファイル変更ゼロは判定不能のため安全側で skip post を行わない
-            all_match=false
-          fi
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            case "$file" in
-              .github/dependabot.yml) ;;
-              package-lock.json|yarn.lock|pnpm-lock.yaml|bun.lockb) ;;
-              *) all_match=false; break ;;
-            esac
-          done < changed_files.txt
-          echo "is_skip=${all_match}" >> "$GITHUB_OUTPUT"
-          echo "paths-ignore 全マッチ: ${all_match}"
+        run: bash scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh
 
       - name: vibehawk status check を success で post（paths-ignore 全マッチ時のみ）
         if: steps.classify.outputs.is_skip == 'true'
@@ -91,11 +73,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
-        run: |
-          gh api -X POST "/repos/${REPO}/check-runs" \
-            -f name=vibehawk \
-            -f head_sha="${HEAD_SHA}" \
-            -f status=completed \
-            -f conclusion=success \
-            -f 'output[title]=vibehawk-review skipped (paths-ignore matched)' \
-            -f 'output[summary]=All changed files matched vibehawk-review.yml paths-ignore patterns (Issue #65). LLM review skipped to keep API cost at zero. Posted by vibehawk-review-skip-mark.yml (Issue #157).'
+        run: bash scripts/ci/vibehawk-review-skip-mark/post-skip-check-run.sh

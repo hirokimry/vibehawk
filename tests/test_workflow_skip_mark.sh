@@ -9,6 +9,10 @@
 #     - Fork PR 除外 / draft skip
 #     - 同期コメント（保守者向け）の存在
 #
+# Issue #178（エピック #174）でインライン shell が `scripts/ci/vibehawk-review-skip-mark/`
+# 配下に切り出された。yml 側は env: と `bash scripts/ci/.../<step>.sh` のラッパー呼び出しのみ
+# になっているため、シェル内容の検証は対応する .sh ファイルで行う。
+#
 # `.github/workflows/vibehawk-review-skip-mark.yml`（dogfooding 用デプロイコピー）は
 # `test_workflow_template_snapshot.sh` の SYNC_PAIRS で templates と完全一致が
 # 検証されるため、本テストでは templates のみを検査する。
@@ -32,6 +36,10 @@ fail() {
 }
 
 WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review-skip-mark.yml"
+SCRIPTS_DIR="${REPO_ROOT}/scripts/ci/vibehawk-review-skip-mark"
+LIST_SH="${SCRIPTS_DIR}/list-changed-files.sh"
+CLASSIFY_SH="${SCRIPTS_DIR}/classify-paths-ignore.sh"
+POST_SH="${SCRIPTS_DIR}/post-skip-check-run.sh"
 
 echo "=== templates/.github/workflows/vibehawk-review-skip-mark.yml 検証 ==="
 
@@ -43,6 +51,15 @@ else
   echo "=== 結果: $PASSED passed, $FAILED failed ==="
   exit 1
 fi
+
+# 切り出し先 3 シェルが存在する（Issue #178）
+for sh in "$LIST_SH" "$CLASSIFY_SH" "$POST_SH"; do
+  if [[ -f "$sh" ]]; then
+    pass "$(basename "$sh") が scripts/ci/vibehawk-review-skip-mark/ 配下に存在する"
+  else
+    fail "$(basename "$sh") が scripts/ci/vibehawk-review-skip-mark/ 配下に存在しない"
+  fi
+done
 
 # コメント行を除外したワークフロー本文（行頭 # を除外）
 WORKFLOW_BODY="$(awk '!/^[[:space:]]*#/' "$WORKFLOW")"
@@ -142,25 +159,50 @@ else
   fail "draft skip ロジック (draft == false) が設定されていない"
 fi
 
+# Issue #178: yml 側の run: ブロックがラッパー呼び出しのみ（5 行以下）
+# 各 step の `run:` 行が `bash scripts/ci/vibehawk-review-skip-mark/<name>.sh` 形式であることを確認
+declare -a wrapper_calls=(
+  "bash scripts/ci/vibehawk-review-skip-mark/list-changed-files.sh"
+  "bash scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh"
+  "bash scripts/ci/vibehawk-review-skip-mark/post-skip-check-run.sh"
+)
+for call in "${wrapper_calls[@]}"; do
+  # ${call} を明示することで、後続の日本語ブラケット「」を bash 3.2 が識別子の
+  # 一部と誤解しないようにする
+  if grep -F "${call}" "$WORKFLOW" > /dev/null; then
+    pass "yml がラッパー呼び出ししている: ${call}"
+  else
+    fail "yml がラッパー呼び出ししていない: ${call}"
+  fi
+done
+
+# yml の 'run: |' ブロック（複数行インラインシェル）が残っていないこと
+# Issue #178 の完了条件「全 3 ブロックの run: | が 5 行以下のラッパー呼び出しのみになっている」
+# 注: pass/fail メッセージ内で backtick を使うと command substitution が走るため
+#     シングルクォート相当の表現に統一する
+if grep -E "^[[:space:]]+run:[[:space:]]*\|[[:space:]]*$" "$WORKFLOW" > /dev/null; then
+  fail "yml に 'run: |' 複数行インラインシェルが残っている（Issue #178 で全廃すべき）"
+else
+  pass "yml に 'run: |' 複数行インラインシェルが残っていない"
+fi
+
 # paths-ignore 全マッチ判定の 5 パターン同期検証（vibehawk-review.yml と完全一致が必須）
-# case 文の各パターン存在チェック（Issue #160 で `*.md)` / `CHANGELOG*)` を撤回）
+# 切り出し先の classify-paths-ignore.sh で case 文を検査する
 declare -a required_case_patterns=(
   '.github/dependabot.yml)'
   'package-lock.json|yarn.lock|pnpm-lock.yaml|bun.lockb)'
 )
 for pattern in "${required_case_patterns[@]}"; do
-  if grep -F "$pattern" "$WORKFLOW" > /dev/null; then
-    pass "case 文に paths-ignore パターン '$pattern' が含まれる（Issue #65 と同期）"
+  if grep -F "$pattern" "$CLASSIFY_SH" > /dev/null; then
+    pass "classify-paths-ignore.sh の case 文に paths-ignore パターン '$pattern' が含まれる（Issue #65 と同期）"
   else
-    fail "case 文に paths-ignore パターン '$pattern' が含まれない（Issue #65 同期失敗）"
+    fail "classify-paths-ignore.sh の case 文に paths-ignore パターン '$pattern' が含まれない（Issue #65 同期失敗）"
   fi
 done
 
 # vibehawk-review.yml の paths-ignore リストと数を照合（同期検証）
-# vibehawk-review.yml から paths-ignore リストを抽出
 VIBEHAWK_REVIEW_YML="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
 if [[ -f "$VIBEHAWK_REVIEW_YML" ]]; then
-  # paths-ignore: 以降、次のトップレベルキー or 空行までのパターン数をカウント
   paths_ignore_count=$(awk '
     /^[[:space:]]+paths-ignore:/ { in_block = 1; next }
     in_block && /^[[:space:]]+[a-z_-]+:/ { exit }
@@ -168,23 +210,18 @@ if [[ -f "$VIBEHAWK_REVIEW_YML" ]]; then
     END { print count }
   ' "$VIBEHAWK_REVIEW_YML")
 
-  # skip-mark の case 文パターン数（`) ;;` で終わる行）
-  # default branch (`  *) all_match=false; break ;;`) のみ除外したいので、
-  # 行頭空白の直後が `*)` のもの（= default branch）だけを除外する。
-  # `CHANGELOG*)` などパターン末尾の `*)` は対象に含める。
+  # classify-paths-ignore.sh の case 文 branch 数とパターン総数
   case_branch_count=$(awk '
     /case[[:space:]]+"\$file"[[:space:]]+in/ { in_case = 1; next }
     in_case && /^[[:space:]]+esac/ { exit }
     in_case && /\)[[:space:]]+;;/ && !/^[[:space:]]+\*\)/ { count++ }
     END { print count }
-  ' "$WORKFLOW")
+  ' "$CLASSIFY_SH")
 
-  # case branch 内に含まれる総パターン数（| 区切りで展開）
   case_pattern_total=$(awk '
     /case[[:space:]]+"\$file"[[:space:]]+in/ { in_case = 1; next }
     in_case && /^[[:space:]]+esac/ { exit }
     in_case && /\)[[:space:]]+;;/ && !/^[[:space:]]+\*\)/ {
-      # `) ;;` の直前までを取り出して | で分割
       line = $0
       sub(/\)[[:space:]]+;;.*/, "", line)
       gsub(/^[[:space:]]+/, "", line)
@@ -192,9 +229,9 @@ if [[ -f "$VIBEHAWK_REVIEW_YML" ]]; then
       count += n
     }
     END { print count }
-  ' "$WORKFLOW")
+  ' "$CLASSIFY_SH")
 
-  echo "  [info] vibehawk-review.yml paths-ignore: ${paths_ignore_count} 件 / skip-mark case 文: ${case_branch_count} branch (${case_pattern_total} pattern)"
+  echo "  [info] vibehawk-review.yml paths-ignore: ${paths_ignore_count} 件 / classify-paths-ignore.sh case 文: ${case_branch_count} branch (${case_pattern_total} pattern)"
 
   if [[ "$paths_ignore_count" -eq "$case_pattern_total" ]]; then
     pass "paths-ignore 件数 (${paths_ignore_count}) と case 文パターン総数 (${case_pattern_total}) が一致（同期検証）"
@@ -205,30 +242,30 @@ else
   fail "vibehawk-review.yml (${VIBEHAWK_REVIEW_YML}) が存在しないため同期検証不可"
 fi
 
-# check-run post の固定パラメータ
-if echo "$WORKFLOW_BODY" | grep -F "name=vibehawk" > /dev/null; then
-  pass "check-run post に name=vibehawk が固定指定されている（branch protection 一致）"
+# check-run post の固定パラメータ（切り出し先 post-skip-check-run.sh で検査）
+if grep -F "name=vibehawk" "$POST_SH" > /dev/null; then
+  pass "post-skip-check-run.sh で name=vibehawk が固定指定されている（branch protection 一致）"
 else
-  fail "check-run post に name=vibehawk が固定指定されていない"
+  fail "post-skip-check-run.sh で name=vibehawk が固定指定されていない"
 fi
 
-if echo "$WORKFLOW_BODY" | grep -F "status=completed" > /dev/null; then
-  pass "check-run post に status=completed が固定指定されている"
+if grep -F "status=completed" "$POST_SH" > /dev/null; then
+  pass "post-skip-check-run.sh で status=completed が固定指定されている"
 else
-  fail "check-run post に status=completed が固定指定されていない"
+  fail "post-skip-check-run.sh で status=completed が固定指定されていない"
 fi
 
-if echo "$WORKFLOW_BODY" | grep -F "conclusion=success" > /dev/null; then
-  pass "check-run post に conclusion=success が固定指定されている"
+if grep -F "conclusion=success" "$POST_SH" > /dev/null; then
+  pass "post-skip-check-run.sh で conclusion=success が固定指定されている"
 else
-  fail "check-run post に conclusion=success が固定指定されていない"
+  fail "post-skip-check-run.sh で conclusion=success が固定指定されていない"
 fi
 
-# check-runs エンドポイント
-if echo "$WORKFLOW_BODY" | grep -F "gh api -X POST" | grep -F "/check-runs" > /dev/null; then
-  pass "check-runs API への POST が含まれる"
+# check-runs エンドポイント（切り出し先 post-skip-check-run.sh で検査）
+if grep -F "gh api -X POST" "$POST_SH" | grep -F "/check-runs" > /dev/null; then
+  pass "post-skip-check-run.sh に check-runs API への POST が含まれる"
 else
-  fail "check-runs API への POST が含まれない"
+  fail "post-skip-check-run.sh に check-runs API への POST が含まれない"
 fi
 
 # 同期コメント（保守者向け）— ファイル冒頭のハードコード同期コメント
@@ -256,6 +293,13 @@ if grep -F "actions/create-github-app-token" "$WORKFLOW" > /dev/null; then
   fail "App Installation Token (actions/create-github-app-token) を参照している（skip-mark は GITHUB_TOKEN のみで動作すべき）"
 else
   pass "App Installation Token を参照していない（GITHUB_TOKEN のみ使用、最小権限）"
+fi
+
+# actions/checkout@v4 が含まれている（Issue #178: 切り出し先 .sh を runner に展開するため必要）
+if grep -F "actions/checkout@v4" "$WORKFLOW" > /dev/null; then
+  pass "actions/checkout@v4 が含まれる（scripts/ci/ を runner に展開するため、Issue #178）"
+else
+  fail "actions/checkout@v4 が含まれない（切り出し先 .sh が runner で見つからない）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
