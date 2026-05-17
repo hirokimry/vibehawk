@@ -642,25 +642,49 @@ else
   fail "substantive review が無い場合の fallback ロジックが含まれない（Issue #121 追加修正、初回 review 未投稿などの edge case 対応）"
 fi
 
-# Issue #152 fix: bundled review POST を workflow step に移管
-# 旧設計では Claude prompt 内で `gh api -X POST .../pulls/N/reviews` を直接実行していたが、
-# LLM の試し打ち POST が PR #151 で観測された（同一 run 内で本物の前に 4 回のノイズ review が残る）。
-# PR #128 と同じ「workflow step で決定論的に POST」パターンに移管し、Claude には JSON
-# ペイロード組み立てまでさせ、後続 workflow step が App Installation Token で 1 回だけ POST する。
+# Issue #164 fix: ファイル書き出し依存を `--json-schema` + `outputs.structured_output` 経路に置換
+# 旧設計（Issue #152）では Claude が $GITHUB_WORKSPACE/vibehawk-review.json にファイル書き出しし、
+# 本 step が hashFiles で検出して読み込んでいた。指摘 0 件 PR で Claude が書き出しに失敗する事象
+# （PR #159 で実証 = Issue #164）が prompt 強化（Issue #162 / PR #163）では再発したため、ファイル
+# 書き出し経路を構造的に廃止し、claude-code-action の公式 outputs（schema validated）から受け取る。
 
-# 1. 新 step「vibehawk bundled review を post」が存在する
+# 1. 新 step「vibehawk bundled review を post」が存在する（Issue #152 で導入、Issue #164 で入力経路変更）
 if echo "$WORKFLOW_POST_PROMPT" | grep -F 'vibehawk bundled review を post' > /dev/null; then
-  pass "新 step「vibehawk bundled review を post」が存在する（Issue #152 fix）"
+  pass "新 step「vibehawk bundled review を post」が存在する（Issue #152 / #164 fix）"
 else
-  fail "新 step「vibehawk bundled review を post」が存在しない（Issue #152 fix、bundled review POST の workflow step 移管が前提）"
+  fail "新 step「vibehawk bundled review を post」が存在しない（Issue #152 / #164 fix、bundled review POST の workflow step 移管が前提）"
 fi
 
-# 2. 新 step の if 条件に hashFiles('vibehawk-review.json') が含まれる
-# claude-code-action が JSON 書き出しに失敗した場合の skip 経路（次の status check が neutral に倒れる）
+# 2. 新 step の if 条件から hashFiles('vibehawk-review.json') が **撤廃** されている（Issue #164 fix）
+# 旧設計では Claude のファイル書き出し成功を hashFiles で検出していたが、Issue #164 fix で
+# `steps.claude_review.outputs.structured_output != ''` 経路に置換される。
 if echo "$WORKFLOW_POST_PROMPT" | grep -F "hashFiles('vibehawk-review.json')" > /dev/null; then
-  pass "新 step の if 条件に hashFiles('vibehawk-review.json') が含まれる（Issue #152 fix、Claude 書き出し失敗時の安全な skip）"
+  fail "新 step の if 条件に hashFiles('vibehawk-review.json') が残置されている（Issue #164 fix、撤廃すべき。ファイル書き出し依存は構造的廃止）"
 else
-  fail "新 step の if 条件に hashFiles('vibehawk-review.json') が含まれない（Issue #152 fix、JSON 不在時の skip 経路が必須）"
+  pass "新 step の if 条件から hashFiles('vibehawk-review.json') が撤廃されている（Issue #164 fix、ファイル書き出し依存の構造的廃止）"
+fi
+
+# 2-bis. 新 step の if 条件に steps.claude_review.outputs.structured_output != '' が含まれる（Issue #164 fix）
+if echo "$WORKFLOW_POST_PROMPT" | grep -F "steps.claude_review.outputs.structured_output != ''" > /dev/null; then
+  pass "新 step の if 条件に steps.claude_review.outputs.structured_output != '' が含まれる（Issue #164 fix、schema validated 応答経路）"
+else
+  fail "新 step の if 条件に steps.claude_review.outputs.structured_output != '' が含まれない（Issue #164 fix、Claude 応答空時の安全な skip 経路）"
+fi
+
+# 2-ter. 新 step の env に STRUCTURED_OUTPUT が含まれる（Issue #164 fix）
+if echo "$WORKFLOW_POST_PROMPT" | grep -E 'STRUCTURED_OUTPUT:[[:space:]]*\$\{\{[[:space:]]*steps\.claude_review\.outputs\.structured_output[[:space:]]*\}\}' > /dev/null; then
+  pass "新 step の env に STRUCTURED_OUTPUT が steps.claude_review.outputs.structured_output から渡されている（Issue #164 fix）"
+else
+  fail "新 step の env に STRUCTURED_OUTPUT が渡されていない（Issue #164 fix、run ブロックで参照するため env 受け渡しが必須）"
+fi
+
+# 2-quater. 新 step が ${RUNNER_TEMP} 経由でペイロードをファイル化する（Issue #164 fix）
+# $GITHUB_WORKSPACE（actions/checkout 管理領域）から退避するため
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '${RUNNER_TEMP}/vibehawk-review.json' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F "printf '%s' \"\$STRUCTURED_OUTPUT\"" > /dev/null; then
+  pass "新 step が \${RUNNER_TEMP} に printf '%s' \"\$STRUCTURED_OUTPUT\" で書き出す（Issue #164 fix、決定論的書き出し + 特殊文字保護）"
+else
+  fail "新 step が \${RUNNER_TEMP} 経由 printf 書き出しを行っていない（Issue #164 fix、echo 系の特殊文字破壊を回避するため printf '%s' が必須）"
 fi
 
 # 3. 新 step が App Installation Token（steps.app-token.outputs.token）を使う
@@ -680,7 +704,7 @@ else
 fi
 
 # 5. 新 step が JSON 必須キー検証（event / body / commit_id / comments(array)）を行う
-# Claude が壊れた JSON を書き出した場合に POST する前に check して step を skip する経路
+# claude-code-action 内 schema validation の二重防御として workflow step 側も jq 契約検証する
 # PR #153 CodeRabbit 追加 Major 指摘対応で検証を強化済み:
 # event 値が APPROVE/REQUEST_CHANGES/COMMENT のいずれかに限定、body/commit_id 非空、
 # comments[] の path/body 非空、line/side/start_line/start_side の型整合を jq で検証する。
@@ -689,9 +713,26 @@ if echo "$WORKFLOW_POST_PROMPT" | grep -F 'jq -e' > /dev/null \
    && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "REQUEST_CHANGES"' > /dev/null \
    && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "COMMENT"' > /dev/null \
    && echo "$WORKFLOW_POST_PROMPT" | grep -F '(.comments | type == "array")' > /dev/null; then
-  pass "新 step が GitHub Reviews API 契約に厳格な JSON 検証を行う（event 値限定 + body/commit_id 非空 + comments[] shape、Issue #152 fix + PR #153 強化）"
+  pass "新 step が GitHub Reviews API 契約に厳格な JSON 検証を行う（event 値限定 + body/commit_id 非空 + comments[] shape、Issue #152 fix + PR #153 強化 + Issue #164 fix で schema validation の二重防御）"
 else
   fail "新 step の JSON 検証が GitHub Reviews API 契約に従っていない（event 値の APPROVE/REQUEST_CHANGES/COMMENT 限定 + comments[] shape 検証が必須、PR #153 CodeRabbit Major 指摘）"
+fi
+
+# 5-bis. 新 step の warning メッセージから "vibehawk-review.json" の表記が撤去されている（Issue #164 fix）
+# 旧 warning は "vibehawk-review.json の検証に失敗" と書かれており、ファイル書き出し依存の誤誘導を招く。
+# Issue #164 fix で「outputs.structured_output の jq 契約検証に失敗」に書き換える。
+# 注意: warning メッセージ行（echo "::warning::..."）に限定して検証する（コメント行や run の他行は許容）。
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '::warning::vibehawk' | grep -F 'vibehawk-review.json の検証に失敗' > /dev/null; then
+  fail "新 step の warning メッセージに旧表記 'vibehawk-review.json の検証に失敗' が残っている（Issue #164 fix、利用者が ファイル書き出し失敗 と誤解する誘導を招く）"
+else
+  pass "新 step の warning メッセージから 'vibehawk-review.json の検証に失敗' 表記が撤去されている（Issue #164 fix、誤誘導防止）"
+fi
+
+# 5-ter. 新 step の warning メッセージに新表記 "outputs.structured_output の jq 契約検証に失敗" が含まれる（Issue #164 fix）
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '::warning::vibehawk' | grep -F 'outputs.structured_output の jq 契約検証に失敗' > /dev/null; then
+  pass "新 step の warning メッセージが 'outputs.structured_output の jq 契約検証に失敗' に書き換えられている（Issue #164 fix、正しい根拠表記）"
+else
+  fail "新 step の warning メッセージに新表記 'outputs.structured_output の jq 契約検証に失敗' が含まれない（Issue #164 fix）"
 fi
 
 # 6. prompt から `gh api -X POST repos/.../pulls/.../reviews` の直接実行サンプルが削除されている
@@ -705,20 +746,55 @@ else
   pass "prompt 内に bundled review POST 実行サンプルが残っていない（Issue #152 fix、workflow step に移管済み）"
 fi
 
-# 7. prompt に「vibehawk-review.json を書き出す」指示が含まれる
-# Claude のタスク完了条件が JSON 書き出しまでであることを明示
-if echo "$WORKFLOW_PROMPT" | grep -F 'vibehawk-review.json' > /dev/null; then
-  pass "prompt に vibehawk-review.json 書き出し指示が含まれる（Issue #152 fix、Claude のタスク完了条件）"
+# 7. prompt に「schema 適合 JSON を最終 assistant message として返す」指示が含まれる（Issue #164 fix）
+# 旧テスト（vibehawk-review.json 書き出し指示が含まれる）を **反転**：書き出し指示は撤廃済みで、
+# 新タスク完了条件は「最終 assistant message として schema 適合 JSON を返す」こと。
+if echo "$WORKFLOW_PROMPT" | grep -F 'schema 適合 JSON' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F '最終 assistant message' > /dev/null; then
+  pass "prompt に「schema 適合 JSON を最終 assistant message として返す」指示が含まれる（Issue #164 fix、新タスク完了条件）"
 else
-  fail "prompt に vibehawk-review.json 書き出し指示が含まれない（Issue #152 fix、Claude が POST 直接実行に戻ってしまう）"
+  fail "prompt に schema 適合 JSON / 最終 assistant message の指示が含まれない（Issue #164 fix、Claude が旧経路に戻ってしまう）"
 fi
 
-# 8. prompt の「絶対禁止」リストに Issue #152 の bundled review POST 禁止が明示されている
-# LLM の試し打ちを構造的に防止するため、明示的に禁止を書く必要がある
+# 7-bis. prompt の「絶対禁止」セクションでファイル書き出し全般を禁止していることを検証（Issue #164 fix）
+# 旧設計では vibehawk-review.json の書き出しがタスク完了条件だったが、Issue #164 fix で「絶対禁止」に移行
+if echo "$WORKFLOW_PROMPT" | grep -F 'ファイル書き出し' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'Issue #164 fix' > /dev/null; then
+  pass "prompt の絶対禁止にファイル書き出し全般が含まれ Issue #164 fix の根拠が明示されている（schema 外経路の構造的廃止）"
+else
+  fail "prompt の絶対禁止にファイル書き出し全般 / Issue #164 fix の言及が含まれない（Claude が旧経路に戻ってしまう）"
+fi
+
+# 8. prompt の「絶対禁止」リストに Issue #152 の bundled review POST 禁止と Issue #164 fix の根拠が明示されている
+# LLM の試し打ちを構造的に防止するため、明示的に禁止を書く必要がある（Issue #152 言及は歴史的経緯として維持）
 if echo "$WORKFLOW_PROMPT" | grep -F 'Issue #152' > /dev/null; then
   pass "prompt に Issue #152 fix の言及が含まれる（bundled review POST 禁止の根拠を明示）"
 else
   fail "prompt に Issue #152 fix の言及が含まれない（bundled review POST 禁止の根拠が示されていない）"
+fi
+
+# 8-bis. claude-code-action step に id: claude_review が宣言されている（Issue #164 fix）
+# 後続の bundled POST step が steps.claude_review.outputs.structured_output を参照するために必須
+if grep -E "^[[:space:]]+id:[[:space:]]*claude_review[[:space:]]*\$" "$WORKFLOW" > /dev/null; then
+  pass "claude-code-action step に id: claude_review が宣言されている（Issue #164 fix、outputs 参照用）"
+else
+  fail "claude-code-action step に id: claude_review が宣言されていない（Issue #164 fix、後続 step の outputs 参照に必須）"
+fi
+
+# 8-ter. claude_args に --json-schema が含まれる（Issue #164 fix）
+# Claude の最終応答を JSON schema で validate するための公式機能
+if echo "$WORKFLOW_POST_PROMPT" | grep -F -- '--json-schema' > /dev/null; then
+  pass "claude_args に --json-schema が含まれる（Issue #164 fix、schema validated 応答の公式機能）"
+else
+  fail "claude_args に --json-schema が含まれない（Issue #164 fix、schema 強制が無いと Claude 応答の構造が保証されない）"
+fi
+
+# 8-quater. --json-schema に APPROVE/REQUEST_CHANGES/COMMENT の 3 値 enum が含まれる（Issue #164 fix）
+# event の値域を機械的に強制し、REQUEST_CHANGES / COMMENT ケースの存続を schema レベルで保証する
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]' > /dev/null; then
+  pass "--json-schema に event の enum [APPROVE,REQUEST_CHANGES,COMMENT] が含まれる（Issue #164 fix、event 値域の機械的強制 + 全 3 ケース存続保証）"
+else
+  fail "--json-schema に event の enum [APPROVE,REQUEST_CHANGES,COMMENT] が含まれない（Issue #164 fix、event 値域の機械的強制 + REQUEST_CHANGES/COMMENT 存続保証に必須）"
 fi
 
 # Issue #65: paths-ignore による推奨ノイズ抑制設定
