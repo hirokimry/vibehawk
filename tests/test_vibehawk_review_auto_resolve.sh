@@ -73,7 +73,9 @@ make_gh_stub() {
   : > "$STUB_DIR/mutation_log.txt"
   cat > "$STUB_DIR/gh" <<'STUB_EOF'
 #!/usr/bin/env bash
-# テスト用 gh スタブ: api graphql の query/mutation を引数判定して分岐する。
+# テスト用 gh スタブ: api graphql の query/mutation を文字列パターンで分岐する。
+# bash 3.2 / git for Windows bash 互換のため、indirect array indexing ではなく
+# `for arg in "$@"` ベースの素朴なイテレーションで実装する。
 STUB_DIR_SELF="$(cd "$(dirname "$0")" && pwd)"
 MUTATION_LOG="${STUB_DIR_SELF}/mutation_log.txt"
 THREADS_FILE="${STUB_DIR_SELF}/threads.json"
@@ -85,37 +87,30 @@ if [[ "${1:-}" != "api" || "${2:-}" != "graphql" ]]; then
   exit 1
 fi
 
-# 残り引数から query 内容と -F id=... を取り出す
-query_str=""
+# 全引数を連結した文字列に対する pattern match で query/mutation を判定する
+# （`-f query='mutation ...'` のように引数として渡されるため、 $* で結合すれば検出可能）。
+all_args="$*"
+
+# `-F id=<value>` から id を取り出す（mutation 用）。
+# 前の引数が `-F` で、現在の引数が `id=...` 形式なら採用する。
 id_value=""
-i=3
-args=("$@")
-while [[ $i -le $# ]]; do
-  arg="${args[$((i - 1))]}"
-  if [[ "$arg" == "-f" && $i -lt $# ]]; then
-    next="${args[$i]}"
-    if [[ "$next" == query=* ]]; then
-      query_str="${next#query=}"
-    fi
-    i=$((i + 2))
-    continue
+prev=""
+for arg in "$@"; do
+  if [[ "$prev" == "-F" && "$arg" == id=* ]]; then
+    id_value="${arg#id=}"
+    break
   fi
-  if [[ "$arg" == "-F" && $i -lt $# ]]; then
-    next="${args[$i]}"
-    if [[ "$next" == id=* ]]; then
-      id_value="${next#id=}"
-    fi
-    i=$((i + 2))
-    continue
-  fi
-  i=$((i + 1))
+  prev="$arg"
 done
 
-if [[ "$query_str" == *"resolveReviewThread"* ]]; then
+if [[ "$all_args" == *"resolveReviewThread"* ]]; then
   # mutation 呼び出し記録
   echo "mutation:${id_value}" >> "$MUTATION_LOG"
-  # 指定された id は失敗扱い
-  fail_ids="$(cat "$FAIL_IDS_FILE" 2>/dev/null || echo "")"
+  # 指定された id は失敗扱い（カンマ区切りで複数指定可）
+  fail_ids=""
+  if [[ -f "$FAIL_IDS_FILE" ]]; then
+    fail_ids="$(cat "$FAIL_IDS_FILE")"
+  fi
   IFS=',' read -ra fail_arr <<< "$fail_ids"
   for fid in "${fail_arr[@]}"; do
     if [[ -n "$fid" && "$fid" == "$id_value" ]]; then
@@ -127,12 +122,12 @@ if [[ "$query_str" == *"resolveReviewThread"* ]]; then
   exit 0
 fi
 
-if [[ "$query_str" == *"reviewThreads"* ]]; then
+if [[ "$all_args" == *"reviewThreads"* ]]; then
   cat "$THREADS_FILE"
   exit 0
 fi
 
-echo "STUB ERROR: 未対応 query: $query_str" >&2
+echo "STUB ERROR: 未対応 query パターン: $all_args" >&2
 exit 1
 STUB_EOF
   chmod +x "$STUB_DIR/gh"
