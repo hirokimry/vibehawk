@@ -309,6 +309,36 @@ else
 fi
 
 # ============================================================
+# シナリオ 7-bis (CodeRabbit PR #193 Major 対応): 大文字 OWNER でも author 小文字正規化で
+# 有効 thread が誤 skip されない
+# ============================================================
+# github.repository_owner は大文字混在 "MyOrg" 等で渡される可能性があるが、
+# GitHub App login は小文字正規化されるため、両側を小文字化してから比較する必要がある。
+UPPER_OWNER_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["PRRT_kwDOAAA"]}'
+THREADS_UPPER_OWNER="$(threads_json_with "PRRT_kwDOAAA" "vibehawk-for-myorg")"
+make_gh_stub "$THREADS_UPPER_OWNER" ""
+stdout_file="${TMP_DIR}/stdout_upper"
+runner_temp_upper="${TMP_DIR}/runner_temp_upper"
+mkdir -p "$runner_temp_upper"
+rc_upper=0
+PATH="$STUB_DIR:$PATH" \
+  GH_TOKEN="dummy-token" \
+  REPO="MyOrg/vibehawk" \
+  PR_NUMBER=42 \
+  OWNER="MyOrg" \
+  STRUCTURED_OUTPUT="$UPPER_OWNER_PAYLOAD" \
+  RUNNER_TEMP="$runner_temp_upper" \
+  bash "$SCRIPT" > "$stdout_file" 2>&1 || rc_upper=$?
+if [[ "$rc_upper" -eq 0 ]] && [[ "$(mutation_count)" -eq 1 ]] \
+   && grep -F "mutation:PRRT_kwDOAAA" "$STUB_DIR/mutation_log.txt" > /dev/null \
+   && grep -F "resolved=1" "$stdout_file" > /dev/null; then
+  pass "シナリオ 7-bis: OWNER=MyOrg + author=vibehawk-for-myorg → 小文字正規化で mutation 1 回（CodeRabbit PR #193 Major 対応）"
+else
+  fail "シナリオ 7-bis 失敗: rc=$rc_upper, mutation=$(mutation_count)（CodeRabbit PR #193 Major、大文字 OWNER で誤 skip）"
+  cat "$stdout_file"
+fi
+
+# ============================================================
 # シナリオ 8: 個別 mutation 失敗 → warning + skip、step 全体は 0 終了
 # ============================================================
 FAIL_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["PRRT_FAIL","PRRT_OK"]}'

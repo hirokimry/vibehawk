@@ -132,19 +132,32 @@ else
   fail "Suggestions 構文の制約説明が prompt に不足"
 fi
 
-echo "=== auto_resolve 制約（Issue #9） ==="
+echo "=== auto_resolve 制約（Issue #9 / Issue #167） ==="
 
-if grep -F 'resolveReviewThread' "$WORKFLOW" > /dev/null; then
-  pass "auto_resolve の GraphQL mutation (resolveReviewThread) が prompt に含まれる"
+# Issue #167: auto_resolve の GraphQL mutation 実行は Claude prompt から workflow step
+# (scripts/ci/vibehawk-review/auto-resolve.sh) に移管された。Claude prompt 側は
+# 「解決対象 thread の node_id を `resolved_thread_ids` 配列に列挙する」だけになる。
+# このテストは「Claude が thread の解決を組み立てる方法」が prompt に明示されているかを
+# 検証する観点なので、resolveReviewThread の言及（移管後も歴史的経緯として残る）
+# または resolved_thread_ids の言及（新仕様の核）のいずれかが含まれていれば pass。
+if grep -F 'resolveReviewThread' "$WORKFLOW" > /dev/null || \
+   grep -F 'resolved_thread_ids' "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve の解決経路（旧: resolveReviewThread mutation / 新: resolved_thread_ids 列挙）が prompt に含まれる（Issue #167）"
 else
-  fail "auto_resolve の GraphQL mutation が prompt に含まれない"
+  fail "auto_resolve の解決経路が prompt に含まれない（Issue #9 / Issue #167）"
 fi
 
+# 他者・他 Bot の thread に対する非操作制約は Issue #167 で文言が変わった
+# （旧: 「touch しない」、新: 「schema に含めない」「resolved_thread_ids に含めない」）。
+# どの文言でも「他者・他 Bot のレビュースレッドには絶対に〜しない」という制約が
+# prompt に明示されていれば pass。
 if grep -F '他者・他 Bot のコメントは絶対に touch しない' "$WORKFLOW" > /dev/null || \
-   grep -F '他者・他 Bot のレビュースレッドには **絶対に' "$WORKFLOW" > /dev/null; then
-  pass "auto_resolve の「他者・他 Bot は touch しない」制約が prompt に明示"
+   grep -F '他者・他 Bot のコメントは絶対に schema に含めない' "$WORKFLOW" > /dev/null || \
+   grep -F '他者・他 Bot のレビュースレッドには **絶対に' "$WORKFLOW" > /dev/null || \
+   grep -F '他者・他 Bot のレビュースレッドの node_id は **絶対に' "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve の「他者・他 Bot は触らない / schema に含めない」制約が prompt に明示（Issue #167 文言更新後）"
 else
-  fail "auto_resolve の他者非操作制約が prompt に不足（誤 resolve は信頼破壊）"
+  fail "auto_resolve の他者非操作制約が prompt に不足（誤 resolve は信頼破壊、Issue #167）"
 fi
 
 echo "=== sticky review state（Issue #9 / Issue #121 bundled review API） ==="
