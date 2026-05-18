@@ -1062,5 +1062,136 @@ else
   pass "Claude prompt のタスク完了条件から「event を決定」項目が削除されている（Issue #166）"
 fi
 
+# Issue #167: auto_resolve を Claude prompt から workflow step に移管
+# 旧設計（Issue #9）では Claude が prompt 内で `gh api graphql resolveReviewThread`
+# mutation を直接実行していた。Issue #164（structured_output 経路の確立） /
+# Issue #166（event 判定の workflow 移管）に続く責務分離の完成形として workflow step
+# に移管し、Claude は解決対象 thread の node_id を `resolved_thread_ids: [string]`
+# 配列に列挙するだけになる。
+
+# 1. --json-schema に resolved_thread_ids: array<string> が含まれる
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '"resolved_thread_ids":{"type":"array","items":{"type":"string"}}' > /dev/null; then
+  pass "--json-schema に resolved_thread_ids (array of string) が含まれる（Issue #167、解決対象 thread_id を schema 経路で受け取る）"
+else
+  fail "--json-schema に resolved_thread_ids (array of string) が含まれない（Issue #167、workflow step 移管に必須）"
+fi
+
+# 2. 新 step「vibehawk auto_resolve」が存在する
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'vibehawk auto_resolve' > /dev/null; then
+  pass "新 step「vibehawk auto_resolve」が存在する（Issue #167）"
+else
+  fail "新 step「vibehawk auto_resolve」が存在しない（Issue #167、auto_resolve の workflow step 移管が前提）"
+fi
+
+# 3. auto_resolve step に id: auto_resolve が宣言されている
+if grep -E "^[[:space:]]+id:[[:space:]]*auto_resolve[[:space:]]*\$" "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve step に id: auto_resolve が宣言されている（Issue #167）"
+else
+  fail "auto_resolve step に id: auto_resolve が宣言されていない（Issue #167）"
+fi
+
+# 4. auto_resolve step が claude_review と decide_event の間に配置されている
+# 順序: claude_review → auto_resolve → decide_event → bundled POST → status check
+# decide_event が GraphQL で unresolved 数を取得するため、auto_resolve mutation を
+# decide_event の前に走らせる必要がある（旧 Claude prompt 内実装と同じ順序）。
+auto_resolve_line=$(grep -n '^[[:space:]]\+id:[[:space:]]*auto_resolve[[:space:]]*$' "$WORKFLOW" | head -1 | cut -d: -f1)
+if [[ -n "$claude_review_line" && -n "$auto_resolve_line" && -n "$decide_event_line" ]] \
+   && [[ "$claude_review_line" -lt "$auto_resolve_line" ]] \
+   && [[ "$auto_resolve_line" -lt "$decide_event_line" ]]; then
+  pass "auto_resolve step が claude_review と decide_event の間に配置されている（Issue #167、Claude 応答 → mutation → event 判定の順序）"
+else
+  fail "auto_resolve step の配置順が想定外（claude_review=${claude_review_line:-N/A} / auto_resolve=${auto_resolve_line:-N/A} / decide_event=${decide_event_line:-N/A}、Issue #167）"
+fi
+
+# 5. auto_resolve step が check_secrets.ready + structured_output 非空の二重ガードを継承
+if awk '/id:[[:space:]]*auto_resolve/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F "steps.check_secrets.outputs.ready == 'true'" > /dev/null \
+   && awk '/id:[[:space:]]*auto_resolve/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F "steps.claude_review.outputs.structured_output != ''" > /dev/null; then
+  pass "auto_resolve step が check_secrets.ready + structured_output 非空の二重ガードを継承（Issue #167）"
+else
+  fail "auto_resolve step のガード条件が想定外（Issue #167、check_secrets.ready + structured_output != '' の両方が必須）"
+fi
+
+# 6. auto_resolve step が gh api graphql + resolveReviewThread mutation を呼ぶ
+# scripts/ci/vibehawk-review/auto-resolve.sh の中身が wrapper-call 展開されて含まれる
+if awk '/id:[[:space:]]*auto_resolve/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'gh api graphql' > /dev/null \
+   && awk '/id:[[:space:]]*auto_resolve/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'resolveReviewThread' > /dev/null; then
+  pass "auto_resolve step が gh api graphql で resolveReviewThread mutation を呼ぶ（Issue #167、workflow step 内で副作用実行）"
+else
+  fail "auto_resolve step が gh api graphql resolveReviewThread mutation を呼んでいない（Issue #167、Claude prompt からの移管先）"
+fi
+
+# 7. auto_resolve step の env に STRUCTURED_OUTPUT / OWNER / REPO / PR_NUMBER が含まれる
+auto_resolve_block="$(awk '/^[[:space:]]+- name: vibehawk auto_resolve/,/^[[:space:]]+- name: vibehawk event を決定/' "$WORKFLOW")"
+if echo "$auto_resolve_block" | grep -E 'STRUCTURED_OUTPUT:[[:space:]]*\$\{\{[[:space:]]*steps\.claude_review\.outputs\.structured_output[[:space:]]*\}\}' > /dev/null \
+   && echo "$auto_resolve_block" | grep -E 'OWNER:[[:space:]]*\$\{\{[[:space:]]*github\.repository_owner[[:space:]]*\}\}' > /dev/null \
+   && echo "$auto_resolve_block" | grep -E 'REPO:[[:space:]]*\$\{\{[[:space:]]*github\.repository[[:space:]]*\}\}' > /dev/null \
+   && echo "$auto_resolve_block" | grep -E 'PR_NUMBER:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.number[[:space:]]*\}\}' > /dev/null; then
+  pass "auto_resolve step の env に STRUCTURED_OUTPUT / OWNER / REPO / PR_NUMBER が含まれる（Issue #167、二重防御の author 検証に必須）"
+else
+  fail "auto_resolve step の env が不足（Issue #167、STRUCTURED_OUTPUT / OWNER / REPO / PR_NUMBER の 4 つが必須）"
+fi
+
+# 8. auto_resolve step が App Installation Token (steps.app-token.outputs.token) を使う
+# bot 名義 vibehawk-for-<owner>[bot] による mutation を実行するため必須
+if echo "$auto_resolve_block" | grep -E 'GH_TOKEN:[[:space:]]*\$\{\{[[:space:]]*steps\.app-token\.outputs\.token[[:space:]]*\}\}' > /dev/null; then
+  pass "auto_resolve step が App Installation Token (steps.app-token.outputs.token) を使う（Issue #167、bot 名義 mutation 実行）"
+else
+  fail "auto_resolve step が App Installation Token を使っていない（Issue #167、vibehawk-for-<owner>[bot] 名義 mutation に必須）"
+fi
+
+# 9. Claude prompt から旧 mutation 実行サンプル (gh api graphql -f query='mutation { resolveReviewThread...) が削除されている
+# 旧設計では prompt 内のコードフェンスで mutation 実行例が示されていたが、Issue #167 で削除する。
+# 「絶対禁止」セクション内の「mutation を実行しない」記述は許可（実行コマンド形式ではない）。
+# 検出は「mutation { resolveReviewThread」（コードフェンス内の実行サンプル形式）のパターン。
+if echo "$WORKFLOW_PROMPT" | grep -F 'mutation { resolveReviewThread(input: { threadId' > /dev/null; then
+  fail "Claude prompt に旧 mutation 実行サンプル (mutation { resolveReviewThread(input: { threadId) が残っている（Issue #167、workflow step 移管で削除すべき）"
+else
+  pass "Claude prompt から旧 mutation 実行サンプルが削除されている（Issue #167）"
+fi
+
+# 10. Claude prompt に resolved_thread_ids の言及と Issue #167 の言及が含まれる
+if echo "$WORKFLOW_PROMPT" | grep -F 'resolved_thread_ids' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'Issue #167' > /dev/null; then
+  pass "Claude prompt に resolved_thread_ids / Issue #167 の言及が含まれる（Issue #167、workflow step 移管の根拠を明示）"
+else
+  fail "Claude prompt に resolved_thread_ids / Issue #167 の言及が含まれない（Issue #167、Claude が旧経路に戻ってしまう）"
+fi
+
+# 11. Claude prompt の「絶対禁止」リストに resolveReviewThread mutation の prompt 内実行禁止が含まれる
+# LLM の試し打ちを構造的に防止するため、明示的に禁止を書く必要がある
+if echo "$WORKFLOW_PROMPT" | grep -F '絶対禁止' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'resolveReviewThread' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'mutation' > /dev/null; then
+  pass "Claude prompt の絶対禁止に resolveReviewThread mutation / gh api graphql mutation 系の prompt 内実行禁止が含まれる（Issue #167）"
+else
+  fail "Claude prompt の絶対禁止に resolveReviewThread mutation 禁止が含まれない（Issue #167、Claude の試し打ち防止に必須）"
+fi
+
+# 12. Claude prompt のタスク完了条件 1 が「resolved_thread_ids に列挙」に書き換えられている
+# 旧: 「（INCREMENTAL_MODE=true なら）auto_resolve で旧指摘を resolved 化」
+# 新: 「（INCREMENTAL_MODE=true なら）解決対象 thread の GraphQL node_id を `resolved_thread_ids` に列挙」
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]+1\.' | grep -F 'auto_resolve で旧指摘を resolved 化' > /dev/null; then
+  fail "Claude prompt のタスク完了条件 1 に旧記述「auto_resolve で旧指摘を resolved 化」が残っている（Issue #167、resolved_thread_ids 列挙に書き換えるべき）"
+else
+  pass "Claude prompt のタスク完了条件 1 から旧記述「auto_resolve で旧指摘を resolved 化」が削除されている（Issue #167）"
+fi
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]+1\.' | grep -F 'resolved_thread_ids' > /dev/null; then
+  pass "Claude prompt のタスク完了条件 1 が「resolved_thread_ids に列挙」に書き換えられている（Issue #167）"
+else
+  fail "Claude prompt のタスク完了条件 1 に resolved_thread_ids の言及がない（Issue #167、新タスク完了条件として必須）"
+fi
+
+# 13. 旧「補足: 本 prompt で唯一許可される POST は resolveReviewThread mutation のみ」表記が削除されている
+# Issue #167 で mutation も workflow step に移管したため、この補足記述は不要になる
+if echo "$WORKFLOW_PROMPT" | grep -F '本 prompt で唯一許可される POST' > /dev/null; then
+  fail "Claude prompt に旧記述「本 prompt で唯一許可される POST は resolveReviewThread mutation のみ」が残っている（Issue #167、mutation も移管したため削除すべき）"
+else
+  pass "Claude prompt から旧記述「本 prompt で唯一許可される POST は resolveReviewThread mutation のみ」が削除されている（Issue #167）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

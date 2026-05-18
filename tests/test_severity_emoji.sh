@@ -132,19 +132,44 @@ else
   fail "Suggestions 構文の制約説明が prompt に不足"
 fi
 
-echo "=== auto_resolve 制約（Issue #9） ==="
+echo "=== auto_resolve 制約（Issue #9 / Issue #167） ==="
 
-if grep -F 'resolveReviewThread' "$WORKFLOW" > /dev/null; then
-  pass "auto_resolve の GraphQL mutation (resolveReviewThread) が prompt に含まれる"
+# Issue #167: auto_resolve の GraphQL mutation 実行は Claude prompt から workflow step
+# (scripts/ci/vibehawk-review/auto-resolve.sh) に移管された。Claude prompt 側は
+# 「解決対象 thread の node_id を `resolved_thread_ids` 配列に列挙する」だけになる。
+#
+# CodeRabbit PR #193 Major 指摘対応: 旧 OR 条件 (`resolveReviewThread || resolved_thread_ids`)
+# だと resolved_thread_ids 契約が消えても通過してしまい、Issue #167 要件の退行を見逃す。
+# 新契約 `resolved_thread_ids` の存在は必須チェックに昇格し、`resolveReviewThread` の言及は
+# 「禁止文脈での記載のみ許容」と分離して検証する。
+if grep -F 'resolved_thread_ids' "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve の新契約（resolved_thread_ids 列挙）が prompt に含まれる（Issue #167、必須チェック）"
 else
-  fail "auto_resolve の GraphQL mutation が prompt に含まれない"
+  fail "auto_resolve の新契約（resolved_thread_ids）が prompt に含まれない（Issue #167、退行検出）"
 fi
 
+# 旧経路の語 `resolveReviewThread` が残る場合は「絶対禁止」「絶対に〜しない」等の禁止文脈で
+# 言及されていることを確認（Issue #167 で実行は workflow step に移管したため、prompt 内では
+# 禁止記述としてのみ残る想定）。
+if grep -F 'resolveReviewThread' "$WORKFLOW" > /dev/null; then
+  if grep -F '絶対禁止' "$WORKFLOW" > /dev/null || grep -F '絶対に' "$WORKFLOW" > /dev/null; then
+    pass "resolveReviewThread への言及は禁止文脈（絶対禁止 / 絶対に）で記載されている（Issue #167）"
+  else
+    fail "resolveReviewThread への言及があるが禁止文脈として検証されていない（Issue #167、混乱を招く）"
+  fi
+fi
+
+# 他者・他 Bot の thread に対する非操作制約は Issue #167 で文言が変わった
+# （旧: 「touch しない」、新: 「schema に含めない」「resolved_thread_ids に含めない」）。
+# どの文言でも「他者・他 Bot のレビュースレッドには絶対に〜しない」という制約が
+# prompt に明示されていれば pass。
 if grep -F '他者・他 Bot のコメントは絶対に touch しない' "$WORKFLOW" > /dev/null || \
-   grep -F '他者・他 Bot のレビュースレッドには **絶対に' "$WORKFLOW" > /dev/null; then
-  pass "auto_resolve の「他者・他 Bot は touch しない」制約が prompt に明示"
+   grep -F '他者・他 Bot のコメントは絶対に schema に含めない' "$WORKFLOW" > /dev/null || \
+   grep -F '他者・他 Bot のレビュースレッドには **絶対に' "$WORKFLOW" > /dev/null || \
+   grep -F '他者・他 Bot のレビュースレッドの node_id は **絶対に' "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve の「他者・他 Bot は触らない / schema に含めない」制約が prompt に明示（Issue #167 文言更新後）"
 else
-  fail "auto_resolve の他者非操作制約が prompt に不足（誤 resolve は信頼破壊）"
+  fail "auto_resolve の他者非操作制約が prompt に不足（誤 resolve は信頼破壊、Issue #167）"
 fi
 
 echo "=== sticky review state（Issue #9 / Issue #121 bundled review API） ==="

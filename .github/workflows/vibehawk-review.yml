@@ -195,9 +195,10 @@ jobs:
 
             旧 issue comment 形式のサマリ（Issue #121 以前）が PR に残っていた場合は、touch せず放置（自然消滅）。
 
-            **絶対禁止**（Issue #164 fix で強化）:
+            **絶対禁止**（Issue #164 fix で強化 / Issue #167 で追加）:
             - **`$GITHUB_WORKSPACE/vibehawk-review.json` 等の schema 外経路（ファイル書き出し）で結果を返す**（**Issue #164 fix で構造的に廃止**、最終応答は assistant message としての schema 適合 JSON のみ）
             - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/reviews` で bundled review を直接 POST する（**bundled review POST は workflow step が決定論的に行う**、Issue #152）
+            - `gh api graphql` で `resolveReviewThread` mutation を実行する（**Issue #167 で workflow step に移管**、`resolved_thread_ids` 配列に列挙して workflow step `vibehawk auto_resolve` に委譲する）。`gh api graphql ... mutation` 系の副作用呼び出し全般を prompt 内で実行しない（query は許可、mutation は禁止）
             - `gh pr comment` 系コマンドでサマリを別投稿する（重複・badge 失効の原因）
             - `gh pr review` 系コマンドで review event を別発火する（本来 bundled で 1 回呼出に統合、approve / request-changes の発火経路は workflow step の bundled POST のみ）
             - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/comments` で inline を個別投稿する（バンドルから外れ muted badge の原因）
@@ -236,24 +237,27 @@ jobs:
             ```
             ````
 
-            ## auto_resolve（push で直った旧指摘を resolved 化、Issue #9）
+            ## auto_resolve（push で直った旧指摘を resolved 化、Issue #9 / Issue #167）
 
-            INCREMENTAL_MODE=true の場合、bundled review POST の **前** に以下を実施:
+            **Issue #167 で workflow step に移管**: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql resolveReviewThread` mutation を直接実行していた。Issue #164（structured_output 経路の確立）/ Issue #166（event 判定の workflow 移管）に続く責務分離の完成形として、Claude は「解決対象 thread の node_id を `resolved_thread_ids` 配列に列挙する」だけになり、mutation の実行は workflow step `vibehawk auto_resolve` が担う。
+
+            INCREMENTAL_MODE=true の場合、最終 assistant message JSON に以下を含める:
 
             1. `gh api repos/$REPO/pulls/$PR_NUMBER/comments --paginate` で既存 inline comments を取得
-            2. **投稿者 ID が `vibehawk-for-<owner>[bot]` のコメントのみ**フィルタ（他者・他 Bot のコメントは絶対に touch しない）
+            2. **投稿者 ID が `vibehawk-for-<owner>[bot]` のコメントのみ**フィルタ（他者・他 Bot のコメントは絶対に schema に含めない）
             3. 各コメントの `path` + `line` の差分が今回の REVIEW_RANGE で消えている／類似度が著しく下がっているかを判定
-            4. 「直った」と判定したスレッドは GraphQL `resolveReviewThread` mutation で resolved 化（削除はしない）
+            4. 「直った」と判定したスレッドの **GraphQL node_id**（`reviewThreads { nodes { id } }` クエリで取得）を `resolved_thread_ids: [string]` 配列に列挙する
+            5. INCREMENTAL_MODE=false や直った thread が無い場合は `resolved_thread_ids: []` を返す（フィールド省略でも workflow step 側で `// []` 吸収）
 
             ```bash
-            gh api graphql -f query='
-              mutation { resolveReviewThread(input: { threadId: "<thread_node_id>" }) { thread { isResolved } } }
-            '
+            # thread の node_id 取得は許可（クエリのみ、mutation は禁止）
+            gh api graphql -f query='query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } body path } } } } } } }' \
+              -F owner=... -F name=... -F pr=...
             ```
 
-            **重要制約**: 他者・他 Bot のレビュースレッドには **絶対に resolveReviewThread を呼ばない**（誤 resolve は信頼破壊）。投稿者 ID チェックを必ず実施。
+            **重要制約**: 他者・他 Bot のレビュースレッドの node_id は **絶対に `resolved_thread_ids` に含めない**（誤 resolve は信頼破壊）。投稿者 ID チェック（`vibehawk-for-<owner>[bot]` のみ）は schema 出力前に必ず実施。
 
-            **補足**: 本 prompt で唯一許可される POST は `gh api graphql` 経由の `resolveReviewThread` mutation のみ（bundled review POST は workflow step に移管済み、Issue #152）。`gh api -X POST repos/.../pulls/N/reviews` 等の REST POST は一切実行しない。
+            **二重防御**: workflow step `vibehawk auto_resolve` も同じ author 検証を GraphQL で再実行する（Claude のフィルタミス対策、`scripts/ci/vibehawk-review/auto-resolve.sh`）。それでもなお schema に他者 thread を含めるのは絶対禁止。
 
             ## review event 決定（Issue #166 で workflow step に移管）
 
@@ -318,12 +322,12 @@ jobs:
 
             Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります（bundled review POST は workflow step が App Installation Token を使って実行するため、bot 名義は維持される）。コード生成（docstring 全文 / unit-test ファイル新設 / 自動 commit）は **絶対に禁止**（5 大方針 2）。
 
-            ## タスク完了条件（Issue #164 fix / Issue #166）
+            ## タスク完了条件（Issue #164 fix / Issue #166 / Issue #167）
 
             本 prompt のタスクは以下で完了する:
 
-            1. （INCREMENTAL_MODE=true なら）auto_resolve で旧指摘を resolved 化
-            2. **最終 assistant message として `{event, body, commit_id, comments}` の schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`event` は placeholder `COMMENT` 固定、Issue #166）
+            1. （INCREMENTAL_MODE=true なら）解決対象 thread の GraphQL node_id を `resolved_thread_ids: [string]` 配列に列挙する（`vibehawk-for-<owner>[bot]` 名義の thread のみ、schema 出力前にフィルタ済み）。実際の `resolveReviewThread` mutation 実行は workflow step `vibehawk auto_resolve` が `resolved_thread_ids` を foreach で実行する（Issue #167 で workflow step に移管）
+            2. **最終 assistant message として `{event, body, commit_id, comments, resolved_thread_ids?}` の schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`event` は placeholder `COMMENT` 固定、Issue #166）
 
             **指摘が 0 件であっても、必ず schema 適合 JSON を最終 assistant message として返すこと**（`event=COMMENT`・`comments=[]` で OK、Issue #166 で placeholder 固定）。応答が空になると `outputs.structured_output` が空となり後続 bundled POST step が skip → status check neutral に倒れ、required status check が灰色「未投稿」のまま残る（PR #159 で実証された Issue #164 の症状）。
 
@@ -332,7 +336,36 @@ jobs:
             **ファイル書き出し全般（`$GITHUB_WORKSPACE/vibehawk-review.json` 等）も行わない**。schema 外の経路で結果を返さない（Issue #164 fix）。応答は claude-code-action の最終 assistant message として返すことが唯一の正解。
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
-            --json-schema '{"type":"object","required":["event","body","commit_id","comments"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}}}}'
+            --json-schema '{"type":"object","required":["event","body","commit_id","comments"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}}}}'
+
+      - name: vibehawk auto_resolve（直った旧指摘を resolved 化、Issue #167）
+        # Issue #167: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql
+        # resolveReviewThread` mutation を直接実行していた。Issue #164（structured_output
+        # 経路の確立）/ Issue #166（event 判定の workflow 移管）に続く責務分離の完成形
+        # として workflow step に移管する。Claude は `structured_output.resolved_thread_ids`
+        # に解決対象 thread の node_id を列挙するだけで、本 step が foreach で
+        # `resolveReviewThread` mutation を実行する。
+        #
+        # 配置: claude_review → 本 step (auto_resolve) → decide_event → bundled POST
+        # → status check post。decide_event が GraphQL で unresolved 数を取得するため、
+        # auto_resolve mutation を decide_event の前に走らせる必要がある（旧 Claude prompt
+        # 内実装と同じ順序）。
+        #
+        # 二重防御: scripts/ci/vibehawk-review/auto-resolve.sh は node_id 形式の事前
+        # サニタイズ + GraphQL で author.login が vibehawk-for-<owner> であることを再検証
+        # してから mutation 実行する（Claude のフィルタミスに対する workflow 側の防御）。
+        # 他者・他 Bot の thread_id が誤って resolved_thread_ids に混入していても誤 resolve
+        # は起きない。
+        id: auto_resolve
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          STRUCTURED_OUTPUT: ${{ steps.claude_review.outputs.structured_output }}
+        # 詳細: scripts/ci/vibehawk-review/auto-resolve.sh
+        run: bash scripts/ci/vibehawk-review/auto-resolve.sh
 
       - name: vibehawk event を決定（Issue #166）
         # Issue #166: event 判定ロジックを Claude prompt から workflow step に移管。
