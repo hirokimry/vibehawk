@@ -186,6 +186,17 @@ else
   pass "yml に 'run: |' 複数行インラインシェルが残っていない"
 fi
 
+# 全 run: 行がラッパー呼び出し (bash scripts/ci/vibehawk-review-skip-mark/) であること
+# 'run: |' 不在チェックだけだと 'run: echo ...' のような単行 inline shell が混入しても
+# 通ってしまうので、run: 行総数とラッパー呼び出し行数の一致を担保する
+total_runs=$(grep -cE "^[[:space:]]+run:[[:space:]]" "$WORKFLOW" || true)
+wrapper_runs=$(grep -cE "^[[:space:]]+run:[[:space:]]+bash[[:space:]]+scripts/ci/vibehawk-review-skip-mark/" "$WORKFLOW" || true)
+if [[ "$total_runs" -eq "$wrapper_runs" ]] && [[ "$total_runs" -gt 0 ]]; then
+  pass "全 run: ($total_runs 件) がラッパー呼び出し (bash scripts/ci/vibehawk-review-skip-mark/) のみ"
+else
+  fail "run: 行の総数 ($total_runs) とラッパー呼び出し行数 ($wrapper_runs) が一致しない（単行 inline shell が混入の疑い）"
+fi
+
 # paths-ignore 全マッチ判定の 5 パターン同期検証（vibehawk-review.yml と完全一致が必須）
 # 切り出し先の classify-paths-ignore.sh で case 文を検査する
 declare -a required_case_patterns=(

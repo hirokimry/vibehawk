@@ -38,16 +38,25 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 run_in() {
-  # Usage: run_in <workdir> <files_count>
+  # Usage: run_in <workdir> <files_count|__UNSET__>
+  # __UNSET__ を渡した場合は env -u FILES_COUNT で子 env から明示除去して呼ぶ
+  # （単に FILES_COUNT="" を assign すると「空文字設定」となり、未設定検証にならない）。
   local workdir="$1" files_count="$2"
   local output_file="${TMP_ROOT}/github_output"
   : > "$output_file"
   local stdout_file="${TMP_ROOT}/stdout"
   local rc=0
-  (
-    cd "$workdir"
-    FILES_COUNT="$files_count" GITHUB_OUTPUT="$output_file" bash "$SCRIPT"
-  ) > "$stdout_file" 2>&1 || rc=$?
+  if [[ "$files_count" == "__UNSET__" ]]; then
+    (
+      cd "$workdir"
+      env -u FILES_COUNT GITHUB_OUTPUT="$output_file" bash "$SCRIPT"
+    ) > "$stdout_file" 2>&1 || rc=$?
+  else
+    (
+      cd "$workdir"
+      FILES_COUNT="$files_count" GITHUB_OUTPUT="$output_file" bash "$SCRIPT"
+    ) > "$stdout_file" 2>&1 || rc=$?
+  fi
   echo "$rc"
 }
 
@@ -129,14 +138,25 @@ else
   echo "  ! python3 + pyyaml が利用不可のため .vibehawk.yaml 読込シナリオをスキップ"
 fi
 
-# シナリオ 6: FILES_COUNT 未設定 → 0 として扱い depth=full
+# シナリオ 6a: FILES_COUNT="" (空文字設定) → 0 として扱い depth=full
 rc=$(run_in "$WORK1" "")
 if [[ "$rc" -eq 0 ]] \
    && grep -qx "files_count=0" "$OUT" \
    && grep -qx "depth=full" "$OUT"; then
-  pass "FILES_COUNT 未設定 → 0 として扱い depth=full"
+  pass "FILES_COUNT='' (空文字) → 0 として扱い depth=full"
 else
-  fail "FILES_COUNT 未設定シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+  fail "FILES_COUNT='' シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+fi
+
+# シナリオ 6b: FILES_COUNT 未設定 (env -u FILES_COUNT) → 0 として扱い depth=full
+# 子 env からの明示除去で「環境変数の真の未設定」を検証する（空文字設定とは別ケース）。
+rc=$(run_in "$WORK1" "__UNSET__")
+if [[ "$rc" -eq 0 ]] \
+   && grep -qx "files_count=0" "$OUT" \
+   && grep -qx "depth=full" "$OUT"; then
+  pass "FILES_COUNT 未設定 (env -u) → 0 として扱い depth=full"
+else
+  fail "FILES_COUNT 未設定 (env -u) シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
 # シナリオ 7: GITHUB_OUTPUT 未設定 → 非 0 終了

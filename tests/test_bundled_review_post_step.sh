@@ -69,14 +69,16 @@ def replace(match):
     indent = match.group(1)
     rel = match.group(2).strip()
     abs_path = os.path.join(repo_root, rel)
-    if os.path.isfile(abs_path):
-        with open(abs_path, encoding='utf-8') as g:
-            content = g.read()
-        indented = ''.join(f"{indent}  {line}" for line in content.splitlines(keepends=True))
-        if not indented.endswith('\n'):
-            indented += '\n'
-        return f"{indent}run: |\n{indented.rstrip(chr(10))}"
-    return match.group(0)
+    # 参照先 .sh が無いケースは「壊れた参照」として即エラー終了する
+    if not os.path.isfile(abs_path):
+        sys.stderr.write(f"::error::ラッパー参照先 .sh が存在しない: {abs_path}\n")
+        sys.exit(1)
+    with open(abs_path, encoding='utf-8') as g:
+        content = g.read()
+    indented = ''.join(f"{indent}  {line}" for line in content.splitlines(keepends=True))
+    if not indented.endswith('\n'):
+        indented += '\n'
+    return f"{indent}run: |\n{indented.rstrip(chr(10))}"
 
 sys.stdout.write(pattern.sub(replace, yaml_text))
 PYEOF

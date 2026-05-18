@@ -40,9 +40,9 @@ if [[ "$event" != "APPROVE" && "$event" != "REQUEST_CHANGES" ]]; then
   exit 1
 fi
 
-# body の validate: 非空であること
+# body の validate: 非空であること（半角スペースだけでなく改行・タブ等の空白全般を空とみなす）
 body="$(cat "$BODY_FILE")"
-if [[ -z "${body// /}" ]]; then
+if [[ -z "${body//[[:space:]]/}" ]]; then
   echo "::error::vibehawk chat: REVIEW_BODY が空です"
   exit 1
 fi

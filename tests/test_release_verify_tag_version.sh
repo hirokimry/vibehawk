@@ -119,13 +119,18 @@ else
   fail "::error::メッセージが想定と異なる: $output"
 fi
 
-# Case 5: 成功時の OK メッセージ
+# Case 5: 成功時の OK メッセージ + exit_code 検証
 set +e
 output=$(cd "${TMPDIR_TEST}/repo" && GITHUB_REF_NAME="v1.2.3" bash "$SCRIPT" 2>&1)
 exit_code=$?
 set -e
-if grep -qF "tag と version の整合確認 OK: 1.2.3" <<< "$output"; then
-  pass "成功時メッセージ "tag と version の整合確認 OK: 1.2.3" が出力される"
+if [[ "$exit_code" -eq 0 ]]; then
+  pass "成功時に exit 0 で終了する"
+else
+  fail "成功時の exit_code が想定外: exit=$exit_code, output='$output'"
+fi
+if grep -qF 'tag と version の整合確認 OK: 1.2.3' <<< "$output"; then
+  pass "成功時メッセージ 'tag と version の整合確認 OK: 1.2.3' が出力される"
 else
   fail "成功時メッセージが想定と異なる: $output"
 fi

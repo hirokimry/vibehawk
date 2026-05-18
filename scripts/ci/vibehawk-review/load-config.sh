@@ -42,6 +42,11 @@ skip_inline_files=3000
 path_filters="[]"
 path_instructions="[]"
 
+# 非負整数判定（`.vibehawk.yaml` の数値設定が文字列や負数だった場合に
+# set -e の `[[ "$fc" -ge "$skip_inline_files" ]]` で job を落とさず、警告 +
+# デフォルト値フォールバックで吸収する）
+is_uint() { [[ "$1" =~ ^[0-9]+$ ]]; }
+
 if [[ -n "$config_file" ]]; then
   # PyYAML 可用性確認（ubuntu-latest はプリインストール、念のため pip install フォールバック）
   python3 -c "import yaml" 2>/dev/null || pip install --user --quiet pyyaml
@@ -51,11 +56,22 @@ if [[ -n "$config_file" ]]; then
 
   # キーマッピング（.vibehawk.yaml のスキーマ、Issue #10）
   language="$(echo "$config_json" | jq -r '.language // "en"')"
-  full_review_files="$(echo "$config_json" | jq -r '.reviews.size_limits.full_review_files // 30')"
-  focused_review_files="$(echo "$config_json" | jq -r '.reviews.size_limits.focused_review_files // 80')"
-  skip_inline_files="$(echo "$config_json" | jq -r '.reviews.size_limits.skip_inline_files // 3000')"
+  raw_full="$(echo "$config_json" | jq -r '.reviews.size_limits.full_review_files // 30')"
+  raw_focused="$(echo "$config_json" | jq -r '.reviews.size_limits.focused_review_files // 80')"
+  raw_skip="$(echo "$config_json" | jq -r '.reviews.size_limits.skip_inline_files // 3000')"
   path_filters="$(echo "$config_json" | jq -c '.reviews.path_filters // []')"
   path_instructions="$(echo "$config_json" | jq -c '.reviews.path_instructions // []')"
+
+  # 数値設定のバリデーション（誤設定時はデフォルトに倒す）
+  if is_uint "$raw_full"; then full_review_files="$raw_full"; else
+    echo "::warning::vibehawk: reviews.size_limits.full_review_files が非負整数ではない（'$raw_full'）。デフォルト 30 にフォールバック。"
+  fi
+  if is_uint "$raw_focused"; then focused_review_files="$raw_focused"; else
+    echo "::warning::vibehawk: reviews.size_limits.focused_review_files が非負整数ではない（'$raw_focused'）。デフォルト 80 にフォールバック。"
+  fi
+  if is_uint "$raw_skip"; then skip_inline_files="$raw_skip"; else
+    echo "::warning::vibehawk: reviews.size_limits.skip_inline_files が非負整数ではない（'$raw_skip'）。デフォルト 3000 にフォールバック。"
+  fi
 fi
 
 # depth 決定（PR 変更ファイル数 → 段階的劣化、docs/cost-analysis.md 仕様）
