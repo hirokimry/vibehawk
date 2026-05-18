@@ -626,6 +626,12 @@ if [[ "$decided" == "REQUEST_CHANGES" ]]; then
 else
   fail "Issue #171: Info 1 件で DECIDED_EVENT が想定外（期待: REQUEST_CHANGES, 実測: ${decided}）"
 fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #171: Info 1 件で bundled POST が 1 回実行（実測: $posts 回、chain が end-to-end で完走）"
+else
+  fail "Issue #171: Info 1 件で POST 回数が想定外（期待: 1, 実測: $posts）"
+fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
   if [[ "$final_event" == "REQUEST_CHANGES" ]]; then
@@ -646,6 +652,12 @@ if [[ "$decided" == "APPROVE" ]]; then
   pass "Issue #171: 0 件で decide-event.sh が DECIDED_EVENT=APPROVE を算出（既存挙動）"
 else
   fail "Issue #171: 0 件で DECIDED_EVENT が想定外（期待: APPROVE, 実測: ${decided}）"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #171: 0 件で bundled POST が 1 回実行（実測: $posts 回、APPROVE でも 1 回 POST する）"
+else
+  fail "Issue #171: 0 件で POST 回数が想定外（期待: 1, 実測: $posts）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
