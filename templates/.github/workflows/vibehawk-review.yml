@@ -306,10 +306,6 @@ jobs:
 
             利用者は `.vibehawk.yaml` の `reviews.size_limits` で閾値を上書き可能。
 
-            ### 設定ソース表示
-
-            CONFIG_SOURCE が `vibehawk` / `default` のいずれかを示す（Issue #172 で `.coderabbit.yaml` フォールバック撤廃）。サマリ本文の冒頭に「使用設定: $CONFIG_SOURCE」を 1 行表示してください（利用者が設定の反映を確認できるよう透明化）。
-
             ## レビュー範囲を確認するコマンド例
 
             INCREMENTAL_MODE=true:
