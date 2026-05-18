@@ -87,6 +87,11 @@ gh api graphql \
 # 文字は含まれない。Claude が暴走して異常文字列を返した場合の GraphQL 入力サニタイズ
 # （.claude/rules/shell.md「ユーザー入力値をファイルパスに組み込む前にサニタイズする」
 # と同じ原則）。pattern 不一致は warning + skip で次の thread へ。
+#
+# 注: 文字クラス内のハイフン `-` は範囲指定子として解釈されないよう **必ず最後** に置く。
+# 判定には `grep -E` ではなく bash 内蔵 `=~` を使う（git for Windows bash の grep
+# 実装で `[A-Za-z0-9+/=_-]+` が想定通り評価されず、正常な node_id が弾かれる事象を
+# PR #193 で確認、bash 3.2+ 内蔵 regex なら全 OS で一貫した挙動になる）。
 NODE_ID_PATTERN='^[A-Za-z0-9+/=_-]+$'
 
 resolved_count=0
@@ -94,8 +99,8 @@ skipped_count=0
 failed_count=0
 
 for tid in "${thread_ids[@]}"; do
-  # 入力サニタイズ: node_id 許可文字パターンの事前検証
-  if ! printf '%s' "$tid" | grep -Eq "$NODE_ID_PATTERN"; then
+  # 入力サニタイズ: node_id 許可文字パターンの事前検証（bash 内蔵 =~ で OS 非依存）
+  if ! [[ "$tid" =~ $NODE_ID_PATTERN ]]; then
     echo "::warning::vibehawk: thread id が GitHub node_id 形式に一致しません（skip、誤入力 / Claude 暴走防御）"
     skipped_count=$((skipped_count + 1))
     continue
