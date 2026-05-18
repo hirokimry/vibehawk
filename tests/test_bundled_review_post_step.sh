@@ -498,6 +498,178 @@ else
 fi
 unset STRUCTURED_OUTPUT DECIDED_EVENT
 
+# ===== Issue #171: severity 不問・件数主軸ルールの統合実証 =====
+# decide-event.sh と bundled POST step を chain 実行し、新ルール（Minor/Info 1 件 → REQUEST_CHANGES、
+# 0 件 → APPROVE）が最終 payload.event に反映されることを実証する。
+#
+# 単純な severity 内訳判定（decide-event.sh の単体テストは tests/test_vibehawk_review_decide_event.sh
+# で網羅済み）ではなく、bundled POST step との chain で「decide-event.sh が算出した DECIDED_EVENT が
+# 実際に POST payload に書き込まれる」末端動作を検証する。
+echo ""
+echo "===== Issue #171 統合実証: decide-event.sh → bundled POST chain ====="
+
+DECIDE_SCRIPT="${REPO_ROOT}/scripts/ci/vibehawk-review/decide-event.sh"
+if [[ ! -f "$DECIDE_SCRIPT" ]]; then
+  fail "Issue #171: decide-event.sh が見つからない（${DECIDE_SCRIPT}）"
+  echo "=== 結果: $PASSED passed, $FAILED failed ==="
+  exit 1
+fi
+
+# Issue #171 統合実証用の gh スタブ（unresolved_count=0 を返す graphql + POST カウントを継承）
+ISSUE171_STUB_DIR="${TEST_TMP}/issue171-bin"
+mkdir -p "$ISSUE171_STUB_DIR"
+cat > "${ISSUE171_STUB_DIR}/gh" <<'GH_STUB_171_EOF'
+#!/usr/bin/env bash
+# Issue #171 gh スタブ:
+#   - gh api graphql 呼び出しは unresolved=0 を返す（decide-event.sh が読む）
+#   - gh api -X POST .../reviews 呼び出しは POST_LOG にカウントを追記する（bundled POST step が読む）
+echo "$@" >> "${GH_CALL_LOG}"
+if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
+  printf '0\n'
+  exit 0
+fi
+for arg in "$@"; do
+  if [[ "$arg" == "-X" ]]; then
+    next_is_method=1
+  elif [[ "${next_is_method:-0}" == "1" ]]; then
+    if [[ "$arg" == "POST" ]]; then
+      echo "POST" >> "${GH_POST_LOG}"
+    fi
+    next_is_method=0
+  fi
+done
+exit 0
+GH_STUB_171_EOF
+chmod +x "${ISSUE171_STUB_DIR}/gh"
+
+# decide-event.sh + bundled POST step を chain 実行するヘルパー
+# 入力: $1 = STRUCTURED_OUTPUT JSON
+# 出力: $TEST_TMP/decide-output に decide-event.sh の GITHUB_OUTPUT 内容、
+#       $TEST_TMP/runner-temp/vibehawk-review.json に bundled POST 後の payload
+run_chain() {
+  local structured_output="$1"
+
+  : > "${TEST_TMP}/gh-call.log"
+  : > "${TEST_TMP}/gh-post.log"
+  rm -rf "${TEST_TMP}/runner-temp"
+  mkdir -p "${TEST_TMP}/runner-temp"
+
+  # Step 1: decide-event.sh を実行して DECIDED_EVENT を算出
+  local decide_output="${TEST_TMP}/decide-output"
+  : > "$decide_output"
+  GH_CALL_LOG="${TEST_TMP}/gh-call.log" \
+  GH_POST_LOG="${TEST_TMP}/gh-post.log" \
+  PATH="${ISSUE171_STUB_DIR}:${PATH}" \
+  GITHUB_OUTPUT="$decide_output" \
+  REPO="hirokimry/vibehawk" \
+  PR_NUMBER="171" \
+  STRUCTURED_OUTPUT="$structured_output" \
+  RUNNER_TEMP="${TEST_TMP}/runner-temp" \
+  bash "$DECIDE_SCRIPT" > "${TEST_TMP}/decide-stdout.log" 2>&1
+
+  # 算出された DECIDED_EVENT を抽出
+  local decided_event=""
+  if grep -q '^decided_event=' "$decide_output"; then
+    decided_event="$(grep '^decided_event=' "$decide_output" | head -1 | cut -d= -f2-)"
+  fi
+
+  # Step 2: bundled POST step を decide-event.sh が算出した DECIDED_EVENT で実行
+  GH_CALL_LOG="${TEST_TMP}/gh-call.log" \
+  GH_POST_LOG="${TEST_TMP}/gh-post.log" \
+  PATH="${ISSUE171_STUB_DIR}:${PATH}" \
+  REPO="hirokimry/vibehawk" \
+  PR_NUMBER="171" \
+  GH_TOKEN="test-token" \
+  RUNNER_TEMP="${TEST_TMP}/runner-temp" \
+  STRUCTURED_OUTPUT="$structured_output" \
+  DECIDED_EVENT="$decided_event" \
+  bash "${STEP_SCRIPT}" > "${TEST_TMP}/bundled-stdout.log" 2>&1
+
+  # 算出された DECIDED_EVENT を stdout 経由で呼出側に返す
+  printf '%s' "$decided_event"
+}
+
+# シナリオ A: Minor 1 件 → DECIDED_EVENT=REQUEST_CHANGES → payload.event=REQUEST_CHANGES（severity 不問）
+echo ""
+echo "--- Issue #171 シナリオ A: 🟡 Minor 1 件 → REQUEST_CHANGES（severity 不問の新ルール実証） ---"
+MINOR_PAYLOAD='{"event":"COMMENT","body":"<!-- vibehawk:summary -->\n<!-- vibehawk:sha=deadbeef -->\nテスト","commit_id":"deadbeef","comments":[{"path":"src/foo.ts","line":42,"side":"RIGHT","body":"🟡 **Minor**: 変数名を意図がわかる名前に"}]}'
+decided="$(run_chain "$MINOR_PAYLOAD")"
+if [[ "$decided" == "REQUEST_CHANGES" ]]; then
+  pass "Issue #171: Minor 1 件で decide-event.sh が DECIDED_EVENT=REQUEST_CHANGES を算出（severity 不問）"
+else
+  fail "Issue #171: Minor 1 件で DECIDED_EVENT が想定外（期待: REQUEST_CHANGES, 実測: ${decided}、旧ルール（Critical/Major のみ）に戻っている）"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #171: Minor 1 件で bundled POST が 1 回実行（実測: $posts 回）"
+else
+  fail "Issue #171: Minor 1 件で POST 回数が想定外（期待: 1, 実測: $posts）"
+fi
+if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
+  final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  if [[ "$final_event" == "REQUEST_CHANGES" ]]; then
+    pass "Issue #171: Minor 1 件で最終 payload.event=REQUEST_CHANGES（severity 不問の chain 動作確認）"
+  else
+    fail "Issue #171: Minor 1 件で最終 payload.event が想定外（期待: REQUEST_CHANGES, 実測: ${final_event}）"
+  fi
+else
+  fail "Issue #171: Minor 1 件で PAYLOAD ファイルが POST 後に残っていない"
+fi
+
+# シナリオ B: Info 1 件 → DECIDED_EVENT=REQUEST_CHANGES → payload.event=REQUEST_CHANGES
+echo ""
+echo "--- Issue #171 シナリオ B: ⚪ Info 1 件 → REQUEST_CHANGES（severity 不問・最弱 severity でも REQUEST_CHANGES） ---"
+INFO_PAYLOAD='{"event":"COMMENT","body":"<!-- vibehawk:summary -->\n<!-- vibehawk:sha=feedbeef -->\nテスト","commit_id":"feedbeef","comments":[{"path":"src/foo.ts","line":10,"side":"RIGHT","body":"⚪ **Info**: 参考情報"}]}'
+decided="$(run_chain "$INFO_PAYLOAD")"
+if [[ "$decided" == "REQUEST_CHANGES" ]]; then
+  pass "Issue #171: Info 1 件で decide-event.sh が DECIDED_EVENT=REQUEST_CHANGES を算出（severity 不問の核心実証）"
+else
+  fail "Issue #171: Info 1 件で DECIDED_EVENT が想定外（期待: REQUEST_CHANGES, 実測: ${decided}）"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #171: Info 1 件で bundled POST が 1 回実行（実測: $posts 回、chain が end-to-end で完走）"
+else
+  fail "Issue #171: Info 1 件で POST 回数が想定外（期待: 1, 実測: $posts）"
+fi
+if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
+  final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  if [[ "$final_event" == "REQUEST_CHANGES" ]]; then
+    pass "Issue #171: Info 1 件で最終 payload.event=REQUEST_CHANGES（severity 不問の chain 動作確認）"
+  else
+    fail "Issue #171: Info 1 件で最終 payload.event が想定外（期待: REQUEST_CHANGES, 実測: ${final_event}）"
+  fi
+else
+  fail "Issue #171: Info 1 件で PAYLOAD ファイルが POST 後に残っていない"
+fi
+
+# シナリオ C: 0 件 → DECIDED_EVENT=APPROVE → payload.event=APPROVE
+echo ""
+echo "--- Issue #171 シナリオ C: 0 件 → APPROVE（既存挙動を維持） ---"
+EMPTY_PAYLOAD='{"event":"COMMENT","body":"<!-- vibehawk:summary -->\n<!-- vibehawk:sha=cafebabe -->\nテスト","commit_id":"cafebabe","comments":[]}'
+decided="$(run_chain "$EMPTY_PAYLOAD")"
+if [[ "$decided" == "APPROVE" ]]; then
+  pass "Issue #171: 0 件で decide-event.sh が DECIDED_EVENT=APPROVE を算出（既存挙動）"
+else
+  fail "Issue #171: 0 件で DECIDED_EVENT が想定外（期待: APPROVE, 実測: ${decided}）"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #171: 0 件で bundled POST が 1 回実行（実測: $posts 回、APPROVE でも 1 回 POST する）"
+else
+  fail "Issue #171: 0 件で POST 回数が想定外（期待: 1, 実測: $posts）"
+fi
+if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
+  final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  if [[ "$final_event" == "APPROVE" ]]; then
+    pass "Issue #171: 0 件で最終 payload.event=APPROVE（指摘 0 件で APPROVE 通過の挙動維持）"
+  else
+    fail "Issue #171: 0 件で最終 payload.event が想定外（期待: APPROVE, 実測: ${final_event}）"
+  fi
+else
+  fail "Issue #171: 0 件で PAYLOAD ファイルが POST 後に残っていない"
+fi
+
 echo ""
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

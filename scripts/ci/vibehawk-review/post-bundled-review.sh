@@ -63,8 +63,9 @@ fi
 # Issue #166: event フィールドを decide_event step の計算結果で上書きする。
 # Claude が返した event は placeholder（schema 上は APPROVE / REQUEST_CHANGES / COMMENT の
 # いずれか、prompt 規約では COMMENT 固定）であり、最終的な event 判定は decide_event step が
-# unresolved 数 + 新規 Critical/Major 件数から決定論的に行う。jq で .event を上書きしてから
-# POST することで、Claude の確率的応答に依存しない event 決定を実現する。
+# unresolved 数 + 新規 inline 指摘の総件数（severity 不問、Issue #171）から決定論的に行う。
+# jq で .event を上書きしてから POST することで、Claude の確率的応答に依存しない event 決定
+# を実現する。
 if [[ -z "${DECIDED_EVENT:-}" ]]; then
   echo "::warning::vibehawk: decide_event step の出力 (decided_event) が空です。bundled review POST を skip します（次の status check post が neutral に倒れます）"
   exit 0
