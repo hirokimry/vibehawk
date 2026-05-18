@@ -969,29 +969,40 @@ else
   fail "decide_event step が GraphQL reviewThreads クエリを呼んでいない（Issue #166、unresolved 数の決定論的取得に必須）"
 fi
 
-# 6. decide_event step が jq で comments[].body 冒頭絵文字 (🔴 / 🟠) を集計
-# severity の取り出しは Claude prompt が body 冒頭に絵文字を付与する仕様に依存
+# 6. decide_event step が jq で comments[] の総件数を集計（Issue #171: severity 不問・件数主軸）
+# 旧実装（Issue #166）では body 冒頭絵文字（🔴 / 🟠）で Critical/Major のみカウントしていたが、
+# Issue #171 で severity 不問の総件数判定に変更したため、jq 式は `[.comments[]?] | length` 形式
+# になる。startswith() による severity フィルタは含まれない。
 if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
-   | grep -F 'startswith("🔴")' > /dev/null \
-   && awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
-   | grep -F 'startswith("🟠")' > /dev/null; then
-  pass "decide_event step が jq で comments[].body 冒頭絵文字 (🔴 Critical / 🟠 Major) を集計（Issue #166）"
+   | grep -F '[.comments[]?] | length' > /dev/null; then
+  pass "decide_event step が jq で comments[] の総件数を集計（Issue #171、severity 不問）"
 else
-  fail "decide_event step が Critical/Major 絵文字を jq で集計していない（Issue #166、severity 分布の決定論的算出に必須）"
+  fail "decide_event step が comments[] の総件数集計を行っていない（Issue #171、severity 不問の件数主軸ルールに必須）"
 fi
 
-# 7. decide_event step が判定ルール 3 段階を実装
+# 6-bis. Issue #171 で旧 startswith("🔴") / startswith("🟠") の severity フィルタが撤去されている
+# severity 別カウントは判定に使わない設計に変更（severity 不問・件数主軸）
+if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'startswith("🔴")' > /dev/null \
+   || awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'startswith("🟠")' > /dev/null; then
+  fail "decide_event step に旧 severity フィルタ（startswith(\"🔴\") / startswith(\"🟠\")）が残っている（Issue #171、severity 不問・件数主軸に変更したため撤去すべき）"
+else
+  pass "decide_event step から旧 severity フィルタが撤去されている（Issue #171）"
+fi
+
+# 7. decide_event step が判定ルール 3 段階を実装（Issue #171: severity 不問・件数主軸）
 # - unresolved >= 1 → REQUEST_CHANGES（最優先）
-# - 新規 Critical/Major あり → REQUEST_CHANGES
+# - 新規 inline 指摘の総件数 >= 1 → REQUEST_CHANGES（severity 不問、Issue #171）
 # - それ以外 → APPROVE
 decide_block="$(awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW")"
 if echo "$decide_block" | grep -F 'unresolved_count' > /dev/null \
-   && echo "$decide_block" | grep -F 'critical_major_count' > /dev/null \
+   && echo "$decide_block" | grep -F 'new_comments_count' > /dev/null \
    && echo "$decide_block" | grep -F 'decided_event="REQUEST_CHANGES"' > /dev/null \
    && echo "$decide_block" | grep -F 'decided_event="APPROVE"' > /dev/null; then
-  pass "decide_event step が判定ルール 3 段階（unresolved + Critical/Major → REQUEST_CHANGES / それ以外 → APPROVE）を実装（Issue #166）"
+  pass "decide_event step が判定ルール 3 段階（unresolved + 新規総件数 → REQUEST_CHANGES / それ以外 → APPROVE）を実装（Issue #171: severity 不問・件数主軸）"
 else
-  fail "decide_event step の判定ルール実装が想定外（Issue #166、旧 prompt 内ロジックの 1:1 移植が必須）"
+  fail "decide_event step の判定ルール実装が想定外（Issue #171、unresolved_count + new_comments_count + 3 段階判定が必須）"
 fi
 
 # 8. decide_event step が decided_event を GITHUB_OUTPUT に出力
