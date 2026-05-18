@@ -137,14 +137,26 @@ echo "=== auto_resolve 制約（Issue #9 / Issue #167） ==="
 # Issue #167: auto_resolve の GraphQL mutation 実行は Claude prompt から workflow step
 # (scripts/ci/vibehawk-review/auto-resolve.sh) に移管された。Claude prompt 側は
 # 「解決対象 thread の node_id を `resolved_thread_ids` 配列に列挙する」だけになる。
-# このテストは「Claude が thread の解決を組み立てる方法」が prompt に明示されているかを
-# 検証する観点なので、resolveReviewThread の言及（移管後も歴史的経緯として残る）
-# または resolved_thread_ids の言及（新仕様の核）のいずれかが含まれていれば pass。
-if grep -F 'resolveReviewThread' "$WORKFLOW" > /dev/null || \
-   grep -F 'resolved_thread_ids' "$WORKFLOW" > /dev/null; then
-  pass "auto_resolve の解決経路（旧: resolveReviewThread mutation / 新: resolved_thread_ids 列挙）が prompt に含まれる（Issue #167）"
+#
+# CodeRabbit PR #193 Major 指摘対応: 旧 OR 条件 (`resolveReviewThread || resolved_thread_ids`)
+# だと resolved_thread_ids 契約が消えても通過してしまい、Issue #167 要件の退行を見逃す。
+# 新契約 `resolved_thread_ids` の存在は必須チェックに昇格し、`resolveReviewThread` の言及は
+# 「禁止文脈での記載のみ許容」と分離して検証する。
+if grep -F 'resolved_thread_ids' "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve の新契約（resolved_thread_ids 列挙）が prompt に含まれる（Issue #167、必須チェック）"
 else
-  fail "auto_resolve の解決経路が prompt に含まれない（Issue #9 / Issue #167）"
+  fail "auto_resolve の新契約（resolved_thread_ids）が prompt に含まれない（Issue #167、退行検出）"
+fi
+
+# 旧経路の語 `resolveReviewThread` が残る場合は「絶対禁止」「絶対に〜しない」等の禁止文脈で
+# 言及されていることを確認（Issue #167 で実行は workflow step に移管したため、prompt 内では
+# 禁止記述としてのみ残る想定）。
+if grep -F 'resolveReviewThread' "$WORKFLOW" > /dev/null; then
+  if grep -F '絶対禁止' "$WORKFLOW" > /dev/null || grep -F '絶対に' "$WORKFLOW" > /dev/null; then
+    pass "resolveReviewThread への言及は禁止文脈（絶対禁止 / 絶対に）で記載されている（Issue #167）"
+  else
+    fail "resolveReviewThread への言及があるが禁止文脈として検証されていない（Issue #167、混乱を招く）"
+  fi
 fi
 
 # 他者・他 Bot の thread に対する非操作制約は Issue #167 で文言が変わった

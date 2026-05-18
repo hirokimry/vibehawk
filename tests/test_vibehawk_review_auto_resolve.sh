@@ -334,6 +334,22 @@ else
 fi
 
 # ============================================================
+# シナリオ 7-ter (PR #193 \r トリミング regression test): jq -r 出力に擬似的に \r が
+# 混入した状況を再現し、auto-resolve.sh の ${var%$'\r'} トリミングが正しく動くことを確認
+# ============================================================
+# 本来、git for Windows bash の jq | while read 経由で \r が混入する事象を Windows runner
+# で観測した（PR #193）。ローカル環境（macOS bash）では再現できないため、jq の出力を
+# 加工する手段がない。代わりに「auto-resolve.sh 内で `${line%$'\r'}` のトリミング行が
+# 確実に存在する」ことを grep で検査して regression を防ぐ（`.claude/rules/testing.md`
+# の testing 原則に沿った最小実装。実環境再現は Windows CI test-matrix で担保）。
+if grep -F "line=\"\${line%\$'\\r'}\"" "$SCRIPT" > /dev/null \
+   && grep -F "author=\"\${author%\$'\\r'}\"" "$SCRIPT" > /dev/null; then
+  pass "シナリオ 7-ter: auto-resolve.sh が thread_id / author に対し \${var%\$'\\r'} で \\r トリミングを実装している（PR #193 Windows 互換）"
+else
+  fail "シナリオ 7-ter: auto-resolve.sh の \\r トリミング実装が欠落（Windows CI で正常な node_id が誤 skip される回帰、PR #193）"
+fi
+
+# ============================================================
 # シナリオ 8: 個別 mutation 失敗 → warning + skip、step 全体は 0 終了
 # ============================================================
 FAIL_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["PRRT_FAIL","PRRT_OK"]}'

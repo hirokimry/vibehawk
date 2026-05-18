@@ -12,17 +12,24 @@
 # node_id を `resolved_thread_ids` 配列に列挙する」だけになる。
 #
 # 設計:
-#   1. STRUCTURED_OUTPUT から resolved_thread_ids を抽出（無ければ空配列扱い）
-#   2. 各 thread_id が GitHub node_id の許可文字パターン `[A-Za-z0-9+/=_-]+` に
-#      一致することを grep -E で検証（GraphQL 入力サニタイズ、Claude 暴走防御）
+#   1. STRUCTURED_OUTPUT から resolved_thread_ids を抽出（無ければ空配列扱い、jq | read
+#      経由の Windows での \r 混入は ${var%$'\r'} でトリム）
+#   2. 各 thread_id が GitHub node_id の許可文字（標準 Base64 `+/=` + URL-safe Base64
+#      `-_` を網羅）のみで構成されていることを bash 内蔵 `case/esac` glob パターン
+#      `*[!A-Za-z0-9+/=_-]*` で検証（GraphQL 入力サニタイズ、Claude 暴走防御、
+#      OS 非依存）
 #   3. GraphQL で全 reviewThread の {id, comments.nodes[0].author.login} を一括取得
-#   4. 各 thread_id について author.login が `vibehawk-for-${OWNER}` であることを
-#      二重防御として再検証してから resolveReviewThread mutation 実行
+#   4. 各 thread_id について author.login が `vibehawk-for-${OWNER}` 小文字正規化値
+#      であることを二重防御として再検証してから resolveReviewThread mutation 実行
 #   5. 他者・他 Bot の thread_id が混入していた場合は warning + skip（誤 resolve 防止）
+#
+# 大文字 OWNER の正規化: github.repository_owner は大文字保持（例: "MyOrg"）だが
+# GitHub App login は小文字正規化（例: "vibehawk-for-myorg"）。比較前に両側を tr で
+# 小文字化する（CodeRabbit PR #193 Major 指摘対応）。
 #
 # bot 表記差異の注意: GraphQL author.login は bot を `[bot]` サフィックスなしの
 # app slug で返す（GitHub GraphQL 仕様、REST API とは異なる）。比較は
-# `vibehawk-for-${OWNER}` 単独で行う。
+# 小文字正規化された `vibehawk-for-${OWNER}` 単独で行う。
 #
 # 入力 env:
 #   GH_TOKEN            — App installation token（vibehawk-for-<owner>[bot] 名義）
