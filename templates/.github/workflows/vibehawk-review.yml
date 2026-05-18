@@ -164,7 +164,7 @@ jobs:
 
             この 2 行が欠落すると、次回 push で前回 SHA が抽出できず、incremental が破綻し完全再レビュー扱いになります。
 
-            3. **event 判定は行わない**（Issue #166 / Issue #171）。Claude は `event` フィールドに placeholder として `COMMENT` を返すこと。最終的な `event` (APPROVE / REQUEST_CHANGES) は後続の workflow step `vibehawk event を決定` が `comments[]` の総件数（severity 不問、Issue #171）と `gh api graphql reviewThreads` から取得する unresolved 数を組み合わせて決定論的に計算し、`vibehawk bundled review を post` step が JSON の `event` フィールドを上書きしてから GitHub に POST する。Claude が `event` 判定を試みても workflow step の計算値が最終値となるため、本 prompt 内では件数集計 / unresolved 取得 / event 判定ルールを記述しない（Issue #166 で構造的に廃止）。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166 / Issue #171）。
+            3. **event 判定は行わない**（Issue #166）。Claude は `event` フィールドに placeholder として `COMMENT` を返すこと。最終的な `event` (APPROVE / REQUEST_CHANGES) は後続の workflow step `vibehawk event を決定` が `comments[]` の severity 分布（`body` 冒頭の絵文字を集計）と `gh api graphql reviewThreads` から取得する unresolved 数を組み合わせて決定論的に計算し、`vibehawk bundled review を post` step が JSON の `event` フィールドを上書きしてから GitHub に POST する。Claude が `event` 判定を試みても workflow step の計算値が最終値となるため、本 prompt 内では severity 分布カウント / unresolved 取得 / event 判定ルールを記述しない（Issue #166 で構造的に廃止）。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
             4. **最終 assistant message として下記 schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`gh api` POST なし）。claude-code-action が `--json-schema` で schema validation し、`outputs.structured_output` に流す。応答以外のテキスト（説明文・進捗ログ等）は最終応答に含めない（schema validation が失敗する）。
 
             ### 最終応答の JSON shape（`--json-schema` で機械検証される）
@@ -185,7 +185,7 @@ jobs:
             }
             ```
 
-            **`event` フィールドの placeholder 規約（Issue #166 / Issue #171）**: Claude は **必ず `COMMENT` を返すこと**。schema の enum (`APPROVE` / `REQUEST_CHANGES` / `COMMENT`) は GitHub Reviews API 契約のため維持しているが、最終的な `event` 値は workflow step `vibehawk event を決定` が `comments[]` の総件数（severity 不問、Issue #171）+ reviewThreads の unresolved 数から決定論的に計算し、`vibehawk bundled review を post` step が POST 前に上書きする。Claude が `APPROVE` / `REQUEST_CHANGES` を直接返しても workflow 計算値で上書きされるため、placeholder としての `COMMENT` 固定が運用上最も安全（混乱を避ける）。
+            **`event` フィールドの placeholder 規約（Issue #166）**: Claude は **必ず `COMMENT` を返すこと**。schema の enum (`APPROVE` / `REQUEST_CHANGES` / `COMMENT`) は GitHub Reviews API 契約のため維持しているが、最終的な `event` 値は workflow step `vibehawk event を決定` が `comments[]` の severity 分布 + reviewThreads の unresolved 数から決定論的に計算し、`vibehawk bundled review を post` step が POST 前に上書きする。Claude が `APPROVE` / `REQUEST_CHANGES` を直接返しても workflow 計算値で上書きされるため、placeholder としての `COMMENT` 固定が運用上最も安全（混乱を避ける）。
 
             複数行範囲指摘なら `comments[]` 要素に `start_line` / `start_side` を追加。指摘 0 件でも `comments: []` で **必ず最終 JSON を返す**（応答が空になると `outputs.structured_output` が空となり後続 skip → status neutral になる）。
 
@@ -259,26 +259,24 @@ jobs:
 
             **二重防御**: workflow step `vibehawk auto_resolve` も同じ author 検証を GraphQL で再実行する（Claude のフィルタミス対策、`scripts/ci/vibehawk-review/auto-resolve.sh`）。それでもなお schema に他者 thread を含めるのは絶対禁止。
 
-            ## review event 決定（Issue #166 で workflow step に移管、Issue #171 で severity 不問・件数主軸に変更）
+            ## review event 決定（Issue #166 で workflow step に移管）
 
             **本 prompt 内では event 判定を行わない**。auto_resolve 完了後、bundled review POST の前段にある独立 workflow step `vibehawk event を決定`（`id: decide_event`）が以下を決定論的に実行する:
 
             1. `gh api graphql` で `reviewThreads(first: 100)` を取得し、`isResolved == false` の数を jq でカウント
-            2. Claude が返した `comments[]` の総件数を jq でカウント（severity 不問、Issue #171）
-            3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、Issue #171 で severity 不問・件数主軸に変更）:
+            2. Claude が返した `comments[]` の `body` 冒頭絵文字（🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info）から severity 分布を jq でカウント
+            3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、旧 prompt 内ロジックの 1:1 移植）:
                - unresolved >= 1 件 → `decided_event=REQUEST_CHANGES`
-               - 新規 inline 指摘の総件数 >= 1 件 → `decided_event=REQUEST_CHANGES`（severity 不問、Issue #171）
-               - それ以外（unresolved == 0 かつ 新規 0 件）→ `decided_event=APPROVE`
+               - 新規 inline に Critical/Major (🔴/🟠) が 1 件でもある → `decided_event=REQUEST_CHANGES`
+               - それ以外 → `decided_event=APPROVE`
             4. `decided_event` を GITHUB_OUTPUT に出力 → `vibehawk bundled review を post` step が JSON の `.event` を jq で上書きしてから POST
 
-            Claude の責務は `body`（severity 別件数を含むサマリ）と `comments[]`（severity 絵文字を冒頭に付与した inline 指摘）の生成のみ。`event` フィールドは placeholder として `COMMENT` を返すこと（schema enum で validation 通過）。最終的な review event は workflow step `vibehawk bundled review を post` が POST 時に上書きする値が真値となる。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166 / Issue #171）。
-
-            **設計の意図（Issue #171）**: 旧ルール（Issue #166 時点）は「新規 Critical/Major あり → REQUEST_CHANGES、Minor 以下は APPROVE」で vibehawk 自身が severity で「これは重要でないから APPROVE」と判定していた。Issue #171 で「指摘する責務」と「修正対象とする判定の責務」を分離し、severity に依らず指摘が 1 件でもあれば REQUEST_CHANGES で利用者に通知する設計に変更（MVV Value 3「指摘する、強制しない」の純粋実現）。修正対象とするかは利用者プロジェクト側（`.claude/rules/review-handling.md` の intent × severity マトリクス）で判定する分担とする。resolve されたら次の push で APPROVE に切り替わる（sticky review state は既存通り動く）。
+            Claude の責務は `body`（severity 別件数を含むサマリ）と `comments[]`（severity 絵文字を冒頭に付与した inline 指摘）の生成のみ。`event` フィールドは placeholder として `COMMENT` を返すこと（schema enum で validation 通過）。最終的な review event は workflow step `vibehawk bundled review を post` が POST 時に上書きする値が真値となる。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
 
             **body 冒頭の status 行は引き続き Claude が出力する**（利用者向け要約として）。判定根拠の二重表現になっても問題ない（最終 event は workflow 計算値だが、body 内のテキストは Claude の認識を表すもの）。目安:
             - 未解決指摘あり想定 → `⚠️ vibehawk: 未解決指摘 N 件 / 新規指摘 M 件`
-            - 新規指摘あり想定（severity 不問） → `⚠️ vibehawk: 新規指摘 M 件`
-            - それ以外 → `✅ vibehawk: 未解決指摘なし / 新規指摘なし`（unresolved == 0 かつ 新規 0 件）
+            - 新規 Critical/Major あり想定 → `⚠️ vibehawk: 新規 Critical/Major M 件`
+            - それ以外 → `✅ vibehawk: 未解決指摘なし`（新規 0 件）または `✅ vibehawk: 助言 N 件（要対応指摘なし）`（Minor 以下のみ）
 
             状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
 
@@ -365,23 +363,18 @@ jobs:
         # 詳細: scripts/ci/vibehawk-review/auto-resolve.sh
         run: bash scripts/ci/vibehawk-review/auto-resolve.sh
 
-      - name: vibehawk event を決定（Issue #166 / #171）
+      - name: vibehawk event を決定（Issue #166）
         # Issue #166: event 判定ロジックを Claude prompt から workflow step に移管。
-        # Issue #171: 判定ルールを「severity 不問・件数主軸」に変更（新規 inline 指摘が 1 件でも
-        # あれば REQUEST_CHANGES、severity に依らない）。
-        #
         # 旧設計では Claude が prompt 内で `gh api graphql reviewThreads` の unresolved 数取得 +
         # 新規 inline 指摘の severity 分布カウント + 判定ルール（unresolved>=1 → REQUEST_CHANGES /
         # Critical/Major あり → REQUEST_CHANGES / それ以外 → APPROVE）を実行し、JSON の event
         # フィールドに書き込んでいた。これは Claude の確率的応答に依存しており、判定ミス・形式破り
-        # の余地が残っていた。Issue #166 で同じ判定ロジックを workflow step として決定論的に再実装、
-        # Issue #171 で 2 段目を Critical/Major 限定から severity 不問の総件数判定に変更した。
-        # bundled POST step が本 step の出力 (decided_event) で Claude の event フィールドを上書き
-        # してから POST する。
+        # の余地が残っていた。本 step で同じ判定ロジックを決定論的に再実装し、bundled POST step が
+        # 本 step の出力 (decided_event) で Claude の event フィールドを上書きしてから POST する。
         #
-        # 件数の取り出し（Issue #171）: Claude prompt が返した comments[] の長さを jq で取得。
-        # severity 絵文字（🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info）の分布判定は
-        # 不要となり、jq の `[.comments[]?] | length` で総件数を決定論的にカウントする。
+        # severity の取り出し: Claude prompt は comments[].body の冒頭に severity 絵文字
+        # （🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info）を必ず付与する仕様。
+        # jq の startswith("🔴") / startswith("🟠") で Critical/Major を決定論的にカウントする。
         # schema には severity フィールドを追加せず、GitHub Reviews API 契約を変えない。
         #
         # unresolved 数の取り出し: gh api graphql で reviewThreads(first: 100) を取得。
@@ -397,7 +390,7 @@ jobs:
         # 詳細: scripts/ci/vibehawk-review/decide-event.sh（エピック #174 / Issue #176）
         run: bash scripts/ci/vibehawk-review/decide-event.sh
 
-      - name: vibehawk bundled review を post（Issue #164 fix / Issue #166 / Issue #171）
+      - name: vibehawk bundled review を post（Issue #164 fix / Issue #166）
         # Issue #164 fix: 旧設計（Issue #152）では Claude が $GITHUB_WORKSPACE/vibehawk-review.json
         # にファイル書き出ししたものを本 step が hashFiles で検出して読み込んでいた。指摘 0 件 PR で
         # Claude が書き出しに失敗する事象（PR #159 / Issue #164）が prompt 強化（Issue #162 / PR #163）
@@ -409,8 +402,7 @@ jobs:
         # App Installation Token を使うことで投稿者名義 `vibehawk-for-<owner>[bot]` を維持する。
         # Issue #166: Claude が返す event フィールドは placeholder。本 step は直前の decide_event step
         # の出力 (decided_event) で event フィールドを jq により上書きしてから POST する。Claude の
-        # 確率的判定に頼らず、unresolved 数 + 新規 inline 指摘の総件数（severity 不問、Issue #171）
-        # から決定論的に算出された event を使う。
+        # 確率的判定に頼らず、severity 分布 + unresolved 数から決定論的に算出された event を使う。
         if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
