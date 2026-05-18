@@ -27,6 +27,16 @@ fail() {
 
 CHAT_WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-chat.yml"
 
+# Issue #177: vibehawk-chat.yml の 7 ブロックの run: shell は scripts/ci/vibehawk-chat/*.sh
+# に切り出されている。本テストは yaml の構造（env / if / id / action 参照 / prompt 内容 /
+# allowedTools）と、切り出されたシェルロジック（missing 集計、thread 取得、bundled review
+# POST、check-runs POST 等）の両方を検証する必要がある。
+#
+# `CHAT_SCRIPTS_DIR` 配下のシェルを連結した内容を `CHAT_SCRIPTS_CONTENT` に保持し、
+# yaml 構造検証は引き続き `$CHAT_WORKFLOW` を直接 grep、シェルロジック検証は
+# `$CHAT_WORKFLOW` と `$CHAT_SCRIPTS_CONTENT` を結合した `$CHAT_SURFACE` を grep する。
+CHAT_SCRIPTS_DIR="${REPO_ROOT}/scripts/ci/vibehawk-chat"
+
 echo "=== vibehawk-chat.yml 構造検証（Issue #11） ==="
 
 if [[ -f "$CHAT_WORKFLOW" ]]; then
@@ -35,6 +45,50 @@ else
   fail "vibehawk-chat.yml が存在しない"
   echo "=== 結果: $PASSED passed, $FAILED failed ==="
   exit 1
+fi
+
+# Issue #177: 切り出し先ディレクトリと 7 本のシェルが揃っていることを検証
+if [[ -d "$CHAT_SCRIPTS_DIR" ]]; then
+  pass "scripts/ci/vibehawk-chat/ ディレクトリが存在する（Issue #177 切り出し先）"
+else
+  fail "scripts/ci/vibehawk-chat/ ディレクトリが存在しない（Issue #177 切り出し先）"
+  echo "=== 結果: $PASSED passed, $FAILED failed ==="
+  exit 1
+fi
+
+declare -a expected_chat_scripts=(
+  "check-secrets.sh"
+  "post-placeholder.sh"
+  "fetch-thread-history.sh"
+  "load-config.sh"
+  "fetch-pr-head.sh"
+  "post-bundled-review.sh"
+  "post-status-check.sh"
+)
+for s in "${expected_chat_scripts[@]}"; do
+  if [[ -f "${CHAT_SCRIPTS_DIR}/${s}" ]]; then
+    pass "scripts/ci/vibehawk-chat/${s} が存在する（Issue #177）"
+  else
+    fail "scripts/ci/vibehawk-chat/${s} が存在しない（Issue #177）"
+  fi
+done
+
+# 切り出した全シェルを連結（シェルロジック検証用）
+CHAT_SCRIPTS_CONTENT="$(cat "${CHAT_SCRIPTS_DIR}"/*.sh 2>/dev/null || true)"
+
+# yaml + scripts 全体の surface area（シェルロジック検証用）
+CHAT_SURFACE="$(cat "$CHAT_WORKFLOW"; printf '\n'; printf '%s\n' "$CHAT_SCRIPTS_CONTENT")"
+
+# Issue #177: yaml の run: ブロックがラッパー呼び出しのみであること（5 行以下、scripts/ci/
+# vibehawk-chat/ への委譲）。`run:` 直値が `bash scripts/ci/vibehawk-chat/<name>.sh` 形式の
+# 1 行になっていれば OK。
+run_lines="$(grep -E '^[[:space:]]+run:[[:space:]]' "$CHAT_WORKFLOW" || true)"
+run_total="$(printf '%s\n' "$run_lines" | grep -c -v '^$' || true)"
+run_wrappers="$(printf '%s\n' "$run_lines" | grep -c 'bash scripts/ci/vibehawk-chat/' || true)"
+if [[ "$run_total" -gt 0 ]] && [[ "$run_total" == "$run_wrappers" ]]; then
+  pass "yaml の全 run: が scripts/ci/vibehawk-chat/ への 1 行ラッパー（Issue #177、${run_wrappers}/${run_total} 件）"
+else
+  fail "yaml に scripts/ci/vibehawk-chat/ 以外の run: が残っている（${run_wrappers}/${run_total} 件のみラッパー）"
 fi
 
 # トリガー: issue_comment created のみ
@@ -140,22 +194,24 @@ done
 
 # 欠落時のハンドリング（CodeRabbit PR #87 Major 指摘）
 # 「参照有無」だけでなく「missing 集計 → ready=false → プレースホルダコメント投稿 → app-token / thread_history スキップ」の全段ロジックを担保
-if grep -F 'missing="$missing' "$CHAT_WORKFLOW" > /dev/null; then
-  pass "secrets 欠落時の missing 集計ロジックが存在する"
+# Issue #177: シェルロジックは scripts/ci/vibehawk-chat/check-secrets.sh / post-placeholder.sh に切り出し済み
+if echo "$CHAT_SURFACE" | grep -F 'missing="$missing' > /dev/null; then
+  pass "secrets 欠落時の missing 集計ロジックが存在する（scripts/ci/vibehawk-chat/check-secrets.sh）"
 else
   fail "secrets 欠落時の missing 集計ロジックが不足"
 fi
 
-if grep -F 'ready=false' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'ready=true' "$CHAT_WORKFLOW" > /dev/null; then
-  pass "secrets 検証で ready=true / false の両分岐が存在する"
+if echo "$CHAT_SURFACE" | grep -F 'ready=false' > /dev/null && \
+   echo "$CHAT_SURFACE" | grep -F 'ready=true' > /dev/null; then
+  pass "secrets 検証で ready=true / false の両分岐が存在する（scripts/ci/vibehawk-chat/check-secrets.sh）"
 else
   fail "secrets 検証で ready=true / false の両分岐が不足"
 fi
 
 # プレースホルダコメント投稿ステップ: 未設定時のみ実行
+# yaml 側で `if: ready != 'true'` ガード、シェル本体は scripts/ci/vibehawk-chat/post-placeholder.sh
 if grep -F "if: steps.check_secrets.outputs.ready != 'true'" "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'gh issue comment' "$CHAT_WORKFLOW" | grep -F 'のため応答をスキップ' > /dev/null; then
+   echo "$CHAT_SURFACE" | grep -F 'gh issue comment' | grep -F 'のため応答をスキップ' > /dev/null; then
   pass "secrets 欠落時のプレースホルダコメント投稿ステップが存在し、未設定時のみ実行される"
 else
   fail "secrets 欠落時のプレースホルダコメント投稿ステップが不足（運用時の失敗動作見逃しリスク）"
@@ -254,35 +310,36 @@ else
   fail "thread_history ステップが存在しない"
 fi
 
-if grep -F 'gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate' "$CHAT_WORKFLOW" > /dev/null; then
-  pass "スレッド全コメント取得 (gh api ... --paginate) が実装されている"
+# Issue #177: スレッド全コメント取得ロジックは scripts/ci/vibehawk-chat/fetch-thread-history.sh に切り出し済み
+if echo "$CHAT_SURFACE" | grep -F 'gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate' > /dev/null; then
+  pass "スレッド全コメント取得 (gh api ... --paginate) が実装されている（scripts/ci/vibehawk-chat/fetch-thread-history.sh）"
 else
   fail "スレッド全コメント取得が実装されていない"
 fi
 
 # CodeRabbit PR #87 Major 指摘: ページ結合の具体パターンを検証
 # 各要素射影 + jq -s '.' slurp で N ページ任意対応を保証
-if grep -F ".[] | {user: .user.login, created_at, body}" "$CHAT_WORKFLOW" > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F ".[] | {user: .user.login, created_at, body}" > /dev/null; then
   pass "--jq で各要素射影 (.[] | {user, created_at, body}) が実装されている"
 else
   fail "--jq の各要素射影パターンが不在（CodeRabbit PR #87 指摘: ページ結合に必須）"
 fi
 
-if grep -F "jq -s '.'" "$CHAT_WORKFLOW" > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F "jq -s '.'" > /dev/null; then
   pass "jq -s '.' でページ結合（slurp）が実装されている"
 else
   fail "jq -s '.' でのページ結合が不在（CodeRabbit PR #87 指摘: 旧 .[0]+.[1]+flatten は 2 ページ前提）"
 fi
 
 # Issue 本文も含める（最初のコメントとして）
-if grep -F 'issue_body' "$CHAT_WORKFLOW" > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F 'issue_body' > /dev/null; then
   pass "Issue 本文をスレッド履歴に含めるロジックが存在する"
 else
   fail "Issue 本文の取り込みが実装されていない（最初のコメントが欠落する可能性）"
 fi
 
 # CodeRabbit PR #87 Major 指摘: Issue 本文を先頭に prepend する具体パターンを検証
-if grep -F '[$issue] + .' "$CHAT_WORKFLOW" > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F '[$issue] + .' > /dev/null; then
   pass "Issue 本文を先頭に prepend する jq パターン ([\$issue] + .) が実装されている"
 else
   fail "Issue 本文の先頭 prepend パターンが不在（時系列順序が崩れる可能性）"
@@ -410,30 +467,32 @@ else
 fi
 
 # .vibehawk.yaml 単独受付の検証（Issue #172 で .coderabbit.yaml fallback 撤廃）
-if grep -F '.vibehawk.yaml' "$CHAT_WORKFLOW" > /dev/null; then
-  pass ".vibehawk.yaml が参照される（locale 解決の単独設定ソース）"
+# Issue #177: シェル本体は scripts/ci/vibehawk-chat/load-config.sh に切り出し済み
+if echo "$CHAT_SURFACE" | grep -F '.vibehawk.yaml' > /dev/null; then
+  pass ".vibehawk.yaml が参照される（locale 解決の単独設定ソース、scripts/ci/vibehawk-chat/load-config.sh）"
 else
   fail ".vibehawk.yaml の参照が不足（locale 解決が機能しない）"
 fi
 
 # .coderabbit.yaml の読込経路（ファイル存在 check / config_file 代入）が撤廃されている
-if ! grep -F '[[ -f ".coderabbit.yaml" ]]' "$CHAT_WORKFLOW" > /dev/null && \
-   ! grep -F 'config_file=".coderabbit.yaml"' "$CHAT_WORKFLOW" > /dev/null; then
+if ! echo "$CHAT_SURFACE" | grep -F '[[ -f ".coderabbit.yaml" ]]' > /dev/null && \
+   ! echo "$CHAT_SURFACE" | grep -F 'config_file=".coderabbit.yaml"' > /dev/null; then
   pass ".coderabbit.yaml の読込経路が存在しない（Issue #172 fallback 撤廃）"
 else
   fail ".coderabbit.yaml の読込経路が残っている（Issue #172 で撤廃済のはず）"
 fi
 
 # 未設定時のデフォルト 'en' フォールバック
-if grep -F 'language="en"' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F '// "en"' "$CHAT_WORKFLOW" > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F 'language="en"' > /dev/null && \
+   echo "$CHAT_SURFACE" | grep -F '// "en"' > /dev/null; then
   pass "locale 未設定時 / null 時に 'en' フォールバック（jq // \"en\" + 初期値 language=\"en\"）"
 else
   fail "locale 未設定時の 'en' フォールバックが不足"
 fi
 
 # language キーを GITHUB_OUTPUT に出力
-if grep -E 'echo[[:space:]]+"language=' "$CHAT_WORKFLOW" > /dev/null; then
+# Issue #177: 切り出し先 (load-config.sh) では echo "language=$language" >> "$GITHUB_OUTPUT" 形式
+if echo "$CHAT_SURFACE" | grep -E 'echo[[:space:]]+"language=' > /dev/null; then
   pass "locale 解決結果が GITHUB_OUTPUT に language= で出力される"
 else
   fail "locale 解決結果が GITHUB_OUTPUT に渡されていない"
@@ -564,16 +623,17 @@ fi
 # === Issue #135 セキュリティ修正: bundled review POST workflow step ===
 
 # bundled review POST が後続 workflow step に存在
-if echo "$CHAT_POST_PROMPT" | grep -F 'gh api -X POST' | grep -F 'pulls' | grep -F 'reviews' > /dev/null; then
-  pass "claude-code-action 後の workflow step に bundled review POST が含まれる（Issue #135 セキュリティ修正）"
+# Issue #177: シェル本体は scripts/ci/vibehawk-chat/post-bundled-review.sh に切り出し済み
+if echo "$CHAT_SURFACE" | grep -F 'gh api -X POST' | grep -F 'pulls' | grep -F 'reviews' > /dev/null; then
+  pass "claude-code-action 後の workflow step に bundled review POST が含まれる（Issue #135 セキュリティ修正、scripts/ci/vibehawk-chat/post-bundled-review.sh）"
 else
   fail "claude-code-action 後の workflow step に bundled review POST が含まれない（Issue #135 セキュリティ修正の前提）"
 fi
 
 # bundled review POST step は payload ファイルを validate する（event 値検証）
-if echo "$CHAT_POST_PROMPT" | grep -F 'APPROVE' > /dev/null && \
-   echo "$CHAT_POST_PROMPT" | grep -F 'REQUEST_CHANGES' > /dev/null && \
-   echo "$CHAT_POST_PROMPT" | grep -F '不正な event 値' > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F 'APPROVE' > /dev/null && \
+   echo "$CHAT_SURFACE" | grep -F 'REQUEST_CHANGES' > /dev/null && \
+   echo "$CHAT_SURFACE" | grep -F '不正な event 値' > /dev/null; then
   pass "bundled review POST step が event 値を validate する（APPROVE / REQUEST_CHANGES のみ許可、Issue #135 セキュリティ修正）"
 else
   fail "bundled review POST step が event 値を validate していない（Issue #135 セキュリティ修正）"
@@ -594,32 +654,33 @@ fi
 # === Issue #135: check-runs POST step（status check 更新） ===
 
 # 後続 workflow step に check-runs POST が含まれる
-if echo "$CHAT_POST_PROMPT" | grep -F 'gh api -X POST' | grep -F 'check-runs' > /dev/null; then
-  pass "claude-code-action 後の workflow step に check-runs POST が含まれる（Issue #135）"
+# Issue #177: シェル本体は scripts/ci/vibehawk-chat/post-status-check.sh に切り出し済み
+if echo "$CHAT_SURFACE" | grep -F 'gh api -X POST' | grep -F 'check-runs' > /dev/null; then
+  pass "claude-code-action 後の workflow step に check-runs POST が含まれる（Issue #135、scripts/ci/vibehawk-chat/post-status-check.sh）"
 else
   fail "claude-code-action 後の workflow step に check-runs POST が含まれない（Issue #135、@vibehawk review で check が更新できない）"
 fi
 
 # 後続 step の check run name は "vibehawk" 固定（branch protection との一致のため）
-if echo "$CHAT_POST_PROMPT" | grep -E 'name="vibehawk"|name=vibehawk' > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -E 'name="vibehawk"|name=vibehawk' > /dev/null; then
   pass "後続 step に check run name=\"vibehawk\" 固定指定が含まれる（Issue #135、branch protection 一致）"
 else
   fail "後続 step に check run name=\"vibehawk\" 固定指定が含まれない（Issue #135）"
 fi
 
 # 後続 step の status="completed" 固定
-if echo "$CHAT_POST_PROMPT" | grep -F 'status="completed"' > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F 'status="completed"' > /dev/null; then
   pass "後続 step に status=\"completed\" 固定指定が含まれる（Issue #135）"
 else
   fail "後続 step に status=\"completed\" 固定指定が含まれない（Issue #135）"
 fi
 
 # 後続 step の conclusion 導出ロジック（APPROVED→success / CHANGES_REQUESTED→failure / 他→neutral）
-if echo "$CHAT_POST_PROMPT" | grep -F 'APPROVED)' > /dev/null && \
-   echo "$CHAT_POST_PROMPT" | grep -F 'CHANGES_REQUESTED)' > /dev/null && \
-   echo "$CHAT_POST_PROMPT" | grep -E 'conclusion="success"' > /dev/null && \
-   echo "$CHAT_POST_PROMPT" | grep -E 'conclusion="failure"' > /dev/null && \
-   echo "$CHAT_POST_PROMPT" | grep -E 'conclusion="neutral"' > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F 'APPROVED)' > /dev/null && \
+   echo "$CHAT_SURFACE" | grep -F 'CHANGES_REQUESTED)' > /dev/null && \
+   echo "$CHAT_SURFACE" | grep -E 'conclusion="success"' > /dev/null && \
+   echo "$CHAT_SURFACE" | grep -E 'conclusion="failure"' > /dev/null && \
+   echo "$CHAT_SURFACE" | grep -E 'conclusion="neutral"' > /dev/null; then
   pass "後続 step に conclusion 導出ロジック（APPROVED→success / CHANGES_REQUESTED→failure / 他→neutral）が含まれる（Issue #135）"
 else
   fail "後続 step に conclusion 導出ロジックが含まれない（Issue #135、決定論的 status check の前提）"
@@ -641,13 +702,13 @@ else
 fi
 
 # substantive review filter（@vibehawk review 経路でも空 COMMENTED 副産物の誤拾い対策、Issue #121 追加修正を踏襲）
-if echo "$CHAT_POST_PROMPT" | grep -F 'substantive_review_json' > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F 'substantive_review_json' > /dev/null; then
   pass "後続 check-runs step に substantive_review_json 変数が導入されている（Issue #135、Issue #121 追加修正の踏襲）"
 else
   fail "後続 check-runs step に substantive_review_json 変数が導入されていない（Issue #135）"
 fi
 
-if echo "$CHAT_POST_PROMPT" | grep -F '.state == "APPROVED" or .state == "CHANGES_REQUESTED"' > /dev/null; then
+if echo "$CHAT_SURFACE" | grep -F '.state == "APPROVED" or .state == "CHANGES_REQUESTED"' > /dev/null; then
   pass "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込む（Issue #135、Issue #121 追加修正の踏襲）"
 else
   fail "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込んでいない（Issue #135）"

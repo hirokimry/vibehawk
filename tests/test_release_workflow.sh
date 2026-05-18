@@ -90,10 +90,28 @@ else
 fi
 
 # tag と version の整合確認ステップ
-if echo "$body" | grep -F "package.json version" > /dev/null; then
-  pass "tag と package.json version の整合確認ステップが存在する"
+# Issue #179 で実体は scripts/ci/release/verify-tag-version.sh に切り出された。
+# workflow からはラッパー呼び出しのみ。スクリプト本体の存在も併せて検証する。
+if echo "$body" | grep -F "scripts/ci/release/verify-tag-version.sh" > /dev/null; then
+  pass "tag と package.json version の整合確認ステップが存在する（scripts/ci/release/verify-tag-version.sh）"
 else
-  fail "tag と package.json version の整合確認ステップが存在しない"
+  fail "tag と package.json version の整合確認ステップが存在しない（scripts/ci/release/verify-tag-version.sh 参照なし）"
+fi
+if [[ -f "${REPO_ROOT}/scripts/ci/release/verify-tag-version.sh" ]]; then
+  pass "scripts/ci/release/verify-tag-version.sh が実在する"
+else
+  fail "scripts/ci/release/verify-tag-version.sh が実在しない"
+fi
+# テスト実行ステップ（切り出し済み）
+if echo "$body" | grep -F "scripts/ci/release/run-tests.sh" > /dev/null; then
+  pass "テスト実行ステップが scripts/ci/release/run-tests.sh を参照する"
+else
+  fail "テスト実行ステップが scripts/ci/release/run-tests.sh を参照しない"
+fi
+if [[ -f "${REPO_ROOT}/scripts/ci/release/run-tests.sh" ]]; then
+  pass "scripts/ci/release/run-tests.sh が実在する"
+else
+  fail "scripts/ci/release/run-tests.sh が実在しない"
 fi
 
 # package.json の publishConfig.provenance: true
