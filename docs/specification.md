@@ -291,8 +291,8 @@ bundled review API の approve / request_changes 投稿（PR #122、補助情報
 > - **Claude prompt は `event=COMMENT` placeholder を返す**（schema enum 通過用、Issue #166）
 > - **workflow step `decide_event` が APPROVE / REQUEST_CHANGES を決定論的に算出** し、bundled POST step が jq で `.event` を上書きしてから POST する
 > - 通常経路は `decide_event` の判定により `APPROVED → success` または `CHANGES_REQUESTED → failure` で確定する
-> - `COMMENTED → success` は **防御的フォールバック**: `decide_event` step の現行判定ルール（unresolved + 新規 inline 指摘の総件数 → REQUEST_CHANGES / それ以外 → APPROVE、severity 不問・件数主軸、Issue #171）は `COMMENT` を出力するコードパスを持たないため、通常運用では `COMMENTED` 経路は発生しない。`decide_event` skip / `DECIDED_EVENT` 空時の上書き不発で Claude の `COMMENT` placeholder がそのまま POST された場合のみ到達する
-> - `neutral` は「レビュー未実行・bundled POST 失敗」のみに限定する
+> - `COMMENTED → success` は **防御的フォールバック**: `decide_event` step の現行判定ルール（unresolved + 新規 inline 指摘の総件数 → REQUEST_CHANGES / それ以外 → APPROVE、severity 不問・件数主軸、Issue #171）は `COMMENT` を出力するコードパスを持たないため、通常運用では `COMMENTED` 経路は発生しない。`DECIDED_EVENT` が `COMMENT` として有効値で渡された場合などの限定的な防御経路でのみ到達する（`DECIDED_EVENT` 空時は `post-bundled-review.sh` が bundled POST 自体を skip するため `COMMENTED` 経路には到達せず、`neutral` 側に倒れる）
+> - `neutral` は「レビュー未実行・bundled POST 失敗（`DECIDED_EVENT` 空 / 不正値で skip された場合を含む）」に限定する
 
 `check_secrets` 未設定時は step 自体が `if: steps.check_secrets.outputs.ready == 'true'` ガードで skip され、check 自体が post されない（既存ガード継承）。
 

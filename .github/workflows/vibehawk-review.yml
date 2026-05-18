@@ -164,7 +164,7 @@ jobs:
 
             この 2 行が欠落すると、次回 push で前回 SHA が抽出できず、incremental が破綻し完全再レビュー扱いになります。
 
-            3. **event 判定は行わない**（Issue #166）。Claude は `event` フィールドに placeholder として `COMMENT` を返すこと。最終的な `event` (APPROVE / REQUEST_CHANGES) は後続の workflow step `vibehawk event を決定` が `comments[]` の severity 分布（`body` 冒頭の絵文字を集計）と `gh api graphql reviewThreads` から取得する unresolved 数を組み合わせて決定論的に計算し、`vibehawk bundled review を post` step が JSON の `event` フィールドを上書きしてから GitHub に POST する。Claude が `event` 判定を試みても workflow step の計算値が最終値となるため、本 prompt 内では severity 分布カウント / unresolved 取得 / event 判定ルールを記述しない（Issue #166 で構造的に廃止）。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
+            3. **event 判定は行わない**（Issue #166 / Issue #171）。Claude は `event` フィールドに placeholder として `COMMENT` を返すこと。最終的な `event` (APPROVE / REQUEST_CHANGES) は後続の workflow step `vibehawk event を決定` が `comments[]` の総件数（severity 不問、Issue #171）と `gh api graphql reviewThreads` から取得する unresolved 数を組み合わせて決定論的に計算し、`vibehawk bundled review を post` step が JSON の `event` フィールドを上書きしてから GitHub に POST する。Claude が `event` 判定を試みても workflow step の計算値が最終値となるため、本 prompt 内では件数集計 / unresolved 取得 / event 判定ルールを記述しない（Issue #166 で構造的に廃止）。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166 / Issue #171）。
             4. **最終 assistant message として下記 schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`gh api` POST なし）。claude-code-action が `--json-schema` で schema validation し、`outputs.structured_output` に流す。応答以外のテキスト（説明文・進捗ログ等）は最終応答に含めない（schema validation が失敗する）。
 
             ### 最終応答の JSON shape（`--json-schema` で機械検証される）
@@ -185,7 +185,7 @@ jobs:
             }
             ```
 
-            **`event` フィールドの placeholder 規約（Issue #166）**: Claude は **必ず `COMMENT` を返すこと**。schema の enum (`APPROVE` / `REQUEST_CHANGES` / `COMMENT`) は GitHub Reviews API 契約のため維持しているが、最終的な `event` 値は workflow step `vibehawk event を決定` が `comments[]` の severity 分布 + reviewThreads の unresolved 数から決定論的に計算し、`vibehawk bundled review を post` step が POST 前に上書きする。Claude が `APPROVE` / `REQUEST_CHANGES` を直接返しても workflow 計算値で上書きされるため、placeholder としての `COMMENT` 固定が運用上最も安全（混乱を避ける）。
+            **`event` フィールドの placeholder 規約（Issue #166 / Issue #171）**: Claude は **必ず `COMMENT` を返すこと**。schema の enum (`APPROVE` / `REQUEST_CHANGES` / `COMMENT`) は GitHub Reviews API 契約のため維持しているが、最終的な `event` 値は workflow step `vibehawk event を決定` が `comments[]` の総件数（severity 不問、Issue #171）+ reviewThreads の unresolved 数から決定論的に計算し、`vibehawk bundled review を post` step が POST 前に上書きする。Claude が `APPROVE` / `REQUEST_CHANGES` を直接返しても workflow 計算値で上書きされるため、placeholder としての `COMMENT` 固定が運用上最も安全（混乱を避ける）。
 
             複数行範囲指摘なら `comments[]` 要素に `start_line` / `start_side` を追加。指摘 0 件でも `comments: []` で **必ず最終 JSON を返す**（応答が空になると `outputs.structured_output` が空となり後続 skip → status neutral になる）。
 
