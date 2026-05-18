@@ -52,8 +52,11 @@ printf '%s' "$STRUCTURED_OUTPUT" > "$CLAUDE_OUT"
 # 1. resolved_thread_ids を抽出（未定義/null/欠落でも空配列として吸収）。
 # mapfile は bash 4+ 専用で macOS 標準 bash 3.x では動かないため、while read で配列に詰める
 # （CI の ubuntu-latest は bash 4+ だが、開発者ローカルが macOS のケースもあるため互換性確保）。
+# 末尾の `\r` をトリムする: git for Windows bash で jq | read 経由のテキスト処理に
+# `\r` が混入し、後段の許可文字判定で正常な node_id まで skip される事象（PR #193）の防御。
 thread_ids=()
 while IFS= read -r line; do
+  line="${line%$'\r'}"
   [[ -n "$line" ]] && thread_ids+=("$line")
 done < <(jq -r '(.resolved_thread_ids // []) | .[]' "$CLAUDE_OUT")
 
@@ -110,9 +113,11 @@ for tid in "${thread_ids[@]}"; do
   esac
 
   # 二重防御: GraphQL レスポンスから当該 thread の最初コメントの author.login を引く
+  # 末尾 `\r` を念のためトリム（Windows での jq 出力経由の混入防御、PR #193）
   author=$(jq -r --arg id "$tid" \
     '.data.repository.pullRequest.reviewThreads.nodes[] | select(.id == $id) | (.comments.nodes[0].author.login // "")' \
     "$THREADS_JSON")
+  author="${author%$'\r'}"
 
   if [[ -z "$author" ]]; then
     echo "::warning::vibehawk: thread $tid が reviewThreads に見つかりません（skip）"
