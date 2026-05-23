@@ -26,6 +26,7 @@ diagnose:
   max_files_per_issue: 10
   scope: ""
   forbidden_targets:
+    - "skills/**"
     - "hooks/*.sh"
     - "vibecorp.yml"
     - "MVV.md"

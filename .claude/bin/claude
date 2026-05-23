@@ -6,33 +6,53 @@
 #   vibecorp-sandbox 経由で起動するための薄いラッパー。
 #
 # 動作:
-#   - 祖先に sandbox-exec があり VIBECORP_SANDBOXED=1 → claude-real を exec（入れ子防止）
-#   - VIBECORP_ISOLATION が "1" 以外                 → claude-real を exec（opt-in）
-#   - それ以外                                       → vibecorp-sandbox claude-real ... を exec
+#   - 祖先に sandbox-exec (Darwin) / bwrap (Linux) があり VIBECORP_SANDBOXED=1
+#                                                       → claude-real を exec（入れ子防止）
+#   - VIBECORP_ISOLATION が "1" 以外                    → claude-real を exec（opt-in）
+#   - それ以外                                          → vibecorp-sandbox claude-real ... を exec
 #
 # 二重サンドボックス防止の判定方針:
 #   環境変数 `VIBECORP_SANDBOXED=1` のみで passthrough すると、
 #   外部から `env VIBECORP_SANDBOXED=1 claude ...` を実行するだけで
 #   sandbox をバイパスできてしまう。
-#   そこで祖先プロセスに `sandbox-exec` が存在することを PPID チェーンで検証し、
+#   そこで祖先プロセスに OS 別の sandbox プロセス（Darwin: sandbox-exec、
+#   Linux: bwrap）が存在することを PPID チェーンで検証し、
 #   その AND 条件で passthrough する（環境変数単独では信頼しない）。
-#   参照: #309 / .claude/knowledge/security/audit-log.md S-005/S-009/T-001
+#   参照: #309 / #310 / .claude/knowledge/security/audit-log.md S-005/S-009/T-001
+#
+# fail-closed 設計:
+#   偽陰性（祖先 sandbox プロセスを ps で検出失敗）が発生した場合、
+#   is_inside_sandbox が false を返し、AND 条件が成立しないため passthrough しない。
+#   結果として vibecorp-sandbox 経由の通常 ISOLATION 経路に進む。
+#   passthrough（隔離なしで claude-real 起動）には絶対にならない。
 #
 # 制約:
 #   エラー抑制禁止（docs/design-philosophy.md）。
 #   2>/dev/null, || true 等は付けない。
 #
-# 参照: #293 / #309
+# 参照: #293 / #309 / #310
 
 set -euo pipefail
 
 # 自身のディレクトリを解決（BSD/GNU 両対応のため readlink -f は使わない）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# PPID チェーンを遡り、祖先に sandbox-exec があるかを判定する
-# macOS 専用（ps -o comm= が basename を返す前提）。
-# Linux 等では常に false を返すので、Phase 2 以降で該当 OS の検出を追加する。
-is_inside_sandbox_exec() {
+# PPID チェーンを遡り、祖先に OS 別の sandbox プロセスがあるかを判定する
+# - Darwin: sandbox-exec を探す
+# - Linux:  bwrap を探す
+# - その他: 常に false を返す
+#
+# ps -o comm= は basename を返す前提（Darwin/Linux 共通の挙動）。
+# busybox の ps と procps の ps で出力に差があるため、distro 互換のため
+# 末尾空白除去を実施する。偽陰性が発生しても fail-closed で安全側に倒れる。
+is_inside_sandbox() {
+  local target_comm
+  case "$(uname -s)" in
+    Darwin) target_comm="sandbox-exec" ;;
+    Linux)  target_comm="bwrap" ;;
+    *)      return 1 ;;
+  esac
+
   local pid=$$
   local ppid comm
   local i=0
@@ -46,7 +66,7 @@ is_inside_sandbox_exec() {
     comm=$(ps -p "$ppid" -o comm=)
     comm="${comm##*/}"
     comm="${comm//[[:space:]]/}"
-    if [[ "$comm" == "sandbox-exec" ]]; then
+    if [[ "$comm" == "$target_comm" ]]; then
       return 0
     fi
     pid="$ppid"
@@ -56,9 +76,9 @@ is_inside_sandbox_exec() {
 }
 
 # 1. サンドボックス内部から起動された場合は即 passthrough（二重サンドボックス防止）
-#    PPID チェーン上に sandbox-exec がある AND VIBECORP_SANDBOXED=1 の両方を要求する。
+#    PPID チェーン上に sandbox-exec / bwrap がある AND VIBECORP_SANDBOXED=1 の両方を要求する。
 #    環境変数単独では外部注入でバイパスされるため信頼しない。
-if [[ "${VIBECORP_SANDBOXED:-0}" == "1" ]] && is_inside_sandbox_exec; then
+if [[ "${VIBECORP_SANDBOXED:-0}" == "1" ]] && is_inside_sandbox; then
   exec claude-real "$@"
 fi
 
