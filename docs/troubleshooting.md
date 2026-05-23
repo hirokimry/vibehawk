@@ -1,6 +1,9 @@
 # トラブルシューティング
 
-vibehawk CLI（`npx vibehawk setup` / `install` / `setup-token`）実行時に遭遇しやすいエラーと復旧手順をまとめる。各項目には Source of Truth となる関連ドキュメントへの cross-reference を付与しているので、詳細な設計判断や法務効果はリンク先を参照すること。
+> [!NOTE]
+> 本ドキュメントは vibehawk CLI（`npx vibehawk setup` / `install` / `setup-token`）実行時に遭遇しやすいエラーと復旧手順をまとめる。
+> 対象読者: vibehawk を導入する開発者。
+> 各項目には Source of Truth となる関連ドキュメントへの cross-reference を付与している。詳細な設計判断や法務効果はリンク先を参照すること。
 
 ## 命名統制衝突（連番付与）が検出された場合
 
@@ -13,7 +16,8 @@ GitHub から返された実際の名前は「vibehawk-for-alice-2」です。
 
 ### 原因
 
-GitHub Apps はグローバルで名前ユニーク制約があり、同名 App が既に存在する場合、GitHub が自動的に連番（例: `vibehawk-for-alice-2`）を付与する。これは `POLICY.md § vibehawk-for-<owner> 命名の商標使用許諾（Issue #33）` の「命名は `vibehawk-for-<owner>` 形式に厳密に従うこと」MUST 条件に違反するため、vibehawk CLI は連番命名を検出した時点で処理を中断（exit 1）する。
+GitHub Apps はグローバルで名前ユニーク制約があり、同名 App が既に存在する場合、GitHub が自動的に連番（例: `vibehawk-for-alice-2`）を付与する。
+これは `POLICY.md § vibehawk-for-<owner> 命名の商標使用許諾（Issue #33）` の「命名は `vibehawk-for-<owner>` 形式に厳密に従うこと」MUST 条件に違反するため、vibehawk CLI は連番命名を検出した時点で処理を中断（exit 1）する。
 
 連番付き App は商標使用許諾の範囲外（`vibehawk-` プレフィックスの未許可派生名）にあたるため、即時削除すべきである。
 
@@ -48,7 +52,10 @@ CLI は連番命名を検出した時点で App credentials の Private Key を 
 
 ### 原因
 
-`npx vibehawk install` は GitHub App Manifest Flow のコールバック先として `127.0.0.1:8765` で一時 HTTP サーバを起動する。同ポートが先行プロセスで占有されていると CLI は起動できない。`127.0.0.1` への loopback bind 固定（外部到達不能）と `crypto.randomBytes(32)` で生成した `state` パラメータ + `crypto.timingSafeEqual` による CSRF 防止の多層防御を実装している。設計詳細は `SECURITY.md § Manifest Flow のセキュリティ対策（Issue #59）` 参照。
+`npx vibehawk install` は GitHub App Manifest Flow のコールバック先として `127.0.0.1:8765` で一時 HTTP サーバを起動する。
+同ポートが先行プロセスで占有されていると CLI は起動できない。
+`127.0.0.1` への loopback bind 固定（外部到達不能）と `crypto.randomBytes(32)` で生成した `state` パラメータ + `crypto.timingSafeEqual` による CSRF 防止の多層防御を実装している。
+設計詳細は `SECURITY.md § Manifest Flow のセキュリティ対策（Issue #59）` 参照。
 
 ### 復旧手順
 
@@ -71,7 +78,8 @@ CLI は連番命名を検出した時点で App credentials の Private Key を 
 
 ### 注意事項
 
-ポート 8765 は vibehawk CLI 固定のため、ポート番号を変更して回避することはできない（loopback bind + `state` パラメータの多層防御が `127.0.0.1:8765` 固定前提で設計されている）。占有プロセスを kill する際は当該プロセスが他の重要な役割を持たないことを確認すること（無関係なプロセスを誤って終了するリスクに注意）。
+ポート 8765 は vibehawk CLI 固定のため、ポート番号を変更して回避することはできない（loopback bind + `state` パラメータの多層防御が `127.0.0.1:8765` 固定前提で設計されている）。
+占有プロセスを kill する際は当該プロセスが他の重要な役割を持たないことを確認すること（無関係なプロセスを誤って終了するリスクに注意）。
 
 ### 関連ドキュメント
 
@@ -83,7 +91,8 @@ CLI は連番命名を検出した時点で App credentials の Private Key を 
 
 ### 原因
 
-vibehawk CLI（`setup` / `install` / `setup-token` のいずれも）は **GitHub Secrets を一切 touch しない**（`secrets-handling.md § 1`）。`gh secret set` を呼び出さず、メモリ・ファイル・環境変数にも secret を保持しない設計のため、3 secrets の登録の正確性は利用者本人が GitHub Settings UI で行う操作に依存する。
+vibehawk CLI（`setup` / `install` / `setup-token` のいずれも）は GitHub Secrets を一切 touch しない（`secrets-handling.md § 1`）。
+`gh secret set` を呼び出さず、メモリ・ファイル・環境変数にも secret を保持しない設計のため、3 secrets の登録の正確性は利用者本人が GitHub Settings UI で行う操作に依存する。
 
 登録ミスのよくあるパターン:
 
@@ -102,7 +111,9 @@ vibehawk CLI（`setup` / `install` / `setup-token` のいずれも）は **GitHu
 
 ### 注意事項
 
-`VIBEHAWK_PRIVATE_KEY` 再登録時は `.pem` ファイル内容の **改行を保持** する（GitHub Secrets 入力フォームに貼り付ける際、エディタ間の改行コード差異で改行が削除されると Installation Token 取得が失敗する）。漏洩懸念がある場合は GitHub App Settings ページで Private Key を **revoke + regenerate** し、利用者本人が再ダウンロードして secret を更新すること（vibehawk CLI は secret 値を保持しないため、利用者運用での rotation 主体は利用者本人）。誤って漏洩した OAuth Token は `claude logout` 等で即時失効させる。
+`VIBEHAWK_PRIVATE_KEY` 再登録時は `.pem` ファイル内容の改行を保持する（GitHub Secrets 入力フォームに貼り付ける際、エディタ間の改行コード差異で改行が削除されると Installation Token 取得が失敗する）。
+漏洩懸念がある場合は GitHub App Settings ページで Private Key を revoke + regenerate し、利用者本人が再ダウンロードして secret を更新すること（vibehawk CLI は secret 値を保持しないため、利用者運用での rotation 主体は利用者本人）。
+誤って漏洩した OAuth Token は `claude logout` 等で即時失効させる。
 
 ### 関連ドキュメント
 
@@ -116,12 +127,13 @@ vibehawk CLI（`setup` / `install` / `setup-token` のいずれも）は **GitHu
 
 ### CISO Critical 条件
 
-CLI は GitHub App 作成完了後 / 命名統制衝突検出時のいずれの場合も、App credentials の Private Key を **画面に印字せず**、Manifest Flow 完了直後に `redactCredentials()` で **`[REDACTED]` 上書き** してメモリから除去する。利用者の手元・画面に Private Key が残存することはない。具体的には:
+CLI は GitHub App 作成完了後 / 命名統制衝突検出時のいずれの場合も、App credentials の Private Key を画面に印字せず、Manifest Flow 完了直後に `redactCredentials()` で `[REDACTED]` 上書きしてメモリから除去する。
+利用者の手元・画面に Private Key が残存することはない。具体的には:
 
-- CLI は Private Key を **画面に印字しない**（CISO Critical 条件、`SECURITY.md § install スクリプトの読み書き範囲（Issue #34）` 参照）
-- CLI は Private Key を **ローカルファイルに保存しない**（メモリ・ファイル・環境変数のいずれにも書き込まない、`secrets-handling.md § 1`）
-- `redactCredentials()` を CLI run() return 直前に必ず呼び、`pem` / `client_secret` / `webhook_secret` を `[REDACTED]` で上書きする
-- `npx vibehawk setup` ウィザード経由でも同条件が適用される。`SIGINT` / `SIGTERM` ハンドラで `clearState()` を呼び `oauthToken` / `appIdString` / `credentials` をすべて null 化する（`SECURITY.md § npx vibehawk setup ウィザード経路の追加 Critical 条件（Issue #91）` 参照）
+- CLI は Private Key を画面に印字しない（CISO Critical 条件、`SECURITY.md § install スクリプトの読み書き範囲（Issue #34）` 参照）。
+- CLI は Private Key をローカルファイルに保存しない（メモリ・ファイル・環境変数のいずれにも書き込まない、`secrets-handling.md § 1`）。
+- `redactCredentials()` を CLI run() return 直前に必ず呼び、`pem` / `client_secret` / `webhook_secret` を `[REDACTED]` で上書きする。
+- `npx vibehawk setup` ウィザード経由でも同条件が適用される。`SIGINT` / `SIGTERM` ハンドラで `clearState()` を呼び `oauthToken` / `appIdString` / `credentials` をすべて null 化する（`SECURITY.md § npx vibehawk setup ウィザード経路の追加 Critical 条件（Issue #91）` 参照）。
 
 Private Key は GitHub の App Settings ページから `.pem` ファイルとして利用者本人がダウンロードする運用とする（`secrets-handling.md § 1 採用方針`）。
 

@@ -1,6 +1,9 @@
 # Conventional Commits — vibecorp 厳格定義
 
-vibecorp は Conventional Commits (CC) v1.0.0 標準仕様を採用する。本ドキュメントは CC 11 種の vibecorp での厳格な解釈と、絵文字との 1:1 対応を定義する。
+> [!IMPORTANT]
+> vibecorp は Conventional Commits (CC) v1.0.0 標準仕様を採用する。
+> 本ドキュメントは CC 11 種の vibecorp での厳格な解釈と、絵文字との 1:1 対応を定義する。
+> intent ラベルとの主従関係（intent 主、CC prefix 従）が最大の論点。
 
 ## 主従関係（絶対条件）
 
@@ -31,14 +34,17 @@ intent ラベル定義の SoT は `.claude/rules/intent-labels.md` を参照。
 
 ### 違反時の影響例
 
-過去の議論で「`security:` 単独 prefix を採用しない」と判断したのは、CC 標準（業界都合）を主軸に置いて vibecorp 独自要件 `intent/security` を見失いそうになった典型例。CC 拡張に飛びつかずに `intent/security` を主軸に据え直し、CC は `fix(security): ...` 等の scope 表記で吸収する形に着地した。**prefix 主導で議論しそうになったら本セクションに立ち戻る**。
+過去の議論で「`security:` 単独 prefix を採用しない」と判断したのは典型例として参考になる。
+CC 標準（業界都合）を主軸に置いて vibecorp 独自要件 `intent/security` を見失いそうになった。
+CC 拡張に飛びつかずに `intent/security` を主軸に据え直し、CC は `fix(security): ...` 等の scope 表記で吸収する形に着地した。
+prefix 主導で議論しそうになったら本セクションに立ち戻る。
 
 ## CC 11 種の vibecorp 厳格定義
 
 ### feat — 新機能追加
 
 - **CC 公式**: 新機能をアプリ・ライブラリに追加する commit
-- **vibecorp 厳格定義**: **観測可能な挙動が新たに加わる変更**。新規スキル / 新規フック / 新規エンドポイントなど。新機能追加が伴わない場合は使わない
+- **vibecorp 厳格定義**: 観測可能な挙動が新たに加わる変更。新規スキル / 新規フック / 新規エンドポイントなど。新機能追加が伴わない場合は使わない
 - **絵文字**: ✨
 
 ### fix — バグ修正
@@ -51,8 +57,8 @@ intent ラベル定義の SoT は `.claude/rules/intent-labels.md` を参照。
 ### perf — パフォーマンス改善
 
 - **CC 公式**: コード変更によりパフォーマンスを改善する commit
-- **vibecorp 厳格定義**: **観測可能な性能特性が変わる変更**
-- **特に注記**: **観測不可能な内部最適化のみで挙動完全不変なら `refactor` を使う**
+- **vibecorp 厳格定義**: 観測可能な性能特性が変わる変更
+- **特に注記**: 観測不可能な内部最適化のみで挙動完全不変なら `refactor` を使う
 - **絵文字**: ⚡
 
 ### refactor — リファクタリング 🔴 厳格化大
@@ -60,7 +66,7 @@ intent ラベル定義の SoT は `.claude/rules/intent-labels.md` を参照。
 - **CC 公式**: バグ修正でも機能追加でもないコード変更（挙動が変わる可能性も含む）
 - **vibecorp 厳格定義**: **プロダクトの挙動を変えない構造改善のみ**
 - **特に厳格化される部分**:
-  - 公開 API のリネーム → `refactor` 不可、`feat` または `fix` へ
+  - 公開 API のリネーム → `refactor` 不可。`feat` または `fix` へ
   - 観測可能な挙動が変わる内部実装変更 → `refactor` 不可
   - 内部関数のリネーム → `refactor` OK
   - 凝集度・命名一貫性の改善 → `refactor` OK
@@ -70,21 +76,21 @@ intent ラベル定義の SoT は `.claude/rules/intent-labels.md` を参照。
 
 - **CC 公式**: コードの意味に影響しない変更（空白、フォーマット、セミコロンなど）
 - **vibecorp 厳格定義**: コード意味を変えないフォーマット変更のみ。挙動不変として扱う
-- **特に注記**: vibecorp では **`intent/refactor` ラベルに統合される**（`style` 単独の intent は持たない）
+- **特に注記**: vibecorp では `intent/refactor` ラベルに統合される（`style` 単独の intent は持たない）
 - **絵文字**: 💄
 
 ### docs — ドキュメント
 
 - **CC 公式**: ドキュメントのみの変更
 - **vibecorp 厳格定義**: コード本体の動作に影響しないドキュメント変更（`docs/` / `README.md` / コード内コメント）
-- **特に注記**: **docs 内のサンプルコードがコード本体に影響する場合は `feat` または `fix` 等で扱う**（純粋な docs ではない）
+- **特に注記**: docs 内のサンプルコードがコード本体に影響する場合は `feat` または `fix` 等で扱う（純粋な docs ではない）
 - **絵文字**: 📖
 
 ### test — テスト
 
 - **CC 公式**: 不足テストの追加または既存テストの修正
 - **vibecorp 厳格定義**: `tests/` 配下の変更のみ。本番コードに触れない
-- **特に厳格化される部分**: **テスト追加時に本番コードのバグも修正する場合は別 commit に分ける**（テスト追加 = `test`、本番コード修正 = `fix` の二段階）
+- **特に厳格化される部分**: テスト追加時に本番コードのバグも修正する場合は別 commit に分ける（テスト追加 = `test`、本番コード修正 = `fix` の二段階）
 - **絵文字**: 🧪
 
 ### ci — CI 設定
@@ -99,7 +105,7 @@ intent ラベル定義の SoT は `.claude/rules/intent-labels.md` を参照。
 - **vibecorp 厳格定義**: 挙動不変な雑務のみ
 - **特に厳格化される部分**:
   - 依存パッケージのパッチ・マイナー更新で API 不変 → `chore` OK
-  - **依存パッケージのメジャー更新で API が変わる → `chore` 不可、`feat` または `fix` へ**
+  - 依存パッケージのメジャー更新で API が変わる → `chore` 不可。`feat` または `fix` へ
   - lint ルール追加 → `chore` OK
   - 設定ファイルのコメント整理 → `chore` OK
 - **絵文字**: ⚙️
@@ -109,7 +115,7 @@ intent ラベル定義の SoT は `.claude/rules/intent-labels.md` を参照。
 - **CC 公式**: ビルドシステムや外部依存に影響する変更
 - **vibecorp 厳格定義**: 挙動不変なビルド設定のみ
 - **特に厳格化される部分**:
-  - **ビルドフラグ変更でランタイム挙動が変わる場合は `build` 不可、`perf` または `feat` へ**
+  - ビルドフラグ変更でランタイム挙動が変わる場合は `build` 不可。`perf` または `feat` へ
   - ビルド設定の純粋整理で成果物変わらず → `build` OK
 - **絵文字**: 📦
 
@@ -118,7 +124,7 @@ intent ラベル定義の SoT は `.claude/rules/intent-labels.md` を参照。
 - **CC 公式**: 過去の commit を取り消す commit
 - **vibecorp 厳格定義**: 既検証コードへの差し戻しのみ
 - **絵文字**: ⏪
-- **intent ラベル**: `intent/bugfix` を付与する（差し戻しの本質は「直前の commit が引き起こした問題を取り消す」= バグ修正の一形態）
+- **intent ラベル**: `intent/bugfix` を付与する（差し戻しの本質はバグ修正の一形態）
 
 ## intent ラベル → CC prefix 対応表（M:N）
 
@@ -150,7 +156,7 @@ CC 11 種すべてが少なくとも 1 つの intent に対応する:
 - build → intent/infra
 - revert → intent/bugfix（差し戻しは regression 修正の一形態）
 
-⚠️ **逆引き（CC prefix → intent）は判定で使わない。** 主従関係を狂わせる。
+⚠️ 逆引き（CC prefix → intent）は判定で使わない。主従関係を狂わせる。
 
 ### 検証時にあえて除外したエッジケース
 
@@ -178,11 +184,11 @@ PR / Issue / commit のタイトルは以下のいずれか:
 
 ## 1 PR 1 intent 厳守
 
-- 1 つの Issue / PR には intent ラベルを **1 つだけ** 付与する
-- 複数 intent にまたがる変更は Issue を分割する
-- `templates/.github/workflows/ai-review.yml` の `intent-label-check` ジョブが機械的に強制（**0 件または 2 件以上で fail コメント**）
+- 1 つの Issue / PR には intent ラベルを 1 つだけ付与する。
+- 複数 intent にまたがる変更は Issue を分割する。
+- `templates/.github/workflows/ai-review.yml` の `intent-label-check` ジョブが機械的に強制する（0 件または 2 件以上で fail コメント）。
 
-## 関連
+## 🔗 関連
 
 - intent ラベル定義の SoT: `.claude/rules/intent-labels.md`
 - communication 規約: `.claude/rules/communication.md`
