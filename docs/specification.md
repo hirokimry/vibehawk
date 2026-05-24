@@ -198,6 +198,23 @@ fi
 [Step 4] unresolved >= 1 なら gh pr review --request-changes
 ```
 
+#### APPROVE 時の review body・inline 指摘（Issue #222）
+
+APPROVE 発行時は `review.body = ""`（空文字）かつ `comments = []`（指摘なし）で bundled POST する。
+
+| event | review.body | comments |
+|---|---|---|
+| APPROVE | `""`（空） | `[]`（空） |
+| REQUEST_CHANGES | サマリ本文あり | inline 指摘あり |
+| COMMENT（防御的フォールバック） | サマリ本文あり | inline 指摘あり |
+
+**設計根拠**:
+
+- CodeRabbit の直近 PR 実測で APPROVE 9/9 件が body 空であり、事実上の業界標準挙動として採用した（Issue #222 実測根拠）。
+- 旧挙動（APPROVE でも 400〜2000 文字 body を投稿）は PR タイムラインのノイズになっており、30 秒スキャン性（Value 2「観察する、書き換えない」）を損ねていた。
+- 「approve = 何も言うことなし」をタイムライン上で体現する。
+- サマリは Issue #219 の sticky walkthrough コメント経路（issue_comment sticky）で別途残るため、利用者は引き続きレビュー結果を確認できる。
+
 ### status check 仕様（Issue #121-C1、required status check による merge gating）
 
 > **位置付け（Issue #138 確定）**: 本節は vibehawk の **merge gate 主軸** を定義する。前節「sticky review state」の approve / request_changes 発行は補助情報であり、利用者が branch protection で実際に gate するのは本節の `vibehawk` status check の conclusion である（業界 4 社調査で確認された AI レビューの `required_approving_review_count` バイパス構造を回避する設計判断、Issue #138 / #136 / #137 議論参照）。

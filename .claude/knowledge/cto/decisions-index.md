@@ -5,6 +5,7 @@
 
 ## エントリ
 
+- 2026-05-24 — Issue #222 / PR #223: APPROVE 時レビュー抑制 — validation 通過後の後段 payload 上書きパターン採用・jq+mv の && 連結で payload 破損防止
 - 2026-05-14 — PR #113: formatDuration 境界値処理と型チェックテスト — toFixed("60.0")繰り上げパターン・境界値3値必須・dry-run戻り値の型チェックアサーション追加
 - 2026-05-08 — Issue #6 / PR #16: ship #6 知見 — specification.md(What)/design-philosophy.md(Why) 責務確定・ai-organization.md 配置は CEO 意図優先（技術的負債として負債記録）・shallow clone 対策は利用者側要件として specification に明示
 - 2026-05-08 — PR #12: vibehawk MVV 制定 — `grep -F ... > /dev/null` で終了コード回避・状態管理はGitHubリソースのみ・固有セクションはvibecorp由来より前に配置
