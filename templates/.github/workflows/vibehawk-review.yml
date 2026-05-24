@@ -413,6 +413,25 @@ jobs:
         # 詳細: scripts/ci/vibehawk-review/post-bundled-review.sh（エピック #174 / Issue #176）
         run: bash scripts/ci/vibehawk-review/post-bundled-review.sh
 
+      - name: vibehawk sticky walkthrough コメント upsert（Issue #219）
+        # PR ごとに 1 個固定の issue-comment sticky を維持する（CodeRabbit 模倣）。
+        # build-sticky-body.sh が body markdown を組み立て、post-sticky-comment.sh が
+        # 既存 sticky を bot 名義 + 先頭マーカーで find して POST/PATCH/DELETE 分岐の upsert を行う。
+        # 失敗時は warning ログ + exit 0 とし、後続の status check post に影響させない
+        # （`vibehawk` status check の conclusion は別ステップで決定する）。
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          STRUCTURED_OUTPUT: ${{ steps.claude_review.outputs.structured_output }}
+          DECIDED_EVENT: ${{ steps.decide_event.outputs.decided_event }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_STATUS: normal
+        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219）
+        run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
+
       - name: vibehawk status check を post（Issue #121-C1 fix）
         # Claude prompt 内 check-runs POST は claude-code-action の permission model で
         # deny されるため、workflow step で決定論的に post する。デフォルト GITHUB_TOKEN の

@@ -177,13 +177,16 @@ else
   pass "yml に 'run: |' 複数行インラインシェルが残っていない"
 fi
 
-# 全 run: 行がラッパー呼び出し (bash scripts/ci/vibehawk-review-skip-mark/) であること
+# 全 run: 行がラッパー呼び出しであること
+# 許容パス:
+#   - scripts/ci/vibehawk-review-skip-mark/: skip-mark 専用ステップ
+#   - scripts/ci/vibehawk-review/: vibehawk-review.yml と共有のステップ（Issue #219 sticky upsert で導入）
 # 'run: |' 不在チェックだけだと 'run: echo ...' のような単行 inline shell が混入しても
 # 通ってしまうので、run: 行総数とラッパー呼び出し行数の一致を担保する
 total_runs=$(grep -cE "^[[:space:]]+run:[[:space:]]" "$WORKFLOW" || true)
-wrapper_runs=$(grep -cE "^[[:space:]]+run:[[:space:]]+bash[[:space:]]+scripts/ci/vibehawk-review-skip-mark/" "$WORKFLOW" || true)
+wrapper_runs=$(grep -cE "^[[:space:]]+run:[[:space:]]+bash[[:space:]]+scripts/ci/(vibehawk-review|vibehawk-review-skip-mark)/" "$WORKFLOW" || true)
 if [[ "$total_runs" -eq "$wrapper_runs" ]] && [[ "$total_runs" -gt 0 ]]; then
-  pass "全 run: ($total_runs 件) がラッパー呼び出し (bash scripts/ci/vibehawk-review-skip-mark/) のみ"
+  pass "全 run: ($total_runs 件) がラッパー呼び出し (bash scripts/ci/vibehawk-review/ または vibehawk-review-skip-mark/) のみ"
 else
   fail "run: 行の総数 ($total_runs) とラッパー呼び出し行数 ($wrapper_runs) が一致しない（単行 inline shell が混入の疑い）"
 fi
