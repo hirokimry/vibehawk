@@ -1,20 +1,8 @@
 #!/usr/bin/env bash
-# scripts/ci/vibehawk-chat/check-secrets.sh
+# 用途: vibehawk-chat.yml の secrets 検証ステップ本体（Issue #177）
 #
-# vibehawk-chat.yml の `secrets 検証` step を切り出したスクリプト（Issue #177）。
-# 3 つの secret（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）の
-# 設定有無を確認し、GITHUB_OUTPUT に `ready=true|false` および
-# 未設定時の `missing=<スペース区切りリスト>` を書き出す。
-#
-# 入力（環境変数）:
-#   APP_ID         -- ${{ secrets.VIBEHAWK_APP_ID }}
-#   PRIVATE_KEY    -- ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
-#   OAUTH_TOKEN    -- ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-#   GITHUB_OUTPUT  -- GitHub Actions が自動付与する step output ファイルパス
-#
-# 出力:
-#   stdout に `::warning::...` を吐く（未設定時のみ、GitHub Actions の warning 注釈）
-#   GITHUB_OUTPUT に `ready=true|false`、`missing=<list>`（未設定時のみ）
+# 必須 3 secrets（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）の
+# 設定有無を確認し、GITHUB_OUTPUT に ready=true|false を書き出す。
 
 set -euo pipefail
 

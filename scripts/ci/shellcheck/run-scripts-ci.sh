@@ -1,25 +1,12 @@
 #!/usr/bin/env bash
-# scripts/ci/shellcheck/run-scripts-ci.sh
+# 用途: shellcheck.yml の scripts/ci/**/*.sh 走査ステップ本体（Issue #175 エピック #174 完了条件）
 #
-# CI workflow `.github/workflows/shellcheck.yml` の
-# 「scripts/ci/**/*.sh を走査（strict）」ステップ本体。
-#
-# `scripts/ci/` 配下は **エピック #174 完了条件**「shellcheck が全
-# scripts/ci/**/*.sh で pass」（Issue #175）を満たすため除外なしで
-# severity=warning で走査する。
-#
-# 使用例（workflow から）:
-#   - name: scripts/ci/**/*.sh を走査（strict）
-#     run: bash scripts/ci/shellcheck/run-scripts-ci.sh
-#
-# 入力: なし（カレントディレクトリがリポジトリルートである前提）
-# 出力: stdout に対象一覧と shellcheck の結果。終了コードで pass/fail を返す。
+# scripts/ci/ 配下は除外なし severity=warning で走査する（全件 pass が完了条件）。
 
 set -euo pipefail
 
-# 再帰探索は bash 3.2 (macOS デフォルト) 互換のため find -print0 + while read
-# パターンを使う（shopt -s globstar は bash 4.0+ 限定で test-matrix の
-# macos-latest で fail するため）
+# shopt -s globstar は bash 4.0+ 限定で macos-latest が bash 3.2 のため使えない。
+# find -print0 + while read で bash 3.2 互換の再帰探索を行う。
 files=()
 while IFS= read -r -d '' f; do
   files+=("$f")
