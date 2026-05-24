@@ -52,7 +52,6 @@ else
   fail "set -euo pipefail がない"
 fi
 
-# Case 1: MATRIX_RESULT 未設定
 set +e
 env -u MATRIX_RESULT bash "$SCRIPT" > /dev/null 2>&1
 exit_code=$?
@@ -63,7 +62,6 @@ else
   fail "MATRIX_RESULT 未設定でも成功してしまう"
 fi
 
-# Case 2: success
 set +e
 output=$(MATRIX_RESULT=success bash "$SCRIPT" 2>&1)
 exit_code=$?
@@ -79,7 +77,6 @@ else
   fail "success 時メッセージが想定と異なる: $output"
 fi
 
-# Case 3: cancelled
 set +e
 output=$(MATRIX_RESULT=cancelled bash "$SCRIPT" 2>&1)
 exit_code=$?
@@ -95,7 +92,6 @@ else
   fail "cancelled 時メッセージが想定と異なる: $output"
 fi
 
-# Case 4: failure
 set +e
 output=$(MATRIX_RESULT=failure bash "$SCRIPT" 2>&1)
 exit_code=$?
@@ -111,7 +107,6 @@ else
   fail "failure 時メッセージが想定と異なる: $output"
 fi
 
-# Case 5: skipped
 set +e
 output=$(MATRIX_RESULT=skipped bash "$SCRIPT" 2>&1)
 exit_code=$?

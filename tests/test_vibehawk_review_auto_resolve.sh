@@ -52,8 +52,6 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 STUB_DIR="${TMP_DIR}/stub"
 mkdir -p "$STUB_DIR"
 
-# gh スタブを生成する。
-#
 # 動作:
 #   - `gh api graphql -f query='query(...)' ...` (reviewThreads クエリ): 第 1 引数の
 #     THREADS_JSON_FILE の内容をそのまま stdout に出力（テスト側で事前準備）。
@@ -133,9 +131,7 @@ STUB_EOF
   chmod +x "$STUB_DIR/gh"
 }
 
-# テスト実行ヘルパー
 run_script() {
-  # Usage: run_script <structured_output_json> <reviewThreads_json> [<mutation_fail_ids>]
   local payload="$1"
   local threads_json="$2"
   local fail_ids="${3:-}"
@@ -163,9 +159,7 @@ mutation_count() {
   fi
 }
 
-# ヘルパー: reviewThreads JSON テンプレート
 threads_json_with() {
-  # Usage: threads_json_with <id1> <login1> [<id2> <login2> ...]
   local nodes=""
   while [[ $# -gt 0 ]]; do
     local tid="$1"
@@ -179,9 +173,6 @@ threads_json_with() {
   printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[%s]}}}}}' "$nodes"
 }
 
-# ============================================================
-# シナリオ 1: resolved_thread_ids が空配列 → mutation 0 回
-# ============================================================
 EMPTY_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":[]}'
 THREADS_EMPTY="$(threads_json_with)"
 rc=$(run_script "$EMPTY_PAYLOAD" "$THREADS_EMPTY")
@@ -193,9 +184,6 @@ else
   cat "${TMP_DIR}/stdout"
 fi
 
-# ============================================================
-# シナリオ 1-bis: resolved_thread_ids 未定義 → mutation 0 回（フィールド省略でも吸収）
-# ============================================================
 NO_FIELD_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[]}'
 rc=$(run_script "$NO_FIELD_PAYLOAD" "$THREADS_EMPTY")
 if [[ "$rc" -eq 0 ]] && [[ "$(mutation_count)" -eq 0 ]]; then
@@ -204,9 +192,6 @@ else
   fail "シナリオ 1-bis 失敗: rc=$rc, mutation=$(mutation_count)"
 fi
 
-# ============================================================
-# シナリオ 2: 1 件 + author.login が vibehawk-for-hirokimry → mutation 1 回
-# ============================================================
 ONE_OWN_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["PRRT_kwDOAAA"]}'
 THREADS_OWN="$(threads_json_with "PRRT_kwDOAAA" "vibehawk-for-hirokimry")"
 rc=$(run_script "$ONE_OWN_PAYLOAD" "$THREADS_OWN")
@@ -219,9 +204,6 @@ else
   cat "${TMP_DIR}/stdout"
 fi
 
-# ============================================================
-# シナリオ 3: 1 件 + author.login が別 bot → mutation 0 回 + warning
-# ============================================================
 ONE_OTHER_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["PRRT_kwDOBBB"]}'
 THREADS_OTHER="$(threads_json_with "PRRT_kwDOBBB" "coderabbitai")"
 rc=$(run_script "$ONE_OTHER_PAYLOAD" "$THREADS_OTHER")
@@ -234,9 +216,6 @@ else
   cat "${TMP_DIR}/stdout"
 fi
 
-# ============================================================
-# シナリオ 4: 1 件 + 該当 thread が GraphQL 応答に無い → mutation 0 回 + warning
-# ============================================================
 ONE_MISSING_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["PRRT_kwDOCCC"]}'
 THREADS_MISSING="$(threads_json_with "PRRT_kwDOZZZ" "vibehawk-for-hirokimry")"
 rc=$(run_script "$ONE_MISSING_PAYLOAD" "$THREADS_MISSING")
@@ -248,9 +227,6 @@ else
   cat "${TMP_DIR}/stdout"
 fi
 
-# ============================================================
-# シナリオ 5: 複数件混在 → 該当 mutation のみ実行
-# ============================================================
 MIX_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["PRRT_OWN1","PRRT_OTHER","PRRT_OWN2","PRRT_MISSING"]}'
 THREADS_MIX="$(threads_json_with \
   "PRRT_OWN1" "vibehawk-for-hirokimry" \
@@ -270,9 +246,6 @@ else
   cat "${TMP_DIR}/stdout"
 fi
 
-# ============================================================
-# シナリオ 6: 必須 env 欠落 → 非 0 終了
-# ============================================================
 make_gh_stub "$THREADS_EMPTY" ""
 set +e
 runner_temp_6="${TMP_DIR}/runner_temp_6"
@@ -287,9 +260,6 @@ else
   fail "シナリオ 6: STRUCTURED_OUTPUT 未設定でも 0 終了してしまった"
 fi
 
-# ============================================================
-# シナリオ 7: node_id 形式不一致 → mutation 0 回（入力サニタイズ動作確認）
-# ============================================================
 # 注: jq -r で .[] を出力するため、特殊文字を含む 1 件を 1 ID として渡す。
 # 改行文字を入れると分割される（実運用で起きない異常入力）。空白・;・/ 等を含む id をテスト。
 EVIL_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["; rm -rf /","with space","../../etc"]}'
@@ -303,7 +273,6 @@ else
   cat "${TMP_DIR}/stdout"
 fi
 
-# ============================================================
 # シナリオ 7-bis (CodeRabbit PR #193 Major 対応): 大文字 OWNER でも author 小文字正規化で
 # 有効 thread が誤 skip されない
 # ============================================================
@@ -333,7 +302,6 @@ else
   cat "$stdout_file"
 fi
 
-# ============================================================
 # シナリオ 7-ter (PR #193 \r トリミング regression test): jq -r 出力に擬似的に \r が
 # 混入した状況を再現し、auto-resolve.sh の ${var%$'\r'} トリミングが正しく動くことを確認
 # ============================================================
@@ -349,9 +317,6 @@ else
   fail "シナリオ 7-ter: auto-resolve.sh の \\r トリミング実装が欠落（Windows CI で正常な node_id が誤 skip される回帰、PR #193）"
 fi
 
-# ============================================================
-# シナリオ 8: 個別 mutation 失敗 → warning + skip、step 全体は 0 終了
-# ============================================================
 FAIL_PAYLOAD='{"event":"COMMENT","body":"s","commit_id":"sha","comments":[],"resolved_thread_ids":["PRRT_FAIL","PRRT_OK"]}'
 THREADS_FAIL="$(threads_json_with \
   "PRRT_FAIL" "vibehawk-for-hirokimry" \

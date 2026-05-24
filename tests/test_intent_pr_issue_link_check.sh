@@ -47,7 +47,6 @@ fi
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
 
-# シナリオ 1: PR 本文に Issue 参照あり → exit 0
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 # PR body のみ返す
@@ -69,7 +68,6 @@ else
   fail "Issue 参照あり分岐の挙動が想定と異なる: exit=$code, out='$out'"
 fi
 
-# シナリオ 2: ref キーワードでも検出（grep -i + refs?）
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "pr" && "$2" == "view" ]]; then
@@ -90,7 +88,6 @@ else
   fail "Refs #N の検出に失敗: exit=$code2, out='$out2'"
 fi
 
-# シナリオ 3: PR 本文に Issue 参照なし → exit 1 + コメント投稿
 cat > "$STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash
 # pr view body はパース対象なし、pr comment は記録

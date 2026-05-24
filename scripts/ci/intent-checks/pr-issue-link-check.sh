@@ -1,16 +1,7 @@
 #!/usr/bin/env bash
-# scripts/ci/intent-checks/pr-issue-link-check.sh
+# 用途: PR 本文に Issue 参照がない場合に fail させる（Issue #469 残 #5）
 #
-# PR 本文に対応 Issue の参照（Refs / close / closes / fix / fixes / resolve / resolves）が
-# 含まれていない場合に fail させる。
-# `.github/workflows/pr-issue-link-check.yml` から呼び出される。
-#
-# 必要な環境変数:
-#   GH_TOKEN  : gh CLI 認証トークン（workflow 側で `env:` で渡す）
-#   PR_NUMBER : 対象 PR 番号
-#   REPO      : owner/repo 形式
-#
-# Issue #469 残 #5「Issue 番号取れない PR は fail（Issue 経由起票必須）」の実装。
+# vibecorp は Issue 経由起票必須運用のため、参照なし PR は通さない。
 # Source of Truth: docs/conventional-commits.md, .claude/rules/intent-labels.md
 
 set -euo pipefail
@@ -23,8 +14,6 @@ main() {
   : "${PR_NUMBER:?PR_NUMBER が必須です}"
   : "${REPO:?REPO が必須です}"
 
-  # PR 本文を取得し、Issue 参照キーワード（GitHub の auto-close keywords + Refs）を grep
-  # close / closes / closed / fix / fixes / fixed / resolve / resolves / resolved / Refs (大小文字区別なし) + #数字
   local body
   body=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
   if echo "$body" | grep -qiE '(close[sd]?|fix(es|ed)?|resolve[sd]?|refs?)[[:space:]]+#[0-9]+|(close[sd]?|fix(es|ed)?|resolve[sd]?|refs?)[[:space:]]+https?://[^[:space:]]+/issues/[0-9]+'; then

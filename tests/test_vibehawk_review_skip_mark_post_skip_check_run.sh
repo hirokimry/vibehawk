@@ -44,7 +44,6 @@ WORK_DIR="$(mktemp -d)"
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR" "$STUB_DIR"' EXIT
 
-# gh スタブ: 引数を 1 行 1 引数で記録する
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 for arg in "$@"; do
@@ -55,7 +54,6 @@ chmod +x "$STUB_DIR/gh"
 
 GH_STUB_LOG="${WORK_DIR}/gh-args.log"
 
-# 1. 正常系: 全環境変数セットで gh が想定の引数で呼ばれる
 : > "$GH_STUB_LOG"
 PATH="$STUB_DIR:$PATH" \
   GH_STUB_LOG="$GH_STUB_LOG" \
@@ -64,7 +62,6 @@ PATH="$STUB_DIR:$PATH" \
   REPO=hirokimry/vibehawk \
   bash "$TARGET"
 
-# 期待される引数列
 expected_args="api
 -X
 POST
@@ -93,7 +90,6 @@ else
   echo "$actual_args" | sed 's/^/    /'
 fi
 
-# 個別の固定パラメータ検証（仕様変更検知用）
 check_arg() {
   local needle="$1"
   local label="$2"
@@ -119,10 +115,7 @@ else
   fail "output[summary] に出典が含まれない"
 fi
 
-# 異常系（必須環境変数の欠落検証）。
 # 念のため `env -u <VAR>` で子 env から明示的に除去する（PR #184 CI 失敗対策）。
-
-# 2. 異常系: HEAD_SHA 未設定 → exit 非 0
 set +e
 err_out="$(
   PATH="$STUB_DIR:$PATH" \
@@ -138,7 +131,6 @@ else
   fail "HEAD_SHA 未設定時の挙動が想定と異なる: exit=$err_code, out='$err_out'"
 fi
 
-# 3. 異常系: REPO 未設定 → exit 非 0
 set +e
 err_out="$(
   PATH="$STUB_DIR:$PATH" \

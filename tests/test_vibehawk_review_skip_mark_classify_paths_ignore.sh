@@ -41,8 +41,6 @@ fi
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-# Helper: 任意の changed_files 内容で実行し、out / is_skip を呼び出し側の
-# 変数（名前を $3 / $4 で受け取る）に格納する。
 # 注意: ローカル変数名は呼び出し側の変数名 (out / is_skip) と衝突しないよう
 # _out / _is_skip プレフィックスを付ける（printf -v は dynamic scope で同名
 # ローカルがあるとそちらに書き込むため）。
@@ -73,7 +71,6 @@ run_classify() {
   printf -v "$is_skip_var" '%s' "$_is_skip"
 }
 
-# 1. file_count=0 → is_skip=false（判定不能のため安全側）
 run_classify 0 "" out is_skip
 if [[ "$is_skip" == "false" ]]; then
   pass "file_count=0 で is_skip=false"
@@ -81,7 +78,6 @@ else
   fail "file_count=0 で is_skip=$is_skip（false 期待）"
 fi
 
-# 2. lock ファイル単独 → is_skip=true
 run_classify 1 "package-lock.json
 " out is_skip
 if [[ "$is_skip" == "true" ]]; then
@@ -90,7 +86,6 @@ else
   fail "package-lock.json 単独で is_skip=$is_skip（true 期待）"
 fi
 
-# 3. lock 4 種全部 → is_skip=true
 run_classify 4 "package-lock.json
 yarn.lock
 pnpm-lock.yaml
@@ -102,7 +97,6 @@ else
   fail "lock 4 種全部で is_skip=$is_skip（true 期待）"
 fi
 
-# 4. dependabot.yml 単独 → is_skip=true
 run_classify 1 ".github/dependabot.yml
 " out is_skip
 if [[ "$is_skip" == "true" ]]; then
@@ -111,7 +105,6 @@ else
   fail ".github/dependabot.yml 単独で is_skip=$is_skip（true 期待）"
 fi
 
-# 5. lock + dependabot 混在 → is_skip=true
 run_classify 2 "package-lock.json
 .github/dependabot.yml
 " out is_skip
@@ -121,7 +114,6 @@ else
   fail "lock + dependabot 混在で is_skip=$is_skip（true 期待）"
 fi
 
-# 6. マッチ外 1 件混入 → is_skip=false
 run_classify 2 "package-lock.json
 src/index.ts
 " out is_skip
@@ -131,7 +123,6 @@ else
   fail "package-lock.json + src/index.ts で is_skip=$is_skip（false 期待）"
 fi
 
-# 7. 完全にマッチ外 → is_skip=false
 run_classify 1 "README.md
 " out is_skip
 if [[ "$is_skip" == "false" ]]; then
@@ -140,7 +131,6 @@ else
   fail "README.md 単独で is_skip=$is_skip（false 期待）"
 fi
 
-# 8. CHANGELOG → is_skip=false（Issue #160 撤回後）
 run_classify 1 "CHANGELOG.md
 " out is_skip
 if [[ "$is_skip" == "false" ]]; then
@@ -149,7 +139,6 @@ else
   fail "CHANGELOG.md 単独で is_skip=$is_skip（false 期待）"
 fi
 
-# 9. stdout に「paths-ignore 全マッチ: ...」が出る
 run_classify 1 "package-lock.json
 " out is_skip
 if echo "$out" | grep -F "paths-ignore 全マッチ: true" > /dev/null; then
@@ -158,12 +147,10 @@ else
   fail "stdout に判定結果行が出ない: '$out'"
 fi
 
-# 異常系（必須環境変数の欠落検証）。
 # GitHub Actions runner では GITHUB_OUTPUT が親シェル env から子へ継承されるため、
 # 単に「assign しない」だけでは不十分。env -u <VAR> で子 env から明示的に除去する。
 # 参考: PR #184 の CI 失敗で発覚（macOS / Ubuntu の test-matrix）。
 
-# 10. 異常系: FILE_COUNT 未設定 → exit 非 0
 set +e
 err_out="$(
   GITHUB_OUTPUT="${WORK_DIR}/github_output" \
@@ -178,7 +165,6 @@ else
   fail "FILE_COUNT 未設定時の挙動が想定と異なる: exit=$err_code, out='$err_out'"
 fi
 
-# 11. 異常系: GITHUB_OUTPUT 未設定 → exit 非 0
 set +e
 err_out="$(
   FILE_COUNT=0 \
@@ -193,7 +179,6 @@ else
   fail "GITHUB_OUTPUT 未設定時の挙動が想定と異なる: exit=$err_code, out='$err_out'"
 fi
 
-# 12. vibehawk-review.yml の paths-ignore と完全同期（行数照合）
 VIBEHAWK_REVIEW_YML="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
 if [[ -f "$VIBEHAWK_REVIEW_YML" ]]; then
   paths_ignore_count=$(awk '
@@ -203,7 +188,6 @@ if [[ -f "$VIBEHAWK_REVIEW_YML" ]]; then
     END { print count }
   ' "$VIBEHAWK_REVIEW_YML")
 
-  # classify-paths-ignore.sh の case 文パターン数
   case_pattern_total=$(awk '
     /case[[:space:]]+"\$file"[[:space:]]+in/ { in_case = 1; next }
     in_case && /^[[:space:]]+esac/ { exit }

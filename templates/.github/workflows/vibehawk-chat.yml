@@ -21,9 +21,7 @@ permissions:
 jobs:
   chat:
     runs-on: ubuntu-latest
-    # 起動条件:
-    # - コメント本文に @vibehawk を含む
-    # - 投稿者が vibehawk-for-* Bot 自身ではない（無限ループ防止）
+    # Bot 自身のメンションで再発火する無限ループを防止する
     if: |
       contains(github.event.comment.body, '@vibehawk') &&
       !startsWith(github.event.comment.user.login, 'vibehawk-for-')

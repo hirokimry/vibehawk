@@ -1,6 +1,5 @@
 'use strict';
 
-// GitHub App Manifest Flow のマニフェスト定義
 // https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
 
 const VIBEHAWK_REPO_URL = 'https://github.com/hirokimry/vibehawk';

@@ -55,7 +55,6 @@ fi
 TMPDIR_TEST="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
-# Case 1: tests/ ディレクトリそのものがない場合
 mkdir -p "${TMPDIR_TEST}/case_empty"
 set +e
 ( cd "${TMPDIR_TEST}/case_empty" && bash "$SCRIPT" > /dev/null 2>&1 )
@@ -67,7 +66,6 @@ else
   fail "テストファイルなし → 想定 exit 1 だが実際は $exit_code"
 fi
 
-# Case 2: 全テストが pass
 mkdir -p "${TMPDIR_TEST}/case_all_pass/tests"
 cat > "${TMPDIR_TEST}/case_all_pass/tests/test_ok1.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -88,7 +86,6 @@ else
   fail "全テスト pass → 想定 exit 0 だが実際は $exit_code"
 fi
 
-# Case 3: 1 件 fail
 mkdir -p "${TMPDIR_TEST}/case_one_fail/tests"
 cat > "${TMPDIR_TEST}/case_one_fail/tests/test_ok.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -109,7 +106,6 @@ else
   fail "1 件 fail → 想定 exit 1 だが実際は $exit_code"
 fi
 
-# Case 4: 全テスト pass でも tests/test_*.sh 以外（test_setup.sh 等の prefix 不一致）は無視される
 mkdir -p "${TMPDIR_TEST}/case_glob/tests"
 cat > "${TMPDIR_TEST}/case_glob/tests/test_ok.sh" <<'EOF'
 #!/usr/bin/env bash

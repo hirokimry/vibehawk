@@ -27,7 +27,6 @@ GH_HELPERS_SH="${REPO_ROOT}/scripts/ci/common/gh-helpers.sh"
 
 echo "=== scripts/ci/common/gh-helpers.sh 単体テスト ==="
 
-# 前提: gh-helpers.sh が存在する
 if [[ -f "$GH_HELPERS_SH" ]]; then
   pass "scripts/ci/common/gh-helpers.sh が存在する"
 else
@@ -35,20 +34,17 @@ else
   exit 1
 fi
 
-# gh スタブを用意（PATH の先頭に置く）
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
 
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
-# gh スタブ: 受け取った引数を 1 行 1 引数で stdout に出力する
 for arg in "$@"; do
   printf '%s\n' "$arg"
 done
 EOF
 chmod +x "$STUB_DIR/gh"
 
-# gh_api_paginated: endpoint のみ
 out="$(PATH="$STUB_DIR:$PATH" bash -c "source '$GH_HELPERS_SH'; gh_api_paginated /repos/hirokimry/vibehawk/issues/175/comments")"
 expected="api
 --paginate
@@ -59,7 +55,6 @@ else
   fail "gh_api_paginated の出力が想定と異なる: '$out'"
 fi
 
-# gh_api_paginated: jq_filter 付き
 out2="$(PATH="$STUB_DIR:$PATH" bash -c "source '$GH_HELPERS_SH'; gh_api_paginated /repos/x/y/issues/1/comments '.[] | .body'")"
 expected2="api
 --paginate
@@ -72,7 +67,6 @@ else
   fail "gh_api_paginated の jq_filter 引数挙動が想定と異なる: '$out2'"
 fi
 
-# gh_api_paginated: endpoint 未指定でエラー
 set +e
 err_out="$(PATH="$STUB_DIR:$PATH" bash -c "source '$GH_HELPERS_SH'; gh_api_paginated" 2>&1)"
 err_code=$?
@@ -83,7 +77,6 @@ else
   fail "gh_api_paginated の引数バリデーション挙動が想定と異なる: exit=$err_code, out='$err_out'"
 fi
 
-# gh_issue_field: 想定の gh issue view 引数を渡す
 out3="$(PATH="$STUB_DIR:$PATH" bash -c "source '$GH_HELPERS_SH'; gh_issue_field 175 title")"
 expected3="issue
 view
@@ -98,7 +91,6 @@ else
   fail "gh_issue_field の引数構築が想定と異なる: '$out3'"
 fi
 
-# gh_issue_field: 引数不足でエラー
 set +e
 err_out2="$(PATH="$STUB_DIR:$PATH" bash -c "source '$GH_HELPERS_SH'; gh_issue_field 175" 2>&1)"
 err_code2=$?
@@ -109,7 +101,6 @@ else
   fail "gh_issue_field の引数バリデーション挙動が想定と異なる: exit=$err_code2, out='$err_out2'"
 fi
 
-# 多重 source 防止
 loaded_marker="$(bash -c "source '$GH_HELPERS_SH'; echo \"\$VIBEHAWK_CI_GH_HELPERS_LOADED\"")"
 if [[ "$loaded_marker" == "1" ]]; then
   pass "source 後に VIBEHAWK_CI_GH_HELPERS_LOADED が 1 になる"

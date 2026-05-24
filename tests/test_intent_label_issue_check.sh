@@ -47,7 +47,6 @@ fi
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
 
-# シナリオ 1: 許可 intent 1 つだけ → exit 0
 cat > "$STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash
 if [[ "\$1" == "api" ]]; then
@@ -79,7 +78,6 @@ else
   fail "許可 intent 1 つでコメントが投稿された: $(cat "$STUB_DIR/calls.log")"
 fi
 
-# シナリオ 2: intent ラベル不在 → exit 1 + コメント投稿
 rm -f "$STUB_DIR/calls.log"
 cat > "$STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash
@@ -111,7 +109,6 @@ else
   fail "intent ラベル不在で gh issue comment が呼ばれていない"
 fi
 
-# シナリオ 3: 許可 intent 2 つ → exit 1 + コメント投稿
 rm -f "$STUB_DIR/calls.log"
 cat > "$STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash
@@ -137,7 +134,6 @@ else
   fail "許可 intent 2 つの exit code が 1 ではない: exit=$code3, out='$out3'"
 fi
 
-# シナリオ 4: 未知 intent（intent/unknown）混在 → exit 1
 rm -f "$STUB_DIR/calls.log"
 cat > "$STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash

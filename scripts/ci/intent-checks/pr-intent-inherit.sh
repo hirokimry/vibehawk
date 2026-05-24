@@ -1,21 +1,8 @@
 #!/usr/bin/env bash
-# scripts/ci/intent-checks/pr-intent-inherit.sh
+# 用途: PR 作成時に対応 Issue の intent/* ラベルを自動継承する（Issue #487 / #469）
 #
-# PR 作成時に対応 Issue の intent/* ラベルを自動的に PR にコピーする。
-# `.github/workflows/pr-intent-inherit.yml` から呼び出される。
-#
-# 必要な環境変数:
-#   GH_TOKEN  : gh CLI 認証トークン（workflow 側で `env:` で渡す）
-#   PR_NUMBER : 対象 PR 番号
-#   REPO      : owner/repo 形式
-#
-# 設計:
-#   - 対応 Issue を PR 本文の close/fix/resolve/ref キーワード経由で抽出する
-#   - 各 Issue の intent/* ラベル（ホワイトリスト 7 種）を PR にコピーする
-#   - 既存 intent ラベルがあれば重複付与しない
-#   - Issue 側に intent ラベル不在なら警告コメント（重複防止付き）を投稿する
-#
-# Issue #487 / Issue #469 で確定した「1 PR 1 intent 厳守」運用の補助。
+# 「1 PR 1 intent 厳守」（.claude/rules/intent-labels.md）の補助。
+# 複数 Issue の intent が分岐している場合はエラー停止して利用者に判断を促す。
 
 set -euo pipefail
 
@@ -27,13 +14,10 @@ main() {
   : "${PR_NUMBER:?PR_NUMBER が必須です}"
   : "${REPO:?REPO が必須です}"
 
-  # PR 本文から Issue 番号を抽出
-  # 対応キーワード: close / closes / closed / fix / fixes / fixed / resolve / resolves / resolved / ref / refs（大小文字区別なし）
   local body
   body=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
 
-  # 「キーワード #数字」と「キーワード URL/issues/数字」の両方をマッチ
-  # ref / refs 両対応（/vibecorp:pr の --ref オプション運用と整合）
+  # `#数字` 形式と URL 形式の両方に対応（/vibecorp:pr の --ref オプション運用と整合）
   local issue_numbers
   issue_numbers=$(echo "$body" | grep -oiE '(close[sd]?|fix(es|ed)?|resolve[sd]?|refs?)[[:space:]]+#[0-9]+|(close[sd]?|fix(es|ed)?|resolve[sd]?|refs?)[[:space:]]+https?://[^[:space:]]+/issues/[0-9]+' \
     | grep -oE '[0-9]+$' \
@@ -45,7 +29,6 @@ main() {
     return 0
   fi
 
-  # 各 Issue から intent/* ラベルを取得
   local allowed='["intent/feature","intent/bugfix","intent/performance","intent/security","intent/refactor","intent/infra","intent/docs"]'
   local inherited=""
   local missing_intent_issues=""
@@ -65,14 +48,12 @@ main() {
     done
   done
 
-  # 重複排除（空行を除去してから sort -u）
   local unique_intents
   unique_intents=$(printf '%s\n' "$inherited" | sed '/^$/d' | sort -u)
   local unique_count
   unique_count=$(printf '%s\n' "$unique_intents" | sed '/^$/d' | wc -l | tr -d ' ')
 
-  # missing_intent 警告は intent 継承の有無に依存せず常時独立に実行する
-  # （継承可能 Issue が 1 件でもあると、未設定 Issue の警告が黙殺されるのを防ぐ）
+  # 継承可能 Issue が存在しても、未設定 Issue への警告を黙殺しないよう独立して実行する
   if [[ -n "$missing_intent_issues" ]]; then
     local existing_warning
     existing_warning=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '[.comments[] | select(.body | startswith("⚠️ 対応 Issue"))] | length' 2>/dev/null || echo "0")
@@ -82,9 +63,7 @@ main() {
     fi
   fi
 
-  # 「1 PR 1 intent 厳守」運用（.claude/rules/intent-labels.md）を破る複数 intent 継承を error 停止
-  # 参照 Issue の intent が分岐している場合、全件付与すると PR が複数 intent 持ちになり
-  # intent-label-issue-check が後続で fail するため、ここで先に止めて利用者に判断を促す
+  # 複数 intent を全件付与すると後続の intent-label-issue-check が fail するため、ここで先に止める（.claude/rules/intent-labels.md）
   if [[ "$unique_count" -gt 1 ]]; then
     local existing_split
     existing_split=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '[.comments[] | select(.body | startswith("❌ 対応 Issue 群の intent が分岐"))] | length' 2>/dev/null || echo "0")
@@ -103,7 +82,7 @@ main() {
     return 0
   fi
 
-  # 既に PR に同じ intent ラベルがある場合はスキップ（重複付与防止）
+  # 重複付与防止のため既存ラベルを確認してからコピーする
   local existing
   existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --jq '[.[] | .name | select(startswith("intent/"))] | join("\n")' 2>/dev/null || true)
   local intent

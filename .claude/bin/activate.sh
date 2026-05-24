@@ -1,6 +1,5 @@
-# vibecorp 隔離レイヤ activate スクリプト
-# 使用: source .claude/bin/activate.sh
-# 対応: bash / zsh
+# 用途: vibecorp 隔離レイヤの bin/ を PATH に追加する（Issue #212）
+# source で実行すること（直接実行では PATH 変更が呼出元シェルに反映されない）
 
 _vibecorp_activate() {
   local script_path

@@ -108,7 +108,6 @@ echo "=== 投稿者 ID + 種別マーカーの二重チェック（jq） ==="
 owner="alice"
 bot_login="vibehawk-for-${owner}[bot]"
 
-# テストデータ: 異なる投稿者 + 異なる body の混在
 mock_comments='[
   {"user": {"login": "github-actions[bot]"}, "body": "<!-- vibehawk:summary -->", "created_at": "2026-01-01T00:00:00Z", "id": 1},
   {"user": {"login": "vibehawk-for-alice[bot]"}, "body": "old summary <!-- vibehawk:summary -->", "created_at": "2026-01-02T00:00:00Z", "id": 2},
@@ -116,7 +115,6 @@ mock_comments='[
   {"user": {"login": "vibehawk-for-alice[bot]"}, "body": "latest summary <!-- vibehawk:summary -->", "created_at": "2026-01-04T00:00:00Z", "id": 4}
 ]'
 
-# 二重チェック: 投稿者 == bot_login かつ body に マーカー含む → 4 のみ抽出
 selected="$(echo "$mock_comments" | jq -r --arg bot "$bot_login" \
   '[.[] | select(.user.login == $bot) | select(.body | contains("<!-- vibehawk:summary -->"))] | sort_by(.created_at) | last | .id')"
 
@@ -126,7 +124,6 @@ else
   fail "二重チェック結果が想定と異なる: '$selected' (期待: 4)"
 fi
 
-# 投稿者違いを除外: github-actions[bot] のマーカー入り body は採用されない
 github_actions_excluded="$(echo "$mock_comments" | jq -c --arg bot "$bot_login" \
   '[.[] | select(.user.login == $bot) | select(.body | contains("<!-- vibehawk:summary -->"))] | sort_by(.created_at) | map(.id)')"
 

@@ -58,7 +58,6 @@ fi
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
 
-# シナリオ 1: PR_BODY に close キーワードなし → notice + exit 0
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "GH_CALLED: $*" >&2
@@ -76,7 +75,6 @@ else
   fail "Refs のみ分岐の挙動が想定と異なる: exit=$code, out='$out'"
 fi
 
-# シナリオ 2: PR_BODY に Closes #N あり、Issue が OPEN → close される
 cat > "$STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash
 case "\$1" in
@@ -115,7 +113,6 @@ else
   fail "gh issue close が呼ばれていない"
 fi
 
-# シナリオ 3: Issue が既に CLOSED → スキップ（close されない）
 rm -f "$STUB_DIR/calls.log"
 cat > "$STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash
@@ -153,7 +150,6 @@ else
   fail "CLOSED の Issue で gh issue close が呼ばれた: $(cat "$STUB_DIR/calls.log")"
 fi
 
-# シナリオ 4: Refs キーワードは対象外（暴発防止）— Closes と混在しても Refs 側は close されない
 rm -f "$STUB_DIR/calls.log"
 cat > "$STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash

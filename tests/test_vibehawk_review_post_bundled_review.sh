@@ -41,7 +41,6 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 STUB_DIR="${TMP_DIR}/stub"
 mkdir -p "$STUB_DIR"
 
-# gh スタブ: api -X POST 呼び出し時、--input 引数のファイル中身をログに出して exit 0
 cat > "$STUB_DIR/gh" <<'STUB'
 #!/usr/bin/env bash
 gh_log="${GH_STUB_LOG:-/dev/null}"
@@ -64,7 +63,6 @@ STUB
 chmod +x "$STUB_DIR/gh"
 
 run_script() {
-  # Usage: run_script <structured_output> <decided_event>
   local payload="$1" decided="$2"
   local gh_log="${TMP_DIR}/gh.log"
   : > "$gh_log"
@@ -85,7 +83,6 @@ run_script() {
 GH_LOG="${TMP_DIR}/gh.log"
 STDOUT="${TMP_DIR}/stdout"
 
-# シナリオ 1: 正常系（event=COMMENT placeholder、DECIDED_EVENT=APPROVE で上書き → POST 実行）
 VALID='{"event":"COMMENT","body":"summary text","commit_id":"abc123","comments":[]}'
 rc=$(run_script "$VALID" "APPROVE")
 if [[ "$rc" -eq 0 ]] \
@@ -98,15 +95,12 @@ else
   fail "POST 呼び出しが想定と異なる: rc=$rc, gh_log=$(cat "$GH_LOG")"
 fi
 
-# 同じシナリオで、payload の .event が APPROVE に上書きされていることを検証
-# jq の出力は pretty-printed なので `"event": "APPROVE"`（コロン後に空白あり）になる
 if grep -qE '"event":\s*"APPROVE"' "$GH_LOG"; then
   pass "payload の .event が DECIDED_EVENT で上書きされる"
 else
   fail ".event の上書きが反映されなかった: gh_log=$(cat "$GH_LOG")"
 fi
 
-# シナリオ 2: schema validation 失敗 → skip（exit 0 + warning、gh は呼ばれない）
 INVALID='{"event":"BOGUS","body":"","commit_id":"","comments":[]}'
 rc=$(run_script "$INVALID" "APPROVE")
 if [[ "$rc" -eq 0 ]] \
@@ -117,7 +111,6 @@ else
   fail "schema 失敗時の skip 挙動が想定と異なる: rc=$rc, gh_log=$(cat "$GH_LOG"), stdout=$(cat "$STDOUT")"
 fi
 
-# シナリオ 3: DECIDED_EVENT 空 → skip
 rc=$(run_script "$VALID" "")
 if [[ "$rc" -eq 0 ]] \
    && ! grep -qF "ARG: -X" "$GH_LOG" \
@@ -128,7 +121,6 @@ else
   fail "DECIDED_EVENT 空時の挙動が想定と異なる: rc=$rc, stdout=$(cat "$STDOUT")"
 fi
 
-# シナリオ 4: DECIDED_EVENT 不正値 → skip
 rc=$(run_script "$VALID" "INVALID_VALUE")
 if [[ "$rc" -eq 0 ]] \
    && ! grep -qF "ARG: -X" "$GH_LOG" \
@@ -139,7 +131,6 @@ else
   fail "DECIDED_EVENT 不正時の挙動が想定と異なる: rc=$rc, stdout=$(cat "$STDOUT")"
 fi
 
-# シナリオ 5: 必須 env (REPO / PR_NUMBER / STRUCTURED_OUTPUT / RUNNER_TEMP) 欠落
 set +e
 PATH="$STUB_DIR:$PATH" bash "$SCRIPT" >/dev/null 2>&1
 err_rc=$?

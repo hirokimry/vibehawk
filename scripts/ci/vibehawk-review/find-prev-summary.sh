@@ -1,26 +1,9 @@
 #!/usr/bin/env bash
-# scripts/ci/vibehawk-review/find-prev-summary.sh
+# 用途: vibehawk-review.yml の前回サマリ取得・インクリメンタルレビュー範囲決定ステップ本体（Issue #8）
 #
-# vibehawk-review.yml の "前回サマリコメントを取得（Issue #8 インクリメンタル
-# レビュー判定）" ステップ（旧 L109 インライン）の本体。
-#
-# bundled review POST 移行後（Issue #121）、サマリは `POST /repos/X/Y/pulls/N/reviews`
-# の review body に埋め込まれる。本スクリプトは vibehawk bot の review を全件取得し、
-# `<!-- vibehawk:summary -->` と `<!-- vibehawk:sha=<hex> -->` マーカーを使って前回
-# サマリと前回 SHA を抽出し、incremental レビュー範囲を決定する。
-#
-# 入力 env:
-#   GH_TOKEN    — App installation token（vibehawk-for-<owner>[bot] 名義）
-#   PR_NUMBER   — 対象 PR の番号
-#   REPO        — owner/repo
-#   OWNER       — リポジトリオーナー名
-#   BASE_REF    — PR の base ブランチ名
-#
-# 出力 GITHUB_OUTPUT:
-#   incremental=true|false
-#   comment_id=<review id or empty>
-#   prev_sha=<hex or empty>
-#   review_range=<prev_sha..HEAD or base_sha..HEAD or empty>
+# Issue #121 で bundled review API に移行したため、サマリは review body に埋め込まれる。
+# <!-- vibehawk:summary --> と <!-- vibehawk:sha=<hex> --> マーカーで前回 SHA を特定し、
+# force push / rebase の場合は完全再レビューに切り替える。
 
 set -euo pipefail
 
@@ -32,16 +15,9 @@ set -euo pipefail
 
 BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
 
-# Issue #121: bundled review API へ移行
-# サマリは `POST /repos/X/Y/pulls/N/reviews` の review body に埋め込まれるため、
-# 前回サマリの検索元は pulls/reviews エンドポイントとなる。
-# 投稿者 ID + 種別マーカーの二重チェックで vibehawk の review を特定。
-# 旧 issue comment 形式のサマリ（Issue #121 以前）は無視されるが、誤判定はしない
-# （種別マーカー <!-- vibehawk:summary --> は review body にも引き続き含まれる）。
-# null は jq で空文字に変換（`.body // ""`）、複数ヒット時は submitted_at 最新を採用。
-# `gh api --paginate --jq` はページ単位で jq が評価され、複数ページに分散したレビューでは
-# 全件中の最新 1 件を正しく取得できないため、`--paginate` の生 JSON を `jq -cs`（slurp）で
-# ページ横断集約してから一括フィルタする（cli/cli#1268 / #10459 参照）。
+# `gh api --paginate --jq` はページ単位で jq を評価するためページ横断で最新を取れない。
+# 生 JSON を jq -cs でページ横断集約してから一括フィルタする（cli/cli#1268 / #10459）。
+# 旧 issue comment 形式（Issue #121 以前）は <!-- vibehawk:summary --> マーカーがないため自然に除外される。
 summary_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
   | jq -cs --arg bot "${BOT_LOGIN}" '
       [ .[][]
@@ -61,12 +37,11 @@ if [[ -z "${summary_json}" ]]; then
   exit 0
 fi
 
-# comment_id は GitHub Reviews API では review.id（PATCH 不可、bundled review 化により edit 経路は撤廃）。
-# 後方互換のため GITHUB_OUTPUT には残すが prompt 側では使わない（incremental は新規 review を都度作成）。
+# comment_id は後方互換のため GITHUB_OUTPUT に残すが prompt 側では使わない
+# （PATCH 不可・edit 経路は Issue #121 bundled review 移行で撤廃済み、incremental は都度新規作成）
 comment_id="$(echo "${summary_json}" | jq -r '.id')"
 body="$(echo "${summary_json}" | jq -r '.body')"
-# SHA マーカー <!-- vibehawk:sha=<hex> --> から SHA を抽出
-# （<!-- vibehawk:sha=abc123 --> から abc123 を取り出す）
+# <!-- vibehawk:sha=abc123 --> マーカーから SHA を抽出する
 prev_sha="$(echo "${body}" | grep -oE 'vibehawk:sha=[a-f0-9]+' | sed 's/vibehawk:sha=//' | head -1 || echo "")"
 
 if [[ -z "${prev_sha}" ]]; then
@@ -78,8 +53,8 @@ if [[ -z "${prev_sha}" ]]; then
   exit 0
 fi
 
-# force push / rebase 検出（仕様: docs/specification.md インクリメンタルレビュー実装パターン）
-# 前回 SHA が現ブランチに含まれていれば通常 push、含まれていなければ完全再レビュー
+# 前回 SHA が現ブランチの祖先に含まれていれば通常 push、含まれなければ force push / rebase と判断して完全再レビュー
+# 仕様: docs/specification.md インクリメンタルレビュー実装パターン
 if git cat-file -e "${prev_sha}^{commit}" 2>/dev/null && \
    git merge-base --is-ancestor "${prev_sha}" HEAD 2>/dev/null; then
   review_range="${prev_sha}..HEAD"

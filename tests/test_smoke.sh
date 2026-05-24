@@ -22,7 +22,6 @@ fail() {
 
 echo "=== vibehawk smoke test ==="
 
-# 必須ファイルの存在確認
 for f in README.md MVV.md .coderabbit.yaml .claude/vibecorp.yml; do
   if [[ -f "$f" ]]; then
     pass "$f が存在する"

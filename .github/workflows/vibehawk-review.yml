@@ -28,11 +28,11 @@ on:
     # Issue #160 撤回: `**/*.md` と `CHANGELOG*` は merge gate の品質ゲート対象
     # （specification.md / README / knowledge 等のレビュー必須）として paths-ignore から削除した。
     paths-ignore:
-      - '.github/dependabot.yml'  # 依存自動更新の設定変更そのもの
-      - 'package-lock.json'    # npm lock ファイル単独更新
-      - 'yarn.lock'            # yarn lock ファイル単独更新
-      - 'pnpm-lock.yaml'       # pnpm lock ファイル単独更新
-      - 'bun.lockb'            # bun lock ファイル単独更新
+      - '.github/dependabot.yml'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+      - 'bun.lockb'
 
 concurrency:
   group: vibehawk-${{ github.event.pull_request.number }}

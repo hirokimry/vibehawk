@@ -1,16 +1,8 @@
 #!/usr/bin/env bash
-# scripts/ci/common/jq-helpers.sh
+# 用途: jq の安全な文字列構築ヘルパー関数群
 #
-# jq の安全な使い方をまとめたヘルパー関数群。
-#
-# 重要な規約（`/vibecorp:ship` SKILL.md「制約」セクションより）:
-#   jq では string interpolation `\(...)` を使わない。
-#   Bash 上で `\` がエスケープ文字、`()` がサブシェルとして解釈され、
-#   意図しない展開やパースエラーを引き起こすため。必ず `+` で結合する。
-#
-# 推奨パターン（外部入力を含む JSON 文字列構築）:
-#   jq -n --arg prefix "件数: " --arg n "$count" '$prefix + $n'
-#   # NOT: jq -n --arg n "$count" '"件数: \($n)"'
+# jq の string interpolation `\(...)` は Bash 上で `\` と `()` が展開・解釈され
+# 意図しないパースエラーを起こすため、`+` 結合に統一する（shell.md 準拠）。
 #
 # 使用例:
 #   source "$(dirname "$0")/../common/jq-helpers.sh"
@@ -29,16 +21,8 @@ VIBEHAWK_CI_JQ_HELPERS_LOADED=1
 # shellcheck source=./log.sh
 . "$(dirname "${BASH_SOURCE[0]}")/log.sh"
 
-# 任意個数の文字列を `+` 結合で連結して 1 つの JSON 文字列値として stdout に出す。
-#
-# Usage: jq_concat <part1> [<part2> ...]
-#
-# 各 part は jq の `--arg` で渡されるため、Bash 側で特殊文字エスケープを意識する
-# 必要はない。jq の string interpolation `\(...)` は使わず、`+` で連結する。
-#
-# 例:
-#   jq_concat "件数: " "$count"
-#   #=> "件数: 42"  （jq の出力は double-quote 付き文字列）
+# 機能: 任意個数の文字列を jq の `+` 結合で連結し JSON 文字列として stdout に出す
+# 各 part を --arg で渡すため、Bash 側の特殊文字エスケープは不要。
 jq_concat() {
   if [[ $# -lt 1 ]]; then
     log_error "jq_concat: 少なくとも 1 つの引数が必要です"
@@ -61,15 +45,7 @@ jq_concat() {
   jq -n "${args[@]}" "$filter"
 }
 
-# 既存 JSON オブジェクトに「文字列値」のキーを追加する（jq の `+` でマージ）。
-#
-# Usage: jq_obj_set_str <json_object> <key> <string_value>
-#
-# - <json_object>: 例 `{"a":1}` または `{}`
-# - <key>: 例 `b`
-# - <string_value>: 例 `value`（任意の文字列、jq の `--arg` で安全に渡される）
-#
-# stdout に拡張済み JSON を流す。
+# 機能: 既存 JSON オブジェクトに文字列値のキーを追加する（jq `+` でマージ）
 jq_obj_set_str() {
   local base="${1:-}"
   local key="${2:-}"

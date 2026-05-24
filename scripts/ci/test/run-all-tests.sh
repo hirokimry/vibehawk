@@ -1,19 +1,8 @@
 #!/usr/bin/env bash
-# scripts/ci/test/run-all-tests.sh
+# 用途: test.yml の全テスト実行ステップ本体（Issue #179）
 #
-# test workflow（`.github/workflows/test.yml`）の "全テスト実行" ステップ。
-# tests/test_*.sh を全件実行し、いずれかが失敗したら終了コード 1 で終わる。
-#
-# 切り出し元: test.yml の "全テスト実行" ステップ（Issue #179）。
-# 同等のロジックは release.yml の "テスト実行" にもあるが、各 workflow の
-# 責務を分離するため scripts/ci/release/run-tests.sh と本ファイルに二重配置する。
-#
-# 使用例（workflow から）:
-#   - name: 全テスト実行
-#     run: bash scripts/ci/test/run-all-tests.sh
-#
-# 入力: なし（カレントディレクトリがリポジトリルートである前提）
-# 出力: stdout に各テストの実行ログ。終了コードでテスト全体の成否を返す。
+# 同等ロジックが scripts/ci/release/run-tests.sh にも存在するが、各 workflow の
+# 責務を分離するため二重配置する（短く保ち、将来の divergence の余地を残す）。
 
 set -euo pipefail
 

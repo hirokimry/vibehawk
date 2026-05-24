@@ -50,7 +50,6 @@ fi
 EOF
 chmod +x "$STUB_DIR/gh"
 
-# テスト 1: payload 揃い + 正常 event → POST 実行
 rm -f "$EVENT_FILE" "$BODY_FILE" "$LOG_FILE"
 printf 'APPROVE\n' > "$EVENT_FILE"
 printf '🦅 vibehawk: 再レビュー本文\n<!-- vibehawk:summary -->\n<!-- vibehawk:sha=abc -->\n' > "$BODY_FILE"
@@ -76,7 +75,6 @@ else
   fail "POST stdin の JSON が想定と異なる: $(tr '\n' '|' < "$LOG_FILE" | head -c 400)"
 fi
 
-# テスト 2: payload 片方欠落 → exit 0 + ::warning::
 rm -f "$EVENT_FILE" "$BODY_FILE" "$LOG_FILE"
 printf 'APPROVE\n' > "$EVENT_FILE"
 touch "$LOG_FILE"
@@ -93,7 +91,6 @@ else
   fail "payload 欠落時の挙動が想定と異なる: exit=$code2, out='$out2'"
 fi
 
-# テスト 3: 不正な event → exit 1 + ::error::
 rm -f "$EVENT_FILE" "$BODY_FILE" "$LOG_FILE"
 printf 'COMMENTED\n' > "$EVENT_FILE"
 printf 'body text\n' > "$BODY_FILE"
@@ -111,7 +108,6 @@ else
   fail "不正 event 時の挙動が想定と異なる: exit=$code3, out='$out3'"
 fi
 
-# テスト 4: body 空 → exit 1 + ::error::
 rm -f "$EVENT_FILE" "$BODY_FILE" "$LOG_FILE"
 printf 'APPROVE\n' > "$EVENT_FILE"
 printf ' ' > "$BODY_FILE"
@@ -129,7 +125,6 @@ else
   fail "空 body 時の挙動が想定と異なる: exit=$code4, out='$out4'"
 fi
 
-# テスト 5: 改行混じり event の正規化（event 文字列の前後空白除去）
 rm -f "$EVENT_FILE" "$BODY_FILE" "$LOG_FILE"
 printf '  REQUEST_CHANGES  \n\n' > "$EVENT_FILE"
 printf 'body\n' > "$BODY_FILE"
