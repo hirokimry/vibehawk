@@ -137,6 +137,7 @@ vibehawk は PR が作成・更新されるたびに以下を実行する:
 
 - **required status check**: `vibehawk` 名で check run を post（**merge gate 主軸**、Issue #121-C1 / #138。投稿者: `github-actions[bot]`、認証: workflow デフォルト `GITHUB_TOKEN` + `permissions.checks: write`）
 - **PR レビューサマリ**: PR 単位の総評コメントを review summary として `vibehawk-for-<owner>[bot]` 名義で投稿
+- **sticky walkthrough コメント**（Issue #219、CodeRabbit 模倣）: PR ごとに 1 個固定の issue-comment を `<!-- vibehawk:sticky -->` マーカーで識別し、push のたびに `PATCH` で同じコメントを更新する。CEO は PR を開いた瞬間に最新の検出結果（severity 集計表 + 主要指摘 + Walkthrough）を 1 箇所で掴める。**skip-mark で paths-ignore マッチ時も「⏭️ レビュー対象なし」サマリで sticky を更新する**（案 B 採用、古い状態の sticky 残置を防ぐ）。
 - **インライン指摘**: 行レベルの severity 付きコメント（CodeRabbit 互換 5 段階: 🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info）
 - **approve / request_changes**: **補助情報** として post（merge gating には使わない、`required_approving_review_count` バイパス回避のため）
 - **@mention チャット応答**: PR コメントで `@vibehawk-for-<owner>` メンションすると応答
