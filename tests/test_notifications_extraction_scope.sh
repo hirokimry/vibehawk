@@ -90,7 +90,11 @@ else
 fi
 
 if [[ -z "$TEMPLATE_HITS" ]]; then
-  pass "templates/.github/workflows: 切り出し候補なし"
+  if [[ -d "templates/.github/workflows" ]]; then
+    pass "templates/.github/workflows: 切り出し候補なし"
+  else
+    pass "templates/.github/workflows: ディレクトリ不在（対象外）"
+  fi
 else
   fail "templates/.github/workflows: 切り出し候補を検出"
   echo "$TEMPLATE_HITS" | sed 's/^/    /'
