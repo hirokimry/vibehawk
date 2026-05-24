@@ -59,6 +59,7 @@ jq --arg ev "$DECIDED_EVENT" '.event = $ev' "$PAYLOAD" > "$OVERRIDDEN" && mv "$O
 # 既存 validation（line 22-38）の `.body | length > 0` は変更しない。validation は Claude の
 # 非空 body を従来通り検査し、validation 通過後にここで空に上書きする。
 if [[ "$DECIDED_EVENT" == "APPROVE" ]]; then
+  # APPROVE 時は body と comments を空に上書きしてから POST する（Issue #222）
   jq '.body = "" | .comments = []' "$PAYLOAD" > "$OVERRIDDEN" && mv "$OVERRIDDEN" "$PAYLOAD"
   echo "vibehawk: DECIDED_EVENT=APPROVE のため body と comments を空に上書きしました（CodeRabbit 模倣、サマリは sticky comment 経路で残る、Issue #222）"
 fi
