@@ -79,7 +79,11 @@ if [ -n "$STRUCTURED_OUTPUT" ]; then
   findings_count=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '
     [.comments[]? | select((.body // "") | (startswith("🔴") or startswith("🟠")))] | length')
   if [ "${findings_count:-0}" -gt 0 ]; then
-    printf '### 🚨 主要指摘（上位 %s 件）\n\n' "${findings_count}"
+    display_count="$findings_count"
+    if [ "$display_count" -gt 10 ]; then
+      display_count=10
+    fi
+    printf '### 🚨 主要指摘（上位 %s 件）\n\n' "${display_count}"
     printf '%s' "$STRUCTURED_OUTPUT" | jq -r '
       [.comments[]? | select((.body // "") | (startswith("🔴") or startswith("🟠")))]
       | .[:10]

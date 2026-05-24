@@ -43,6 +43,7 @@ MATCHES=$(printf '%s' "$EXISTING" | jq -cs --arg bot1 "$BOT_LOGIN_APP" --arg bot
   [ .[][]
     | select(.user.login == $bot1 or .user.login == $bot2)
     | select((.body // "") | startswith("<!-- This is an auto-generated comment: sticky-summary by vibehawk -->"))
+    | select((.body // "") | contains("<!-- vibehawk:sticky -->"))
   ]
   | sort_by(.created_at)
 ')

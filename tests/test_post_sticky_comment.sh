@@ -49,8 +49,8 @@ setup_gh_stub() {
 echo "\$@" >> "${TMPDIR_ROOT}/gh-calls.log"
 case "\$*" in
   *--paginate*) cat "${TMPDIR_ROOT}/list-response.json"; exit 0 ;;
-  *"-X POST"*) echo POST >> "${TMPDIR_ROOT}/post-count.log"; printf '{"id":99,"html_url":"https://example.com/c/99"}\n'; exit 0 ;;
-  *"-X PATCH"*) echo PATCH >> "${TMPDIR_ROOT}/patch-count.log"; printf '{"id":99,"html_url":"https://example.com/c/99"}\n'; exit 0 ;;
+  *"-X POST"*) cat >/dev/null; echo POST >> "${TMPDIR_ROOT}/post-count.log"; printf '{"id":99,"html_url":"https://example.com/c/99"}\n'; exit 0 ;;
+  *"-X PATCH"*) cat >/dev/null; echo PATCH >> "${TMPDIR_ROOT}/patch-count.log"; printf '{"id":99,"html_url":"https://example.com/c/99"}\n'; exit 0 ;;
   *"-X DELETE"*) echo DELETE >> "${TMPDIR_ROOT}/delete-count.log"; exit 0 ;;
 esac
 exit 0
@@ -82,7 +82,7 @@ else
 fi
 
 echo "Case B: 1 件マッチ → PATCH 1 回"
-setup_gh_stub '[{"id":111,"created_at":"2026-01-01T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\nold"}]'
+setup_gh_stub '[{"id":111,"created_at":"2026-01-01T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\n<!-- vibehawk:sticky -->\nold"}]'
 run_script
 if [[ "$(count_lines post-count.log)" == "0" && "$(count_lines patch-count.log)" == "1" && "$(count_lines delete-count.log)" == "0" ]]; then
   pass "Case B (POST=0, PATCH=1, DELETE=0)"
@@ -92,8 +92,8 @@ fi
 
 echo "Case C: 2 件マッチ（race condition） → DELETE 1 + PATCH 1"
 setup_gh_stub '[
-  {"id":111,"created_at":"2026-01-01T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\nold1"},
-  {"id":222,"created_at":"2026-01-02T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\nold2"}
+  {"id":111,"created_at":"2026-01-01T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\n<!-- vibehawk:sticky -->\nold1"},
+  {"id":222,"created_at":"2026-01-02T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\n<!-- vibehawk:sticky -->\nold2"}
 ]'
 run_script
 if [[ "$(count_lines post-count.log)" == "0" && "$(count_lines patch-count.log)" == "1" && "$(count_lines delete-count.log)" == "1" ]]; then
@@ -104,9 +104,9 @@ fi
 
 echo "Case D: 3 件マッチ → DELETE 2 + PATCH 1"
 setup_gh_stub '[
-  {"id":111,"created_at":"2026-01-01T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\nold1"},
-  {"id":222,"created_at":"2026-01-02T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\nold2"},
-  {"id":333,"created_at":"2026-01-03T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\nold3"}
+  {"id":111,"created_at":"2026-01-01T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\n<!-- vibehawk:sticky -->\nold1"},
+  {"id":222,"created_at":"2026-01-02T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\n<!-- vibehawk:sticky -->\nold2"},
+  {"id":333,"created_at":"2026-01-03T00:00:00Z","user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\n<!-- vibehawk:sticky -->\nold3"}
 ]'
 run_script
 if [[ "$(count_lines post-count.log)" == "0" && "$(count_lines patch-count.log)" == "1" && "$(count_lines delete-count.log)" == "2" ]]; then
@@ -136,7 +136,7 @@ else
 fi
 
 echo "Case F: github-actions[bot] 名義の skip-mark sticky も検出される (CPO 提案 2)"
-setup_gh_stub '[{"id":444,"created_at":"2026-01-01T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\nskip-mark old"}]'
+setup_gh_stub '[{"id":444,"created_at":"2026-01-01T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"<!-- This is an auto-generated comment: sticky-summary by vibehawk -->\n<!-- vibehawk:sticky -->\nskip-mark old"}]'
 run_script
 if [[ "$(count_lines post-count.log)" == "0" && "$(count_lines patch-count.log)" == "1" && "$(count_lines delete-count.log)" == "0" ]]; then
   pass "Case F (github-actions[bot] 名義検出: POST=0, PATCH=1, DELETE=0)"

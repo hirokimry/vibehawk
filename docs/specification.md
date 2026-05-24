@@ -501,12 +501,15 @@ CodeRabbit は issue-comment とは **別経路で PR description 本体も stic
 
 #### グループ 4: 対話・横断記憶系（4 機能）
 
-| # | 未実装機能 | 一言で言うと | 将来実装時に必要な追加要素 |
-|---|---------|---------|----------------------|
-| 15 | `@coderabbitai` chat / Q&A | コメントで bot に質問・議論できる | issue_comment webhook + LLM 対話モード |
-| 16 | Reply to inline thread comments | ユーザーが inline スレッドに返信すると bot が自動応答 | issue_comment_review webhook 受信 |
-| 17 | Auto-close conversations | 修正が適用されたら bot が自動で resolve | diff 解析 + コミット履歴判定 |
-| 18 | `@vibehawk` 系コマンド対応 | コメントに `@vibehawk review` 等と書いて呼び出す機能 | issue_comment webhook 受信 workflow + コマンドパーサ |
+> [!NOTE]
+> vibehawk は既に **`@vibehawk-for-<owner>` メンションへの単発応答**（前述「§@mention チャット応答」および §補助機能）を実装済み。本グループの「未実装」はそれを超えた CodeRabbit 互換の拡張機能を指す。境界は各項の「未実装の範囲」列で明示する。
+
+| # | 未実装機能 | 未実装の範囲（既存 `@mention` 単発応答との境界） | 将来実装時に必要な追加要素 |
+|---|---------|--------------------------------------------|----------------------|
+| 15 | `@coderabbitai` chat / Q&A | 既存の `@mention` 単発応答は実装済み。未実装は **複数ターン会話・任意 Q&A・コードベース横断理解付き応答**（CodeRabbit 同等の対話モード） | LLM 対話モード + 会話履歴保持 |
+| 16 | Reply to inline thread comments | 既存の `@mention` は **PR コメント** への応答のみ。未実装は **inline review thread への bot 自動応答**（ユーザー返信を検知して bot が thread 内で返す） | `pull_request_review_comment` webhook 受信経路 |
+| 17 | Auto-close conversations | 既存 `auto_resolve` は bot 自身の review thread を bot 視点で解決のみ。未実装は **修正適用を diff 解析で検知して thread を自動 resolve**（ユーザー commit の影響評価） | diff 解析 + コミット履歴判定 |
+| 18 | `@vibehawk` 系構造化コマンド対応 | 既存の `@mention` は単発質問のみ。未実装は **`@vibehawk review` / `full review` / `pause` / `ignore` / `summary` 等の構造化コマンド** | `issue_comment` webhook + コマンドパーサ |
 
 これらは別 Issue で順次検討する（本 Issue #219 のスコープ外）。
 
