@@ -38,9 +38,6 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 run_in() {
-  # Usage: run_in <workdir> <files_count|__UNSET__>
-  # __UNSET__ を渡した場合は env -u FILES_COUNT で子 env から明示除去して呼ぶ
-  # （単に FILES_COUNT="" を assign すると「空文字設定」となり、未設定検証にならない）。
   local workdir="$1" files_count="$2"
   local output_file="${TMP_ROOT}/github_output"
   : > "$output_file"
@@ -62,7 +59,6 @@ run_in() {
 
 OUT="${TMP_ROOT}/github_output"
 
-# シナリオ 1: .vibehawk.yaml 不在 → デフォルト値 + depth=full
 WORK1="${TMP_ROOT}/case1"
 mkdir -p "$WORK1"
 rc=$(run_in "$WORK1" 5)
@@ -78,7 +74,6 @@ else
   fail "デフォルトシナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
-# シナリオ 2: .vibehawk.yaml あり + language=ja + path_filters/instructions あり
 WORK2="${TMP_ROOT}/case2"
 mkdir -p "$WORK2"
 cat > "$WORK2/.vibehawk.yaml" <<'EOF'
@@ -111,7 +106,6 @@ if python3 -c "import yaml" 2>/dev/null; then
     fail ".vibehawk.yaml 読込シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
   fi
 
-  # シナリオ 3: depth=focused（FILES_COUNT が full_review_files 以上、focused_review_files 未満）
   rc=$(run_in "$WORK2" 20)
   if [[ "$rc" -eq 0 ]] && grep -qx "depth=focused" "$OUT"; then
     pass "FILES_COUNT=20 (10 ≤ < 50) → depth=focused"
@@ -119,7 +113,6 @@ if python3 -c "import yaml" 2>/dev/null; then
     fail "focused シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
   fi
 
-  # シナリオ 4: depth=lightweight（focused_review_files 以上、skip_inline_files 未満）
   rc=$(run_in "$WORK2" 100)
   if [[ "$rc" -eq 0 ]] && grep -qx "depth=lightweight" "$OUT"; then
     pass "FILES_COUNT=100 (50 ≤ < 1000) → depth=lightweight"
@@ -127,7 +120,6 @@ if python3 -c "import yaml" 2>/dev/null; then
     fail "lightweight シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
   fi
 
-  # シナリオ 5: depth=summary_only（skip_inline_files 以上）
   rc=$(run_in "$WORK2" 2000)
   if [[ "$rc" -eq 0 ]] && grep -qx "depth=summary_only" "$OUT"; then
     pass "FILES_COUNT=2000 (≥ 1000) → depth=summary_only"
@@ -138,7 +130,6 @@ else
   echo "  ! python3 + pyyaml が利用不可のため .vibehawk.yaml 読込シナリオをスキップ"
 fi
 
-# シナリオ 6a: FILES_COUNT="" (空文字設定) → 0 として扱い depth=full
 rc=$(run_in "$WORK1" "")
 if [[ "$rc" -eq 0 ]] \
    && grep -qx "files_count=0" "$OUT" \
@@ -148,7 +139,6 @@ else
   fail "FILES_COUNT='' シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
-# シナリオ 6b: FILES_COUNT 未設定 (env -u FILES_COUNT) → 0 として扱い depth=full
 # 子 env からの明示除去で「環境変数の真の未設定」を検証する（空文字設定とは別ケース）。
 rc=$(run_in "$WORK1" "__UNSET__")
 if [[ "$rc" -eq 0 ]] \
@@ -159,7 +149,6 @@ else
   fail "FILES_COUNT 未設定 (env -u) シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
-# シナリオ 7: GITHUB_OUTPUT 未設定 → 非 0 終了
 # GitHub Actions runner では GITHUB_OUTPUT が親シェル env から子へ継承されるため、
 # 単に「assign しない」だけでは不十分。env -u GITHUB_OUTPUT で子 env から明示除去する（PR #185 と同じパターン）。
 set +e

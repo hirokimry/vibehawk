@@ -42,7 +42,6 @@ STUB_DIR="${TMP_DIR}/stub"
 mkdir -p "$STUB_DIR"
 
 make_gh_stub() {
-  # 引数 1: gh api stdout として返す JSON（reviews 一覧 raw、jq -cs で集約される側）
   local payload_file="${TMP_DIR}/gh_payload.json"
   printf '%s' "$1" > "$payload_file"
   cat > "$STUB_DIR/gh" <<EOF
@@ -61,9 +60,6 @@ EOF
 }
 
 make_git_stub() {
-  # 引数 1: cat-file の exit code (0/1)
-  # 引数 2: merge-base --is-ancestor の exit code (0/1)
-  # 引数 3: merge-base origin/<base> HEAD の stdout
   local catfile_rc="$1" ancestor_rc="$2" base_sha="$3"
   cat > "$STUB_DIR/git" <<EOF
 #!/usr/bin/env bash
@@ -99,7 +95,6 @@ run_script() {
 
 OUT="${TMP_DIR}/github_output"
 
-# シナリオ 1: 前回サマリ未検出（reviews が空配列 = jq -cs で last // empty が空）
 make_gh_stub "[]"
 make_git_stub 0 0 ""
 rc=$(run_script)
@@ -113,7 +108,6 @@ else
   fail "未検出シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
-# シナリオ 2: 前回サマリあり + prev_sha がブランチに含まれる
 PREV_SHA="abc123def456"
 REVIEW_JSON=$(cat <<EOF
 [{"id": 999, "user": {"login": "vibehawk-for-hirokimry[bot]"}, "submitted_at": "2026-01-01T00:00:00Z", "body": "Summary text\n<!-- vibehawk:summary -->\n<!-- vibehawk:sha=${PREV_SHA} -->"}]
@@ -132,7 +126,6 @@ else
   fail "通常 push シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
-# シナリオ 3: 前回サマリあり + force push（cat-file or is-ancestor が失敗）→ base..HEAD
 make_gh_stub "$REVIEW_JSON"
 make_git_stub 1 1 "deadbeef00"
 rc=$(run_script)
@@ -145,7 +138,6 @@ else
   fail "force push シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
-# シナリオ 4: 前回サマリあり + SHA マーカー抽出失敗 → 完全再レビュー（incremental=false, prev_sha 空）
 REVIEW_NO_SHA=$(cat <<'EOF'
 [{"id": 1000, "user": {"login": "vibehawk-for-hirokimry[bot]"}, "submitted_at": "2026-01-01T00:00:00Z", "body": "Old summary without SHA marker\n<!-- vibehawk:summary -->"}]
 EOF
@@ -163,7 +155,6 @@ else
   fail "SHA マーカー欠落シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
-# シナリオ 5: 必須 env 欠落
 set +e
 PATH="$STUB_DIR:$PATH" GITHUB_OUTPUT="$OUT" REPO="x/y" PR_NUMBER=1 bash "$SCRIPT" >/dev/null 2>&1
 err_rc=$?

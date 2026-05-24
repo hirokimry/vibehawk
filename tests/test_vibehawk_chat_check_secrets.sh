@@ -28,7 +28,6 @@ else
   exit 1
 fi
 
-# テスト 1: 3 secrets 全揃い → ready=true、missing 行なし
 TMP1="$(mktemp)"
 trap 'rm -f "$TMP1"' EXIT
 APP_ID=app PRIVATE_KEY=key OAUTH_TOKEN=token GITHUB_OUTPUT="$TMP1" \
@@ -39,7 +38,6 @@ else
   fail "3 secrets 全揃い時の出力が想定と異なる: $(tr '\n' '|' < "$TMP1")"
 fi
 
-# テスト 2: 1 つ欠落 → ready=false、missing に欠落した変数名
 TMP2="$(mktemp)"
 APP_ID="" PRIVATE_KEY=key OAUTH_TOKEN=token GITHUB_OUTPUT="$TMP2" \
   bash "$SCRIPT" > /dev/null 2>&1
@@ -50,7 +48,6 @@ else
 fi
 rm -f "$TMP2"
 
-# テスト 3: 2 つ欠落 → 先頭スペースが除去された missing= 行
 TMP3="$(mktemp)"
 APP_ID="" PRIVATE_KEY="" OAUTH_TOKEN=token GITHUB_OUTPUT="$TMP3" \
   bash "$SCRIPT" > /dev/null 2>&1
@@ -61,7 +58,6 @@ else
 fi
 rm -f "$TMP3"
 
-# テスト 4: 全欠落 → 3 つ全てが missing= に並ぶ
 TMP4="$(mktemp)"
 APP_ID="" PRIVATE_KEY="" OAUTH_TOKEN="" GITHUB_OUTPUT="$TMP4" \
   bash "$SCRIPT" > /dev/null 2>&1
@@ -73,7 +69,6 @@ else
 fi
 rm -f "$TMP4"
 
-# テスト 5: 欠落時に ::warning:: が stdout に出る（GitHub Actions の warning 注釈）
 TMP5="$(mktemp)"
 warning_out="$(APP_ID="" PRIVATE_KEY="" OAUTH_TOKEN="" GITHUB_OUTPUT="$TMP5" \
   bash "$SCRIPT" 2>&1)"
@@ -84,7 +79,6 @@ else
 fi
 rm -f "$TMP5"
 
-# テスト 6: 全揃い時には ::warning:: が出ない
 TMP6="$(mktemp)"
 warning_out2="$(APP_ID=a PRIVATE_KEY=b OAUTH_TOKEN=c GITHUB_OUTPUT="$TMP6" \
   bash "$SCRIPT" 2>&1)"

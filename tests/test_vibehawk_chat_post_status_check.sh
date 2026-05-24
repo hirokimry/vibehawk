@@ -28,13 +28,9 @@ else
   exit 1
 fi
 
-# 共通: gh スタブを差し替えてテスト
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
 
-# 共通スタブテンプレ書き出し関数
-# REVIEW_FIXTURE: gh api repos/.../pulls/<n>/reviews で返す JSON 配列
-# PULL_FIXTURE: gh api repos/.../pulls/<n> で返す JSON
 make_stub() {
   local review_json="$1"
   local pull_json="$2"
@@ -69,7 +65,6 @@ EOF
   chmod +x "$STUB_DIR/gh"
 }
 
-# テスト 1: APPROVED review → conclusion=success
 LOG1="$(mktemp)"
 make_stub '[{"user":{"login":"vibehawk-for-owner[bot]"},"state":"APPROVED","body":"OK","submitted_at":"2025-01-01T00:00:00Z"}]' \
   "abc123sha" \
@@ -77,13 +72,11 @@ make_stub '[{"user":{"login":"vibehawk-for-owner[bot]"},"state":"APPROVED","body
 PATH="$STUB_DIR:$PATH" \
   GH_TOKEN=dummy REPO="owner/repo" PR_NUMBER=200 OWNER="owner" \
   bash "$SCRIPT" > /dev/null 2>&1
-# 検証: check-runs POST 呼び出しに --field conclusion=success が含まれる
 if grep -Fxq "ARG:conclusion=success" "$LOG1"; then
   pass "APPROVED review → conclusion=success（check-runs POST）"
 else
   fail "APPROVED 時の conclusion が想定と異なる: $(tr '\n' '|' < "$LOG1" | head -c 500)"
 fi
-# title に APPROVED が含まれる
 if grep -F "output[title]=vibehawk: APPROVED" "$LOG1" > /dev/null; then
   pass "APPROVED 時の output[title] に APPROVED 文字列が含まれる"
 else
@@ -91,7 +84,6 @@ else
 fi
 rm -f "$LOG1"
 
-# テスト 2: CHANGES_REQUESTED review → conclusion=failure
 LOG2="$(mktemp)"
 make_stub '[{"user":{"login":"vibehawk-for-owner[bot]"},"state":"CHANGES_REQUESTED","body":"修正してください","submitted_at":"2025-01-01T00:00:00Z"}]' \
   "abc123sha" \
@@ -106,7 +98,6 @@ else
 fi
 rm -f "$LOG2"
 
-# テスト 3: review 未投稿（空配列）→ conclusion=neutral + 専用 title
 LOG3="$(mktemp)"
 make_stub '[]' "abc123sha" "$LOG3"
 PATH="$STUB_DIR:$PATH" \
@@ -124,8 +115,6 @@ else
 fi
 rm -f "$LOG3"
 
-# テスト 4: substantive review filter（空 COMMENTED → 採用しない、本物の APPROVED を採用）
-# 同一 bot から後で空 COMMENTED が来ても、substantive_review_json は APPROVED を選び続ける
 LOG4="$(mktemp)"
 make_stub '[
   {"user":{"login":"vibehawk-for-owner[bot]"},"state":"APPROVED","body":"OK","submitted_at":"2025-01-01T00:00:00Z"},
@@ -141,7 +130,6 @@ else
 fi
 rm -f "$LOG4"
 
-# テスト 5: 別 bot の review は無視される（user.login 完全一致のフィルタ）
 LOG5="$(mktemp)"
 make_stub '[{"user":{"login":"other-bot[bot]"},"state":"APPROVED","body":"...","submitted_at":"2025-01-01T00:00:00Z"}]' \
   "abc" "$LOG5"
@@ -155,7 +143,6 @@ else
 fi
 rm -f "$LOG5"
 
-# テスト 6: check-runs API へ name="vibehawk" / status="completed" / head_sha が渡る
 LOG6="$(mktemp)"
 make_stub '[{"user":{"login":"vibehawk-for-owner[bot]"},"state":"APPROVED","body":"OK","submitted_at":"2025-01-01T00:00:00Z"}]' \
   "headsha999" \

@@ -45,7 +45,6 @@ else
   fail "tests/test_*.sh が対象になっていない"
 fi
 
-# tests/ にファイルが無い空ディレクトリで実行 → exit 1
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 mkdir -p "${TMP_ROOT}/tests"

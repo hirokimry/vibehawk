@@ -26,7 +26,6 @@ JQ_HELPERS_SH="${REPO_ROOT}/scripts/ci/common/jq-helpers.sh"
 
 echo "=== scripts/ci/common/jq-helpers.sh 単体テスト ==="
 
-# 前提: jq-helpers.sh が存在する
 if [[ -f "$JQ_HELPERS_SH" ]]; then
   pass "scripts/ci/common/jq-helpers.sh が存在する"
 else
@@ -34,22 +33,19 @@ else
   exit 1
 fi
 
-# 前提: jq が利用可能
 if ! command -v jq > /dev/null; then
   fail "jq が PATH に存在しない（CI runner 設定の問題）"
   exit 1
 fi
 
-# jq_concat: 2 引数の結合
 out="$(bash -c "source '$JQ_HELPERS_SH'; jq_concat '件数: ' '42'")"
-# jq は double-quote 付き文字列を出すので "件数: 42" になる
+# jq 出力は double-quote 付き文字列
 if [[ "$out" == '"件数: 42"' ]]; then
   pass "jq_concat が 2 引数を + で結合する"
 else
   fail "jq_concat の 2 引数結合が想定と異なる: '$out'"
 fi
 
-# jq_concat: 3 引数の結合
 out2="$(bash -c "source '$JQ_HELPERS_SH'; jq_concat 'PR #' '175' ' のレビュー'")"
 if [[ "$out2" == '"PR #175 のレビュー"' ]]; then
   pass "jq_concat が 3 引数を + で結合する"
@@ -57,7 +53,6 @@ else
   fail "jq_concat の 3 引数結合が想定と異なる: '$out2'"
 fi
 
-# jq_concat: 1 引数のみ
 out3="$(bash -c "source '$JQ_HELPERS_SH'; jq_concat 'single'")"
 if [[ "$out3" == '"single"' ]]; then
   pass "jq_concat が 1 引数でも動く"
@@ -65,7 +60,6 @@ else
   fail "jq_concat の 1 引数挙動が想定と異なる: '$out3'"
 fi
 
-# jq_concat: 引数 0 でエラー
 set +e
 err_out="$(bash -c "source '$JQ_HELPERS_SH'; jq_concat" 2>&1)"
 err_code=$?
@@ -76,9 +70,7 @@ else
   fail "jq_concat の引数バリデーション挙動が想定と異なる: exit=$err_code, out='$err_out'"
 fi
 
-# jq_concat: 特殊文字を含む引数も安全に結合される
 out4="$(bash -c "source '$JQ_HELPERS_SH'; jq_concat 'a \"quoted\" ' 'value with \$dollar'")"
-# 期待: "a \"quoted\" value with $dollar"（jq 出力は double-quote 内のエスケープ）
 expected4='"a \"quoted\" value with $dollar"'
 if [[ "$out4" == "$expected4" ]]; then
   pass "jq_concat が特殊文字（quote / dollar）を安全に扱う"
@@ -86,10 +78,8 @@ else
   fail "jq_concat の特殊文字挙動が想定と異なる: 期待='$expected4', 実='$out4'"
 fi
 
-# jq_obj_set_str: 基本動作
+# jq_obj_set_str: jq -n が改行・空白を挿入することがあるため jq で正規化して比較
 out5="$(bash -c "source '$JQ_HELPERS_SH'; jq_obj_set_str '{\"a\":1}' 'b' 'value'")"
-# 期待: {"a":1,"b":"value"}
-# jq -n で出すと改行・空白挿入される可能性があるため、jq で正規化して比較
 normalized="$(echo "$out5" | jq -cS .)"
 if [[ "$normalized" == '{"a":1,"b":"value"}' ]]; then
   pass "jq_obj_set_str が既存オブジェクトに文字列キーを追加する"
@@ -97,7 +87,6 @@ else
   fail "jq_obj_set_str の結果が想定と異なる: '$out5' (normalized: '$normalized')"
 fi
 
-# jq_obj_set_str: 空オブジェクトに追加
 out6="$(bash -c "source '$JQ_HELPERS_SH'; jq_obj_set_str '{}' 'k' 'v'")"
 normalized6="$(echo "$out6" | jq -cS .)"
 if [[ "$normalized6" == '{"k":"v"}' ]]; then
@@ -106,7 +95,6 @@ else
   fail "jq_obj_set_str (空オブジェクト) の結果が想定と異なる: '$out6'"
 fi
 
-# jq_obj_set_str: base / key 不足でエラー
 set +e
 err_out2="$(bash -c "source '$JQ_HELPERS_SH'; jq_obj_set_str '{}'" 2>&1)"
 err_code2=$?
@@ -117,12 +105,9 @@ else
   fail "jq_obj_set_str の引数バリデーション挙動が想定と異なる: exit=$err_code2, out='$err_out2'"
 fi
 
-# 規約遵守確認: ヘルパー本体の **実コード行** に `\(` (string interpolation)
-# が含まれない。docstring / コメント（行頭が `#`、空白後の `#` 含む）には
-# 反面教師として `\(...)` を例示してよい。
+# ヘルパー本体の実コード行に \( (jq string interpolation) が含まれないことを確認
+# （コメント行は除外: awk で行頭 # 判定）
 non_comment_interp="$(grep -nE '\\\(' "$JQ_HELPERS_SH" | grep -v '^[[:space:]]*[0-9]*[[:space:]]*:[[:space:]]*#' || true)"
-# grep -n は "行番号:本文" 形式なので、本文の先頭が # （任意の前置空白あり）
-# である行は除外する
 non_comment_filtered="$(printf '%s\n' "$non_comment_interp" | awk -F: '{
   line=$0
   sub(/^[0-9]+:/, "", line)
@@ -136,7 +121,6 @@ else
   fail "jq-helpers.sh の実コード行に \\( が混入している:"$'\n'"$non_comment_filtered"
 fi
 
-# 多重 source 防止
 loaded_marker="$(bash -c "source '$JQ_HELPERS_SH'; echo \"\$VIBEHAWK_CI_JQ_HELPERS_LOADED\"")"
 if [[ "$loaded_marker" == "1" ]]; then
   pass "source 後に VIBEHAWK_CI_JQ_HELPERS_LOADED が 1 になる"

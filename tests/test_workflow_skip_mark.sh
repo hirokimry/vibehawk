@@ -43,7 +43,6 @@ POST_SH="${SCRIPTS_DIR}/post-skip-check-run.sh"
 
 echo "=== templates/.github/workflows/vibehawk-review-skip-mark.yml 検証 ==="
 
-# ファイル存在（前提: 不在なら全後続テスト無意味）
 if [[ -f "$WORKFLOW" ]]; then
   pass "templates/.github/workflows/vibehawk-review-skip-mark.yml が存在する"
 else
@@ -61,10 +60,8 @@ for sh in "$LIST_SH" "$CLASSIFY_SH" "$POST_SH"; do
   fi
 done
 
-# コメント行を除外したワークフロー本文（行頭 # を除外）
 WORKFLOW_BODY="$(awk '!/^[[:space:]]*#/' "$WORKFLOW")"
 
-# pull_request トリガー
 if echo "$WORKFLOW_BODY" | grep -E "^[[:space:]]*pull_request:" > /dev/null; then
   pass "pull_request トリガーが設定されている"
 else
@@ -80,21 +77,18 @@ for evt in opened synchronize ready_for_review review_requested; do
   fi
 done
 
-# concurrency
 if echo "$WORKFLOW_BODY" | grep -E "^concurrency:" > /dev/null; then
   pass "concurrency が設定されている"
 else
   fail "concurrency が設定されていない"
 fi
 
-# cancel-in-progress: true
 if echo "$WORKFLOW_BODY" | grep -E "cancel-in-progress:[[:space:]]*true" > /dev/null; then
   pass "cancel-in-progress: true が設定されている"
 else
   fail "cancel-in-progress が true でない"
 fi
 
-# 必須権限（最小）
 declare -a required_perms=(
   "checks:[[:space:]]*write"
   "pull-requests:[[:space:]]*read"
@@ -138,21 +132,18 @@ for i in "${!forbidden_perms[@]}"; do
   fi
 done
 
-# 禁止トリガー不在: pull_request_target
 if echo "$WORKFLOW_BODY" | grep -E "^[[:space:]]*pull_request_target:" > /dev/null; then
   fail "禁止トリガー 'pull_request_target' が設定されている"
 else
   pass "禁止トリガー 'pull_request_target' が設定されていない"
 fi
 
-# Fork PR 除外条件
 if echo "$WORKFLOW_BODY" | grep -F "github.event.pull_request.head.repo.full_name == github.repository" > /dev/null; then
   pass "Fork PR 除外条件が設定されている"
 else
   fail "Fork PR 除外条件 (head.repo.full_name == github.repository) が設定されていない"
 fi
 
-# draft skip
 if echo "$WORKFLOW_BODY" | grep -F "draft == false" > /dev/null; then
   pass "draft skip ロジックが設定されている"
 else
@@ -197,8 +188,6 @@ else
   fail "run: 行の総数 ($total_runs) とラッパー呼び出し行数 ($wrapper_runs) が一致しない（単行 inline shell が混入の疑い）"
 fi
 
-# paths-ignore 全マッチ判定の 5 パターン同期検証（vibehawk-review.yml と完全一致が必須）
-# 切り出し先の classify-paths-ignore.sh で case 文を検査する
 declare -a required_case_patterns=(
   '.github/dependabot.yml)'
   'package-lock.json|yarn.lock|pnpm-lock.yaml|bun.lockb)'
@@ -211,7 +200,6 @@ for pattern in "${required_case_patterns[@]}"; do
   fi
 done
 
-# vibehawk-review.yml の paths-ignore リストと数を照合（同期検証）
 VIBEHAWK_REVIEW_YML="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
 if [[ -f "$VIBEHAWK_REVIEW_YML" ]]; then
   paths_ignore_count=$(awk '
@@ -221,7 +209,6 @@ if [[ -f "$VIBEHAWK_REVIEW_YML" ]]; then
     END { print count }
   ' "$VIBEHAWK_REVIEW_YML")
 
-  # classify-paths-ignore.sh の case 文 branch 数とパターン総数
   case_branch_count=$(awk '
     /case[[:space:]]+"\$file"[[:space:]]+in/ { in_case = 1; next }
     in_case && /^[[:space:]]+esac/ { exit }
@@ -253,7 +240,6 @@ else
   fail "vibehawk-review.yml (${VIBEHAWK_REVIEW_YML}) が存在しないため同期検証不可"
 fi
 
-# check-run post の固定パラメータ（切り出し先 post-skip-check-run.sh で検査）
 if grep -F "name=vibehawk" "$POST_SH" > /dev/null; then
   pass "post-skip-check-run.sh で name=vibehawk が固定指定されている（branch protection 一致）"
 else
@@ -272,14 +258,12 @@ else
   fail "post-skip-check-run.sh で conclusion=success が固定指定されていない"
 fi
 
-# check-runs エンドポイント（切り出し先 post-skip-check-run.sh で検査）
 if grep -F "gh api -X POST" "$POST_SH" | grep -F "/check-runs" > /dev/null; then
   pass "post-skip-check-run.sh に check-runs API への POST が含まれる"
 else
   fail "post-skip-check-run.sh に check-runs API への POST が含まれない"
 fi
 
-# 同期コメント（保守者向け）— ファイル冒頭のハードコード同期コメント
 if grep -F "同期" "$WORKFLOW" > /dev/null && grep -F "vibehawk-review.yml" "$WORKFLOW" > /dev/null; then
   pass "保守者向け同期コメント（vibehawk-review.yml との同期必須）が含まれる"
 else
@@ -292,14 +276,12 @@ else
   fail "Issue #157 の出典コメントが含まれない"
 fi
 
-# GITHUB_TOKEN のみ使用（App Installation Token 不要）
 if grep -E 'GH_TOKEN:[[:space:]]*\$\{\{[[:space:]]*secrets\.GITHUB_TOKEN[[:space:]]*\}\}' "$WORKFLOW" > /dev/null; then
   pass "GH_TOKEN に secrets.GITHUB_TOKEN を使用している（App Installation Token 不要）"
 else
   fail "GH_TOKEN に secrets.GITHUB_TOKEN を使用していない"
 fi
 
-# App Installation Token を参照していないこと（経路 2 不要、最小権限）
 if grep -F "actions/create-github-app-token" "$WORKFLOW" > /dev/null; then
   fail "App Installation Token (actions/create-github-app-token) を参照している（skip-mark は GITHUB_TOKEN のみで動作すべき）"
 else

@@ -46,8 +46,6 @@ WORK_DIR="$(mktemp -d)"
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR" "$STUB_DIR"' EXIT
 
-# gh スタブ: gh_api_paginated 経由で `gh api --paginate <endpoint> --jq <filter>` を呼ぶ。
-# このスタブは固定のファイル一覧を 1 行 1 ファイルで stdout に流す。
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 # 引数を記録（args.log に追記）。printf 群は stderr 経由でログファイルに書き、

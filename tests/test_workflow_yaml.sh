@@ -412,7 +412,6 @@ fi
 MOCK_DIR="$(mktemp -d)"
 trap 'rm -rf "$MOCK_DIR"' EXIT
 
-# gh スタブを作成: 引数と stdin を記録するだけ
 cat > "$MOCK_DIR/gh" <<MOCK_EOF
 #!/usr/bin/env bash
 # 呼び出しログに引数を 1 行追記
@@ -429,7 +428,6 @@ MOCK_EOF
 chmod +x "$MOCK_DIR/gh"
 touch "$MOCK_DIR/gh_calls.log"
 
-# 環境変数を準備し、prompt のサンプル相当 bash を実行
 (
   export PATH="$MOCK_DIR:$PATH"
   export REPO="hirokimry/vibehawk"
@@ -438,14 +436,12 @@ touch "$MOCK_DIR/gh_calls.log"
   export REVIEW_BODY="test summary body"
   export HEAD_SHA="deadbeef1234567890abcdef1234567890abcdef"
 
-  # inline comments 配列（prompt の comments[] フォーマット）
   cat > "$MOCK_DIR/comments_array.json" <<'JSON'
 [
   {"path": "src/foo.ts", "line": 42, "side": "RIGHT", "body": "🟠 **Major**: test"}
 ]
 JSON
 
-  # prompt 内の bundled POST サンプルを実行（templates/.github/workflows/vibehawk-review.yml 内の指示と同一）
   jq -n \
     --arg event "$EVENT" \
     --arg body "$REVIEW_BODY" \
@@ -455,7 +451,6 @@ JSON
     | gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews" --input -
 )
 
-# 検証 1: POST /pulls/<PR>/reviews が 1 回呼ばれる
 post_count="$(grep -cE -- '-X POST repos/[^ ]+/pulls/[0-9]+/reviews' "$MOCK_DIR/gh_calls.log" || true)"
 if [[ "$post_count" -eq 1 ]]; then
   pass "bundled POST /pulls/N/reviews がランタイムでちょうど 1 回呼ばれる（Issue #121）"
@@ -463,7 +458,6 @@ else
   fail "bundled POST /pulls/N/reviews の呼出回数が想定外: ${post_count} 回（Issue #121、期待: 1）"
 fi
 
-# 検証 2: 旧経路 PATCH issues/comments が呼ばれていない
 patch_count="$(grep -cE -- '-X PATCH .*issues/comments' "$MOCK_DIR/gh_calls.log" || true)"
 if [[ "$patch_count" -eq 0 ]]; then
   pass "旧経路 gh api -X PATCH issues/comments がランタイムで呼ばれない（Issue #121）"

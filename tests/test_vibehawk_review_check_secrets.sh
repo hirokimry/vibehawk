@@ -37,7 +37,6 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 run_script() {
-  # Usage: run_script APP_ID PRIVATE_KEY OAUTH_TOKEN
   local app="${1:-}" key="${2:-}" tok="${3:-}"
   local output_file="${TMP_DIR}/github_output"
   : > "$output_file"

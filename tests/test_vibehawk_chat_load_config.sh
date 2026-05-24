@@ -45,7 +45,6 @@ SANDBOX="$(mktemp -d)"
 GITHUB_OUTPUT_FILE="$(mktemp)"
 trap 'rm -rf "$SANDBOX" "$GITHUB_OUTPUT_FILE"' EXIT
 
-# テスト 1: .vibehawk.yaml 不在 → language=en（フォールバック）
 (
   cd "$SANDBOX"
   : > "$GITHUB_OUTPUT_FILE"
@@ -57,7 +56,6 @@ else
   fail ".vibehawk.yaml 不在時の出力が想定と異なる: $(tr '\n' '|' < "$GITHUB_OUTPUT_FILE")"
 fi
 
-# テスト 2: .vibehawk.yaml に language: ja → language=ja
 (
   cd "$SANDBOX"
   cat > .vibehawk.yaml <<'EOF'
@@ -72,7 +70,6 @@ else
   fail ".vibehawk.yaml に language: ja 設定時の出力が想定と異なる: $(tr '\n' '|' < "$GITHUB_OUTPUT_FILE")"
 fi
 
-# テスト 3: .vibehawk.yaml は空 → language=en（jq // "en" フォールバック）
 (
   cd "$SANDBOX"
   : > .vibehawk.yaml
@@ -85,7 +82,6 @@ else
   fail "空 yaml 時の出力が想定と異なる: $(tr '\n' '|' < "$GITHUB_OUTPUT_FILE")"
 fi
 
-# テスト 4: .vibehawk.yaml に language キーなし → language=en
 (
   cd "$SANDBOX"
   cat > .vibehawk.yaml <<'EOF'
@@ -100,7 +96,6 @@ else
   fail "language キー不在時の出力が想定と異なる: $(tr '\n' '|' < "$GITHUB_OUTPUT_FILE")"
 fi
 
-# テスト 5: .coderabbit.yaml は読まない（Issue #172 fallback 撤廃の確認）
 (
   cd "$SANDBOX"
   rm -f .vibehawk.yaml

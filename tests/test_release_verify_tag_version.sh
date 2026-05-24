@@ -70,7 +70,6 @@ cat > "${TMPDIR_TEST}/repo/package.json" <<'EOF'
 }
 EOF
 
-# Case 1: GITHUB_REF_NAME 未設定 → 非 0
 set +e
 ( cd "${TMPDIR_TEST}/repo" && env -u GITHUB_REF_NAME bash "$SCRIPT" > /dev/null 2>&1 )
 exit_code=$?
@@ -81,7 +80,6 @@ else
   fail "GITHUB_REF_NAME 未設定でも成功してしまう"
 fi
 
-# Case 2: 一致（v プレフィックスあり）
 set +e
 ( cd "${TMPDIR_TEST}/repo" && GITHUB_REF_NAME="v1.2.3" bash "$SCRIPT" > /dev/null 2>&1 )
 exit_code=$?
@@ -92,7 +90,6 @@ else
   fail "一致しているのに exit $exit_code"
 fi
 
-# Case 3: 一致（v プレフィックスなし）
 set +e
 ( cd "${TMPDIR_TEST}/repo" && GITHUB_REF_NAME="1.2.3" bash "$SCRIPT" > /dev/null 2>&1 )
 exit_code=$?
@@ -103,7 +100,6 @@ else
   fail "v なし tag 一致でも exit $exit_code"
 fi
 
-# Case 4: 不一致
 set +e
 output=$(cd "${TMPDIR_TEST}/repo" && GITHUB_REF_NAME="v9.9.9" bash "$SCRIPT" 2>&1)
 exit_code=$?
@@ -119,7 +115,6 @@ else
   fail "::error::メッセージが想定と異なる: $output"
 fi
 
-# Case 5: 成功時の OK メッセージ + exit_code 検証
 set +e
 output=$(cd "${TMPDIR_TEST}/repo" && GITHUB_REF_NAME="v1.2.3" bash "$SCRIPT" 2>&1)
 exit_code=$?

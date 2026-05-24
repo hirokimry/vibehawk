@@ -37,42 +37,36 @@ done
 EOF
 chmod +x "$STUB_DIR/gh"
 
-# 実行
 PATH="$STUB_DIR:$PATH" \
   GH_TOKEN=dummy \
   ISSUE_NUMBER=42 \
   MISSING="VIBEHAWK_APP_ID VIBEHAWK_PRIVATE_KEY" \
   bash "$SCRIPT" > /dev/null
 
-# 1: gh issue comment <number> --body <body> の形で呼ばれる
 if grep -Fxq "issue" "$LOG_FILE" && grep -Fxq "comment" "$LOG_FILE" && grep -Fxq "42" "$LOG_FILE"; then
   pass "gh issue comment <ISSUE_NUMBER> 形式で呼び出される"
 else
   fail "gh issue comment の引数が想定と異なる: $(tr '\n' '|' < "$LOG_FILE")"
 fi
 
-# 2: --body フラグが渡される
 if grep -Fxq -- "--body" "$LOG_FILE"; then
   pass "--body フラグが渡される"
 else
   fail "--body フラグが不在"
 fi
 
-# 3: body 本文に欠落 secret の名前が埋め込まれる
 if grep -F "VIBEHAWK_APP_ID VIBEHAWK_PRIVATE_KEY" "$LOG_FILE" > /dev/null; then
   pass "body 本文に MISSING の値が埋め込まれる"
 else
   fail "body 本文に MISSING の値が埋め込まれない"
 fi
 
-# 4: body 本文に「のため応答をスキップしました」を含む
 if grep -F "のため応答をスキップしました" "$LOG_FILE" > /dev/null; then
   pass "body 本文に「のため応答をスキップしました」を含む（仕様文言）"
 else
   fail "body 本文の仕様文言が欠落"
 fi
 
-# 5: body 本文に「3 secrets」設定案内を含む
 if grep -F "3 secrets" "$LOG_FILE" > /dev/null && \
    grep -F "Settings で設定してください" "$LOG_FILE" > /dev/null; then
   pass "body 本文に 3 secrets 設定案内が含まれる"
