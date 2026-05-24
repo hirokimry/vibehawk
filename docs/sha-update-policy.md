@@ -1,12 +1,19 @@
 # claude-code-action SHA 更新ポリシー
 
-vibehawk-review.yml が依存する `anthropics/claude-code-action` の SHA pin を更新する際の評価・適用フローを定義する。CFO + CTO レビュー（2026-05-09、Issue #70）で指摘されたトークン消費回帰・breaking change・セキュリティパッチ追従漏れの 3 リスクを管理することが目的。
+> [!IMPORTANT]
+> `anthropics/claude-code-action` の SHA pin を更新する際の評価・適用フローを定義する。
+> 管理対象リスク: トークン消費回帰 / breaking change / セキュリティパッチ追従漏れ の 3 点。
+> 📍 根拠: CFO + CTO レビュー（2026-05-09、Issue #70）
 
 ## 1. 背景
 
-vibehawk は Mission「レビューツールに追加課金が要らない世界をつくる」を支えるため、利用者の Claude Pro / Max 枠で完結することを設計の前提としている（[`docs/design-philosophy.md`](design-philosophy.md) 参照）。`claude-code-action` の更新は、同じ PR サイズでも消費トークンが変動する可能性があり、利用者の枠を想定外に圧迫するリスクを伴う。
+vibehawk は Mission「レビューツールに追加課金が要らない世界をつくる」を支えるため、利用者の Claude Pro / Max 枠で完結することを設計の前提としている。
+📍 参照: [`docs/design-philosophy.md`](design-philosophy.md)
 
-また、SHA pin はサプライチェーン攻撃を防ぐ反面、上流のセキュリティパッチへの追従が遅れるトレードオフを内包する。本ポリシーで両者のバランスを取る。
+`claude-code-action` の更新は、同じ PR サイズでも消費トークンが変動する可能性があり、利用者の枠を想定外に圧迫するリスクを伴う。
+
+また、SHA pin はサプライチェーン攻撃を防ぐ反面、上流のセキュリティパッチへの追従が遅れるトレードオフを内包する。
+本ポリシーで両者のバランスを取る。
 
 ## 2. 更新トリガー
 
@@ -34,9 +41,9 @@ SHA 更新前に以下 3 項目を **必ず** 評価する。記録は `docs/sha
 
 **判定基準**:
 
-- 旧 SHA との比較で **20 % 以上増加** → 利用者向け影響評価ドキュメントを作成し、リリースノートに明記してから適用
-- 5 〜 20 % 増加 → CFO に報告、`docs/cost-analysis.md` の Variable Costs テーブルを更新
-- 5 % 未満 → 通常更新フロー
+- 旧 SHA との比較で **20 % 以上増加**: 利用者向け影響評価ドキュメントを作成し、リリースノートに明記してから適用。
+- **5 〜 20 % 増加**: CFO に報告、`docs/cost-analysis.md` の Variable Costs テーブルを更新。
+- **5 % 未満**: 通常更新フロー。
 
 ### 3.2 breaking change チェック（CTO 主管轄）
 
@@ -61,9 +68,10 @@ SHA 更新前に以下 3 項目を **必ず** 評価する。記録は `docs/sha
 
 ## 5. CI による検出（任意拡張）
 
-将来的に `.github/workflows/sha-update-check.yml` を追加し、`claude-code-action` の新リリース検知時に自動で Issue を起票する仕組みを検討する。本ポリシー策定時点では手動運用とする（CFO 月次レビュー時にチェック）。
+将来的に `.github/workflows/sha-update-check.yml` を追加し、`claude-code-action` の新リリース検知時に自動で Issue を起票する仕組みを検討する。
+本ポリシー策定時点では手動運用とする（CFO 月次レビュー時にチェック）。
 
-## 6. 関連
+## 6. 🔗 関連
 
 - [`docs/cost-analysis.md`](cost-analysis.md): Variable Costs テーブル（トークン消費の影響を反映）
 - [`docs/SECURITY.md`](SECURITY.md): npm 配布 / SHA pin の CISO Critical 条件

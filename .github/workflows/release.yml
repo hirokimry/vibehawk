@@ -47,29 +47,10 @@ jobs:
         run: npm ci
 
       - name: テスト実行
-        run: |
-          shopt -s nullglob
-          files=(tests/test_*.sh)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "テストファイルが見つかりません"
-            exit 1
-          fi
-          failed=0
-          for f in "${files[@]}"; do
-            echo "=== $f ==="
-            bash "$f" || failed=1
-          done
-          exit "$failed"
+        run: bash scripts/ci/release/run-tests.sh
 
       - name: tag と package.json version の整合確認
-        run: |
-          tag_version="${GITHUB_REF_NAME#v}"
-          pkg_version="$(node -p 'require("./package.json").version')"
-          if [ "$tag_version" != "$pkg_version" ]; then
-            echo "::error::tag ($tag_version) と package.json version ($pkg_version) が不一致"
-            exit 1
-          fi
-          echo "tag と version の整合確認 OK: $tag_version"
+        run: bash scripts/ci/release/verify-tag-version.sh
 
       - name: npm publish (provenance 付き、OIDC 経由)
         env:

@@ -1,10 +1,15 @@
 # vibehawk プロダクト仕様書
 
-> このドキュメントはプロダクトの公式仕様を定義する Source of Truth です。
+> [!IMPORTANT]
+> 本ドキュメントはプロダクトの公式仕様を定義する Source of Truth である。
+> 対象範囲: コア機能・アーキテクチャ・CLI 仕様・非機能要件。
+> 前提知識: `docs/design-philosophy.md`（設計思想）、`MVV.md`（Mission / Vision / Values）。
 
 ## 概要
 
-vibehawk は **追加課金ゼロの PR 自動レビュー OSS プロダクト** である。利用者が既に支払っている LLM サブスクリプション枠（Claude Pro / ChatGPT Plus 等）の **内側だけ** で動作し、AI レビュー専用 SaaS の月額や LLM API の従量課金を発生させない。CodeRabbit Pro / Greptile / PR-Agent 等への対比優位は「**追加課金ゼロ**」という構造的差別化に立脚する。
+vibehawk は追加課金ゼロの PR 自動レビュー OSS プロダクトである。
+利用者が既に支払っている LLM サブスクリプション枠（Claude Pro / ChatGPT Plus 等）の内側だけで動作し、AI レビュー専用 SaaS の月額や LLM API の従量課金を発生させない。
+CodeRabbit Pro / Greptile / PR-Agent 等への対比優位は「追加課金ゼロ」という構造的差別化に立脚する。
 
 ### 対象ユーザー
 
@@ -35,7 +40,8 @@ vibehawk は以下の利用者層を主要ターゲットとする:
 
 ### MVV との整合
 
-ターゲット市場の明示は Mission「レビューツールに追加課金が要らない世界をつくる」を **絞る** ものではなく、Mission の **適用範囲を明確化** するものである。エンタープライズ顧客が構造的に対象外となるのは、Pro/Max OAuth 経路に絞った Value 1「利用者の契約だけで、完結させる」の必然的な帰結であり、Mission との矛盾ではない。
+ターゲット市場の明示は Mission「レビューツールに追加課金が要らない世界をつくる」を絞るものではなく、Mission の適用範囲を明確化するものである。
+エンタープライズ顧客が構造的に対象外となるのは、Pro/Max OAuth 経路に絞った Value 1「利用者の契約だけで、完結させる」の必然的な帰結であり、Mission との矛盾ではない。
 
 ## 機能仕様
 
@@ -57,6 +63,32 @@ vibehawk は以下の利用者層を主要ターゲットとする:
 | @mention チャット応答 | 「@bot ここどうする？」に Bot が返事する（issue_comment トリガー） |
 | 状態管理（GitHub をストアとして使う） | PR コメント・resolved 状態などを GitHub 上で直接読み書きする |
 | status check 投稿（required status check） | **merge gate の主軸**。`check-runs` API で `vibehawk` という固定 name の check を post し、利用者は branch protection の `required_status_checks` に登録することで AI レビュー必須 merge gate を構築する。AI が `required_approving_review_count` をバイパスする構造を避けるため、approve / request_changes 経路ではなく status check 経路を主軸に置く設計（Issue #121-C1 / #138） |
+
+### 設定ソース仕様（Issue #10 / #172）
+
+vibehawk-review および vibehawk-chat の `vibehawk_config` step が読み込む設定ソースは `.vibehawk.yaml` 単独受付。
+
+| 観点 | 仕様 |
+|---|---|
+| 設定ファイル | `.vibehawk.yaml`（リポジトリルート、利用者が任意で配置） |
+| 不在時の挙動 | 下記 default 値で動作（設定ソース不在を許容） |
+| `source_label` 値域 | `vibehawk`（設定ファイルあり） / `default`（設定ファイル不在）の 2 値のみ。利用者向け表示はしない（Issue #170 で冒頭ノイズ行を撤去） |
+| 対象 workflow | `vibehawk-review.yml`（フル設定: language / size_limits / path_filters / path_instructions）と `vibehawk-chat.yml`（locale のみ: language） |
+
+#### default 値
+
+| キー | default |
+|---|---|
+| `language` | `en` |
+| `reviews.size_limits.full_review_files` | `30` |
+| `reviews.size_limits.focused_review_files` | `80` |
+| `reviews.size_limits.skip_inline_files` | `3000` |
+| `reviews.path_filters` | `[]` |
+| `reviews.path_instructions` | `[]` |
+
+#### Issue #172 における breaking change
+
+v0.1.0（Issue #10）で実装されていた `.coderabbit.yaml` 互換読み込みフォールバックは Issue #172 で撤廃された。`.coderabbit.yaml` だけを持つ利用者は、本変更後は default 挙動に倒れる（CodeRabbit と vibehawk は別プロダクトであり、vibehawk を利用するなら `.vibehawk.yaml` を配置するという CEO 確定方針）。移行先として `.vibehawk.yaml` を新規作成する（同スキーマ）。
 
 ### 補助機能
 
@@ -84,7 +116,8 @@ CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから
 
 ### メタデータ仕様
 
-サマリコメントに識別マーカーと SHA マーカーを HTML コメントとして埋め込む。Markdown レンダラーが描画しないため UI 上は不可視。
+サマリコメントに識別マーカーと SHA マーカーを HTML コメントとして埋め込む。
+Markdown レンダラーが描画しないため UI 上は不可視。
 
 ```markdown
 ## 📝 PR レビューサマリ
@@ -99,7 +132,9 @@ CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから
 | `<!-- vibehawk:summary -->` | 種別マーカー（Bot の PR 全体サマリであることを示す） |
 | `<!-- vibehawk:sha=<HEAD_SHA> -->` | 状態マーカー（前回どのコミットまで見たか） |
 
-サマリコメントの一意特定: 投稿者 ID（`vibehawk-for-<owner>[bot]`）+ 種別マーカーの **二重チェック** で誤検知・なりすましを排除する。投稿者 ID だけでは同一リポジトリの他 GitHub Actions ジョブが投稿したコメントと混在するため、種別マーカー (`<!-- vibehawk:summary -->`) との AND 条件で識別する。`<owner>` は利用者本人の GitHub アカウント名であり、リポジトリの owner 名と一致する（命名統制 Issue #25）。
+サマリコメントの一意特定は、投稿者 ID（`vibehawk-for-<owner>[bot]`）と種別マーカーの二重チェックで誤検知・なりすましを排除する。
+投稿者 ID だけでは同一リポジトリの他 GitHub Actions ジョブが投稿したコメントと混在するため、種別マーカー (`<!-- vibehawk:summary -->`) との AND 条件で識別する。
+`<owner>` は利用者本人の GitHub アカウント名であり、リポジトリの owner 名と一致する（命名統制 Issue #25）。
 
 ```bash
 gh api repos/:owner/:repo/issues/:pr/comments --paginate \
@@ -107,11 +142,14 @@ gh api repos/:owner/:repo/issues/:pr/comments --paginate \
   | jq 'sort_by(.created_at) | last'
 ```
 
-> 投稿者 ID は **利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token** で発行される `vibehawk-for-<owner>[bot]` 名義（経路 2 必須化、Issue #61 で確定）。CEO の GitHub App Private Key を利用者に配布する設計（Issue #22 で却下された旧設計）とは異なり、利用者自身の App の Private Key を **利用者本人が GitHub Settings UI で手動登録** する。判断根拠は `docs/secrets-handling.md` 参照。
+> 投稿者 ID は利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token で発行される `vibehawk-for-<owner>[bot]` 名義（経路 2 必須化、Issue #61 で確定）。
+> CEO の GitHub App Private Key を利用者に配布する設計（Issue #22 で却下された旧設計）とは異なり、利用者自身の App の Private Key を利用者本人が GitHub Settings UI で手動登録する。
+> 判断根拠は `docs/secrets-handling.md` 参照。
 
 ### マルチリポジトリ対応
 
-利用者リポジトリへの **workflow ファイル配置 + 3 secrets 手動登録** によるリポジトリ単位の有効化方式（経路 2 必須化、Issue #61）。Org 配下の各リポジトリに `vibehawk-review.yml` をコピーし、各リポジトリの secrets に 3 つを登録する。
+利用者リポジトリへの workflow ファイル配置 + 3 secrets 手動登録によるリポジトリ単位の有効化方式（経路 2 必須化、Issue #61）。
+Org 配下の各リポジトリに `vibehawk-review.yml` をコピーし、各リポジトリの secrets に 3 つを登録する。
 
 ```text
 利用者の Org / 個人（自身の vibehawk-for-<owner> App を 1 つ作成）
@@ -135,7 +173,7 @@ gh api repos/:owner/:repo/issues/:pr/comments --paginate \
 
 ### インクリメンタルレビュー実装パターン
 
-サマリは **edit して 1 個に保つ**、inline は **append で履歴を残す**、解決済み指摘は **auto_resolve で resolved に倒す** の 3 段運用。
+サマリは「edit して 1 個に保つ」、inline は「append で履歴を残す」、解決済み指摘は「auto_resolve で resolved に倒す」の 3 段運用。
 
 ```text
 [初回レビュー]
@@ -181,28 +219,65 @@ else
 fi
 ```
 
-> 注 1: base ブランチは `GITHUB_BASE_REF` 環境変数から取得する（pull_request イベント時に GitHub Actions が自動設定）。`main` 以外（`master` / `trunk` 等）のデフォルトブランチを持つリポジトリでも動作させるため `origin/main` ハードコードは避ける。
+> 注 1: base ブランチは `GITHUB_BASE_REF` 環境変数から取得する（pull_request イベント時に GitHub Actions が自動設定）。
+> `main` 以外（`master` / `trunk` 等）のデフォルトブランチを持つリポジトリでも動作させるため `origin/main` ハードコードは避ける。
 >
-> 注 2: GitHub Actions の shallow clone（`fetch-depth: 1` 等）では `$prev_sha` が履歴から欠落して `git merge-base --is-ancestor` が常に false を返し、意図せず force push 扱いになる場合がある。利用者の workflow では `actions/checkout` で `fetch-depth: 0` を指定するか、`git fetch --unshallow` でフォールバックすることを推奨する。
+> 注 2: GitHub Actions の shallow clone（`fetch-depth: 1` 等）では `$prev_sha` が履歴から欠落して `git merge-base --is-ancestor` が常に false を返し、意図せず force push 扱いになる場合がある。
+> 利用者の workflow では `actions/checkout` で `fetch-depth: 0` を指定するか、`git fetch --unshallow` でフォールバックすることを推奨する。
 
 ### sticky review state
 
-> **位置付け（Issue #138 / #121-C1 確定）**: 本節の approve / request_changes 発行は **補助情報**。利用者の merge gate 主軸は次節「status check 仕様」で定義される `vibehawk` check の conclusion 側にある。本節のロジックは sticky review state による状態同期と、conclusion 導出（次節 §「conclusion 導出表」）の input として残す。
+> [!NOTE]
+> **位置付け（Issue #138 / #121-C1 確定）**: 本節の approve / request_changes 発行は補助情報。
+> 利用者の merge gate 主軸は次節「status check 仕様」で定義される `vibehawk` check の conclusion 側にある。
+> 本節のロジックは sticky review state による状態同期と、conclusion 導出（次節 §「conclusion 導出表」）の input として残す。
 
-未解決の指摘が残っていれば「直して」（request_changes）、全部解決していれば「OK」（approve）を毎回発行し直す。状態は GitHub 側にあるので Bot 側の永続化不要。
+未解決の指摘が残っていれば「直して」（request_changes）、全部解決していれば「OK」（approve）を毎回発行し直す。
+状態は GitHub 側にあるので Bot 側の永続化不要。
+
+#### event 判定の責務分離（Issue #166 / #171）
+
+event (APPROVE / REQUEST_CHANGES) の判定は workflow step が決定論的に行う（Claude prompt は判定しない）。
+Claude が確率的応答で event を誤決定する余地を構造的に消すため、Issue #166 で判定ロジックを Claude prompt から専用 workflow step `decide_event` に移管した。
+さらに Issue #171 で判定ルール 2 段目を「Critical/Major のみ REQUEST_CHANGES」から「severity 不問・件数主軸」に変更した。
+
+| 責務 | 主体 |
+|------|------|
+| body（severity 別件数を含むサマリ）と `comments[]`（severity 絵文字を冒頭付与した inline 指摘）の生成 | Claude prompt |
+| `event` フィールド（schema 上の placeholder、`COMMENT` 固定で返す） | Claude prompt |
+| reviewThreads の unresolved 数取得（`gh api graphql`）と `comments[]` 総件数の集計（severity 不問、Issue #171） | workflow step `decide_event` |
+| 上記 2 つから event 値（APPROVE / REQUEST_CHANGES）を算出 | workflow step `decide_event` |
+| Claude が返した event placeholder を `decide_event` 出力で jq により上書きしてから bundled POST | workflow step `vibehawk bundled review を post` |
+
+判定ルール（workflow step 内、`templates/.github/workflows/vibehawk-review.yml` の `decide_event` step 実装と一致、Issue #171 で severity 不問・件数主軸に変更）:
 
 ```text
-[Step 1] gh api で PR の全 review thread を取得
-[Step 2] resolved / unresolved の数をカウント
-[Step 3] unresolved == 0 なら gh pr review --approve
-[Step 4] unresolved >= 1 なら gh pr review --request-changes
+[Step 1] gh api graphql で reviewThreads(first: 100) を取得し、isResolved == false の数を jq でカウント
+[Step 2] comments[] の総件数を jq の `[.comments[]?] | length` で集計（severity 不問、Issue #171）
+[Step 3] unresolved >= 1 → decided_event=REQUEST_CHANGES
+[Step 4] 新規 inline 指摘の総件数 >= 1 → decided_event=REQUEST_CHANGES（severity 不問、Issue #171）
+[Step 5] それ以外（unresolved == 0 かつ 新規 0 件）→ decided_event=APPROVE
+[Step 6] bundled POST step が jq --arg ev "$decided_event" '.event = $ev' で上書きしてから POST
 ```
+
+旧設計（Issue #121 時点）では上記 [Step 1]〜[Step 5] が Claude prompt 内で実行され、JSON の event フィールドに書き込まれていた。
+Issue #166 で判定主体を Claude → workflow step に移したことで、Claude の確率的応答に依存しない決定論的な event 決定が実現された。
+Issue #171 では更に判定ルール 2 段目を変更（`新規 Critical/Major >= 1` から `新規 inline 指摘の総件数 >= 1`）。
+
+> **挙動変更（Issue #171）**: 旧ルール（Issue #166 時点）では「新規 Critical/Major あり → REQUEST_CHANGES、Minor 以下は APPROVE」で vibehawk 自身が severity で「これは重要でないから APPROVE」と判定していた。
+> Issue #171 で「指摘する責務」と「修正対象とする判定の責務」を分離し、severity に依らず指摘が 1 件でもあれば REQUEST_CHANGES で利用者に通知する設計に変更（MVV Value 3「指摘する、強制しない」の純粋実現）。
+> これにより ⚪ Info / 🔵 Trivial / 🟡 Minor の指摘も REQUEST_CHANGES を引き起こすため、利用者が必ず指摘に気付ける。
+> 修正対象とするかの判断は利用者プロジェクト側（`.claude/rules/review-handling.md` の intent × severity マトリクス）で行う分担とする。
+> resolve されたら次の push で APPROVE に切り替わる（sticky review state は既存通り動く）。
 
 ### status check 仕様（Issue #121-C1、required status check による merge gating）
 
-> **位置付け（Issue #138 確定）**: 本節は vibehawk の **merge gate 主軸** を定義する。前節「sticky review state」の approve / request_changes 発行は補助情報であり、利用者が branch protection で実際に gate するのは本節の `vibehawk` status check の conclusion である（業界 4 社調査で確認された AI レビューの `required_approving_review_count` バイパス構造を回避する設計判断、Issue #138 / #136 / #137 議論参照）。
+> [!IMPORTANT]
+> **位置付け（Issue #138 確定）**: 本節は vibehawk の merge gate 主軸を定義する。
+> 前節「sticky review state」の approve / request_changes 発行は補助情報であり、利用者が branch protection で実際に gate するのは本節の `vibehawk` status check の conclusion である（業界 4 社調査で確認された AI レビューの `required_approving_review_count` バイパス構造を回避する設計判断、Issue #138 / #136 / #137 議論参照）。
 
-bundled review API の approve / request_changes 投稿（PR #122、補助情報）に加え、`POST /repos/X/Y/check-runs` API で **status check** を post する。bot review は GitHub の構造仕様により branch protection の required reviewers に count されないため、merge gating を確実に効かせるには status check 側で required 指定する必要がある（CodeRabbit が `required_status_checks: ["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
+bundled review API の approve / request_changes 投稿（PR #122、補助情報）に加え、`POST /repos/X/Y/check-runs` API で status check を post する。
+bot review は GitHub の構造仕様により branch protection の required reviewers に count されないため、merge gating を確実に効かせるには status check 側で required 指定する必要がある（CodeRabbit が `required_status_checks: ["CodeRabbit", "test"]` で行っているのと同じ仕組み）。
 
 #### check run の投稿者と認証経路（Issue #121-C1 fix）
 
@@ -214,10 +289,12 @@ bundled review API の approve / request_changes 投稿（PR #122、補助情報
 
 `vibehawk-for-<owner>` App の `checks: write` 権限経路は採用しない（PR #125 初版が依存していた経路）。理由:
 
-- App permission を後付け追加した場合、既に install 済の利用者は App を **再 install** しないと新権限が反映されない（GitHub 仕様）
-- claude-code-action の sub-agent permission model（`--allowedTools "Bash(gh api:*)"`）は POST 系の `gh api -X POST` を deny するケースが観測されており、Claude prompt 内 POST は信頼性が低い
+- App permission を後付け追加した場合、既に install 済の利用者は App を再 install しないと新権限が反映されない（GitHub 仕様）。
+- claude-code-action の sub-agent permission model（`--allowedTools "Bash(gh api:*)"`）は POST 系の `gh api -X POST` を deny するケースが観測されており、Claude prompt 内 POST は信頼性が低い。
 
-代わりに workflow.permissions の `checks: write`（デフォルト `GITHUB_TOKEN` に付与される）を使う設計とした。利用者は workflow ファイルを最新版に更新するだけで status check post が動作し、App 再 install は不要。check run の投稿者表示は `vibehawk-for-<owner>[bot]` ではなく `github-actions[bot]` になるが、check の `name` は `vibehawk` 固定のため branch protection 設定上の識別性は維持される。
+代わりに workflow.permissions の `checks: write`（デフォルト `GITHUB_TOKEN` に付与される）を使う設計とした。
+利用者は workflow ファイルを最新版に更新するだけで status check post が動作し、App 再 install は不要。
+check run の投稿者表示は `vibehawk-for-<owner>[bot]` ではなく `github-actions[bot]` になるが、check の `name` は `vibehawk` 固定のため branch protection 設定上の識別性は維持される。
 
 #### check run のメタデータ
 
@@ -232,26 +309,38 @@ bundled review API の approve / request_changes 投稿（PR #122、補助情報
 
 #### conclusion 導出表
 
-直前の vibehawk review（`vibehawk-for-<owner>[bot]` 投稿の最新 review、`gh api repos/X/Y/pulls/N/reviews --paginate` で `submitted_at` 最後尾を取得）の `state` から bash `case` で決定論的にマップする:
+直前の vibehawk review（`vibehawk-for-<owner>[bot]` 投稿の最新 review、`gh api repos/X/Y/pulls/N/reviews --paginate` で `submitted_at` 最後尾を取得）の `state` から bash `case` で決定論的にマップする。
 
 | 直前 review の `state` | conclusion | 意味 |
 |---|---|---|
 | `APPROVED` | `success` | merge OK（LLM が指摘なしと判断して承認） |
 | `CHANGES_REQUESTED` | `failure` | merge ブロック（未解決指摘あり） |
-| `COMMENTED` 等その他 | `success` | LLM がコードを観察し指摘なしと判断した結果（防御的扱い、Issue #162）|
+| `COMMENTED` 等その他 | `success` | bundled POST が成立した防御的経路（Issue #162 / Issue #166）|
 | review 未検出（レビュー実行前・スキップ・bundled POST 失敗） | `neutral` | informational（required check では failure 扱いされない） |
 
-> **Issue #162**: 旧表では `COMMENTED` 等を `neutral` にしていたが、コードが綺麗で指摘 0 件の PR で `vibehawk` check が灰色「未投稿」表示になり MVV「merge gate を構築する道具」に矛盾していた（PR #159 で実証）。Claude prompt 側で「指摘 0 件でも `event=APPROVE`・空 `comments[]` で JSON 書き出し義務」を明示することで通常経路は `APPROVED → success` で緑になる。`COMMENTED` を `success` に倒すのは Claude が `event` を誤決定した場合の防御的フォールバック。`neutral` は「レビュー未実行・bundled POST 失敗」のみに限定する。
+> **Issue #162 + Issue #166 + Issue #171 の合流**: 旧表では `COMMENTED` 等を `neutral` にしていたが、コードが綺麗で指摘 0 件の PR で `vibehawk` check が灰色「未投稿」表示になり MVV「merge gate を構築する道具」に矛盾していた（PR #159 で実証）。
+> Issue #162 で「指摘 0 件でも `event=APPROVE` を強制」する prompt 強化を行い、Issue #166 で event 判定そのものを workflow step (`decide_event`) に移管、Issue #171 で判定ルールを「severity 不問・件数主軸」に変更した。
+> 現在の設計では:
+> - Claude prompt は `event=COMMENT` placeholder を返す（schema enum 通過用、Issue #166）。
+> - workflow step `decide_event` が APPROVE / REQUEST_CHANGES を決定論的に算出し、bundled POST step が jq で `.event` を上書きしてから POST する。
+> - 通常経路は `decide_event` の判定により `APPROVED → success` または `CHANGES_REQUESTED → failure` で確定する。
+> - `COMMENTED → success` は防御的フォールバック: `decide_event` step の現行判定ルール（unresolved + 新規 inline 指摘の総件数 → REQUEST_CHANGES / それ以外 → APPROVE、severity 不問・件数主軸、Issue #171）は `COMMENT` を出力するコードパスを持たないため、通常運用では `COMMENTED` 経路は発生しない。`DECIDED_EVENT` が `COMMENT` として有効値で渡された場合などの限定的な防御経路でのみ到達する（`DECIDED_EVENT` 空時は `post-bundled-review.sh` が bundled POST 自体を skip するため `COMMENTED` 経路には到達せず、`neutral` 側に倒れる）。
+> - `neutral` は「レビュー未実行・bundled POST 失敗（`DECIDED_EVENT` 空 / 不正値で skip された場合を含む）」に限定する。
 
 `check_secrets` 未設定時は step 自体が `if: steps.check_secrets.outputs.ready == 'true'` ガードで skip され、check 自体が post されない（既存ガード継承）。
 
 #### paths-ignore 該当 PR への fallback（Issue #157、Issue #160 で範囲縮小）
 
-`vibehawk-review.yml` の `paths-ignore`（`.github/dependabot.yml` / `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` / `bun.lockb` の 5 パターン）に全マッチする PR では本 workflow 自体が GitHub Actions レベルで起動せず、上記の `vibehawk` status check post step も実行されない。これだけだと required status check `vibehawk` が永久未投稿で PR が構造的にマージ不能になる（PR #156 で観測）。
+`vibehawk-review.yml` の `paths-ignore`（`.github/dependabot.yml` / `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` / `bun.lockb` の 5 パターン）に全マッチする PR では本 workflow 自体が GitHub Actions レベルで起動せず、上記の `vibehawk` status check post step も実行されない。
+これだけだと required status check `vibehawk` が永久未投稿で PR が構造的にマージ不能になる（PR #156 で観測）。
 
-> **Issue #160（2026-05-17）で範囲縮小**: 当初 Issue #65 / PR #154 で同梱した `**/*.md` と `CHANGELOG*` は merge gate の品質ゲート対象（`specification.md` / `README.md` / `knowledge/*.md` 等のレビュー必須化）として paths-ignore から撤回した。Markdown / CHANGELOG ファイル変更にも `vibehawk` LLM レビューが走るようになった。利用者が Markdown レビュー実行による Claude Max クォータ消費増加を許容できない場合は、`.vibehawk.yaml` の `reviews.path_filters` で個別調整可能（Issue #10、本 paths-ignore とは直交）。
+> **Issue #160（2026-05-17）で範囲縮小**: 当初 Issue #65 / PR #154 で同梱した `**/*.md` と `CHANGELOG*` は merge gate の品質ゲート対象（`specification.md` / `README.md` / `knowledge/*.md` 等のレビュー必須化）として paths-ignore から撤回した。
+> Markdown / CHANGELOG ファイル変更にも `vibehawk` LLM レビューが走るようになった。
+> 利用者が Markdown レビュー実行による Claude Max クォータ消費増加を許容できない場合は、`.vibehawk.yaml` の `reviews.path_filters` で個別調整可能（Issue #10、本 paths-ignore とは直交）。
 
-これを解消するため、別 workflow `vibehawk-review-skip-mark.yml` が全 PR で起動し、変更ファイルが `vibehawk-review.yml` の `paths-ignore` パターンに全マッチする場合のみ `vibehawk` check を `success` で post する。マッチしない PR では skip-mark 側は no-op（vibehawk-review.yml 本体側が `vibehawk` を post するため競合しない）。これにより「lock ファイル単独更新 / dependabot 設定変更などの機械的更新 PR は LLM API コスト 0 を維持しつつ merge gate を通過できる」状態を実現する。
+これを解消するため、別 workflow `vibehawk-review-skip-mark.yml` が全 PR で起動し、変更ファイルが `vibehawk-review.yml` の `paths-ignore` パターンに全マッチする場合のみ `vibehawk` check を `success` で post する。
+マッチしない PR では skip-mark 側は no-op（vibehawk-review.yml 本体側が `vibehawk` を post するため競合しない）。
+これにより「lock ファイル単独更新 / dependabot 設定変更などの機械的更新 PR は LLM API コスト 0 を維持しつつ merge gate を通過できる」状態を実現する。
 
 skip-mark workflow の判定 case 文と `vibehawk-review.yml` の `paths-ignore` リストは二重定義のため、利用者がリストを編集する際は両方を手動同期する必要がある。同期は以下 3 箇所:
 
@@ -263,15 +352,18 @@ skip-mark workflow の判定 case 文と `vibehawk-review.yml` の `paths-ignore
 
 #### 利用者側オペ（branch protection への登録）
 
-`vibehawk` を required status check として branch protection に登録することは、**vibehawk 利用の根幹** である（merge gate 主軸を成立させる唯一の経路）。
+`vibehawk` を required status check として branch protection に登録することは、vibehawk 利用の根幹である（merge gate 主軸を成立させる唯一の経路）。
 
-利用者は `Settings → Branches → Branch protection rules` で対象ブランチ（通常 `main`）を編集し、`Require status checks to pass before merging` を ON にした上で、検索ボックスに `vibehawk` と入力して required に追加する。初回登録時は `vibehawk` check が未発火だと検索候補に出ないため、先にダミー PR を立てて check を発火させてから登録する手順となる（README `⚡ クイックスタート` の「3. branch protection に `vibehawk` を required status check 登録（vibehawk 利用の根幹）」参照）。
+利用者は `Settings → Branches → Branch protection rules` で対象ブランチ（通常 `main`）を編集し、`Require status checks to pass before merging` を ON にした上で、検索ボックスに `vibehawk` と入力して required に追加する。
+初回登録時は `vibehawk` check が未発火だと検索候補に出ないため、先にダミー PR を立てて check を発火させてから登録する手順となる（README `⚡ クイックスタート` 参照）。
 
-この登録を行わない場合、approve / request_changes は補助情報として post されるが、merge gate としては機能しない（bot review は branch protection の required reviewers に count されないため）。vibehawk を導入したら必ず本ステップを実施すること。
+この登録を行わない場合、approve / request_changes は補助情報として post されるが、merge gate としては機能しない（bot review は branch protection の required reviewers に count されないため）。
+vibehawk を導入したら必ず本ステップを実施すること。
 
 ### @mention チャット応答
 
-応答のたびにスレッド全体を `gh api` で読み直して、全コメントを LLM コンテキストに渡す。会話状態は GitHub のスレッド自体が保持する。
+応答のたびにスレッド全体を `gh api` で読み直して、全コメントを LLM コンテキストに渡す。
+会話状態は GitHub のスレッド自体が保持する。
 
 ```text
 利用者が @vibehawk でメンション
@@ -285,11 +377,11 @@ gh api でスレッド全コメント取得
 スレッドに新しいコメントとして応答を append
 ```
 
-経路 2 必須化（Issue #61）に伴い、`issue_comment` トリガーの workflow も `vibehawk-review.yml` と同一の認証経路で動作する:
+経路 2 必須化（Issue #61）に伴い、`issue_comment` トリガーの workflow も `vibehawk-review.yml` と同一の認証経路で動作する。
 
-- 投稿主体: `vibehawk-for-<owner>[bot]` 名義（App Installation Token 認証）
-- 起動条件: `@vibehawk` を含み、かつ投稿者が `vibehawk-for-` で始まる Bot 自身ではないこと（無限ループ防止）
-- 必要 secrets: `VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`（レビュー workflow と同一）
+- 投稿主体: `vibehawk-for-<owner>[bot]` 名義（App Installation Token 認証）。
+- 起動条件: `@vibehawk` を含み、かつ投稿者が `vibehawk-for-` で始まる Bot 自身ではないこと（無限ループ防止）。
+- 必要 secrets: `VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`（レビュー workflow と同一）。
 
 将来的にスレッド超肥大化に備え、`.vibehawk.yaml` で `chat.max_thread_comments`（デフォルト未設定 = 無制限）を後付け可能な構造にしておく。
 
@@ -297,7 +389,8 @@ gh api でスレッド全コメント取得
 
 ## やらない範囲（明示的除外）
 
-vibehawk の責務範囲外として **実装しない** 機能、および vibecorp 側に残す機能を明示する。判断軸は `docs/POLICY.md` の「プロダクト方針（5 大方針）」を参照。
+vibehawk の責務範囲外として実装しない機能、および vibecorp 側に残す機能を明示する。
+判断軸は `docs/POLICY.md` の「プロダクト方針（5 大方針）」を参照。
 
 ### やらない（実装しない）
 
@@ -329,7 +422,7 @@ vibehawk の責務範囲外として **実装しない** 機能、および vibe
 
 ### パフォーマンス
 
-- **ジョブタイムアウト**: GitHub Actions 標準の **6 時間**。LLM レビューには十分な余裕がある（実運用では数分〜数十分のオーダーで完了する想定）。
+- **ジョブタイムアウト**: GitHub Actions 標準の 6 時間。LLM レビューには十分な余裕がある（実運用では数分〜数十分のオーダーで完了する想定）。
 - **並列実行制御**: 利用者の workflow ファイルで `concurrency:` を宣言する。新しい push が来たら古いレビューを中止する設計を推奨。
 
 ```yaml
@@ -344,13 +437,17 @@ concurrency:
 
 #### 投稿者表示（経路 2 必須化、Issue #61 で確定）
 
-vibehawk が投稿するレビューコメント・review event（approve / request_changes）の投稿者は **`vibehawk-for-<owner>[bot]`** 名義に固定される（命名統制 Issue #25）。利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token（`actions/create-github-app-token@v2` 経由）で認証される。
+vibehawk が投稿するレビューコメント・review event（approve / request_changes）の投稿者は `vibehawk-for-<owner>[bot]` 名義に固定される（命名統制 Issue #25）。
+利用者ごとに独立した GitHub App `vibehawk-for-<owner>` の Installation Token（`actions/create-github-app-token@v2` 経由）で認証される。
 
-一方、merge gate 主軸である **status check（`vibehawk` という固定 name の check）の投稿者は `github-actions[bot]`** であり、認証経路はワークフローのデフォルト `GITHUB_TOKEN`（`permissions.checks: write` 付き）を使う（Issue #121-C1 fix、設計根拠は §「check run の投稿者と認証経路」参照）。投稿者表示が経路ごとに異なるが、check の `name` が `vibehawk` で固定されているため、利用者が branch protection 設定で識別する際の一貫性は維持される。
+一方、merge gate 主軸である status check（`vibehawk` という固定 name の check）の投稿者は `github-actions[bot]` であり、認証経路はワークフローのデフォルト `GITHUB_TOKEN`（`permissions.checks: write` 付き）を使う（Issue #121-C1 fix、設計根拠は §「check run の投稿者と認証経路」参照）。
+投稿者表示が経路ごとに異なるが、check の `name` が `vibehawk` で固定されているため、利用者が branch protection 設定で識別する際の一貫性は維持される。
 
-CEO の GitHub App Private Key を利用者に配布する設計（Issue #22 の旧実装）と異なり、**利用者自身が GitHub App Manifest Flow で自前の App を作成** し、その App の Private Key を **利用者本人が GitHub Settings UI で対象リポジトリの Secrets に手動登録** する。Private Key の漏洩影響は利用者本人のリポジトリに限定される（独立 App の構造的利点、`docs/secrets-handling.md` § 7 参照）。
+CEO の GitHub App Private Key を利用者に配布する設計（Issue #22 の旧実装）と異なり、利用者自身が GitHub App Manifest Flow で自前の App を作成し、その App の Private Key を利用者本人が GitHub Settings UI で対象リポジトリの Secrets に手動登録する。
+Private Key の漏洩影響は利用者本人のリポジトリに限定される（独立 App の構造的利点、`docs/secrets-handling.md` § 7 参照）。
 
-経路 2 必須化の判断根拠（業界比較 / GitHub 公式ガイドライン / CodeRabbit 事件の教訓 / MVV Value 1 整合）は `docs/secrets-handling.md` を参照。CLI による secret 自動書込はせず、3 secrets すべて利用者が GitHub Settings UI で手動登録する全手動方針（Issue #72 決定）を採用している。
+経路 2 必須化の判断根拠（業界比較 / GitHub 公式ガイドライン / CodeRabbit 事件の教訓 / MVV Value 1 整合）は `docs/secrets-handling.md` を参照。
+CLI による secret 自動書込はせず、3 secrets すべて利用者が GitHub Settings UI で手動登録する全手動方針（Issue #72 決定）を採用している。
 
 ### 可用性
 
@@ -383,14 +480,14 @@ vibehawk は npm パッケージとして CLI を提供する。利用者は `np
 
 ### セキュリティ要件（CISO Critical）
 
-- **localhost のみで完結**: vibehawk 運営側のサーバーには一切通信しない（`callback_urls` は localhost に固定）
-- **Private Key 非配布**: GitHub Manifest API が返却する Private Key を CLI が画面に印字・ファイル保存しない（メモリ上の参照は `[REDACTED]` で上書き）
-- **最小権限のみ要求**: `pull_requests: write` / `issues: write` / `contents: read`（`administration: write` / `secrets: write` / `workflows: write` / `id-token: write` は要求しない）
-- **App は public**: OSS として配布するため `public: true`
+- **localhost のみで完結**: vibehawk 運営側のサーバーには一切通信しない（`callback_urls` は localhost に固定）。
+- **Private Key 非配布**: GitHub Manifest API が返却する Private Key を CLI が画面に印字・ファイル保存しない（メモリ上の参照は `[REDACTED]` で上書き）。
+- **最小権限のみ要求**: `pull_requests: write` / `issues: write` / `contents: read`（`administration: write` / `secrets: write` / `workflows: write` / `id-token: write` は要求しない）。
+- **App は public**: OSS として配布するため `public: true`。
 
 ### App 命名規則（Issue #25 採用）
 
-`npx vibehawk install` で作成される GitHub App の名前は **`vibehawk-for-<owner>` 形式に固定** される（例: owner が `alice` なら App 名は `vibehawk-for-alice`、bot 表示は `vibehawk-for-alice[bot]`）。
+`npx vibehawk install` で作成される GitHub App の名前は `vibehawk-for-<owner>` 形式に固定される（例: owner が `alice` なら App 名は `vibehawk-for-alice`、bot 表示は `vibehawk-for-alice[bot]`）。
 
 | 観点 | 内容 |
 |---|---|
@@ -406,17 +503,18 @@ CLI 起動時に「⚠️ 命名統制」の旨を明示表示し、利用者が
 
 #### 推奨経路: `npx vibehawk setup` 1 コマンドで導入（Issue #91）
 
-対話型ウィザードが全 6 ステップを 1 コマンドに集約する:
+対話型ウィザードが全 6 ステップを 1 コマンドに集約する。
 
 ```bash
 npx vibehawk setup --owner <your-github-username> --repo <owner>/<repo>
 ```
 
-各ステップで「指示表示 → ブラウザで操作 → Enter → CLI が `gh api` 検証（読み取り専用）→ OK で次 / NG なら原因表示してリトライ・スキップ・中止」の Enter ゲートで進行する。CLI 自体は Anthropic に通信せず、secret を書き込まない。
+各ステップで「指示表示 → ブラウザで操作 → Enter → CLI が `gh api` 検証（読み取り専用）→ OK で次 / NG なら原因表示してリトライ・スキップ・中止」の Enter ゲートで進行する。
+CLI 自体は Anthropic に通信せず、secret を書き込まない。
 
 #### 個別実行（後方互換）: `install` / `setup-token` を使う場合
 
-`setup` ウィザードを使わず各ステップを個別実行する従来の手順も引き続き利用可能（`install` / `setup-token` サブコマンドは後方互換のため残す）:
+`setup` ウィザードを使わず各ステップを個別実行する従来の手順も引き続き利用可能（`install` / `setup-token` サブコマンドは後方互換のため残す）。
 
 | ステップ | コマンド / 操作 | 結果 |
 |---|---|---|
@@ -441,3 +539,14 @@ npx vibehawk setup --owner <your-github-username> --repo <owner>/<repo>
 | severity 5 段階 | Critical (🔴) / Major (🟠) / Minor (🟡) / Trivial (🔵) / Info (⚪) の 5 段階で重大度を判定する。各レベルの定義は `.claude/rules/severity/claude-action.md`（vibecorp 実体版、CodeRabbit 公式仕様と完全一致）を参照 |
 | インクリメンタルレビュー | 2 回目以降のレビューで前回見た範囲を記憶し、差分のみ見る挙動 |
 | sticky review state | 未解決指摘ありなら request_changes、全解決なら approve に切り替わる仕組み |
+
+## 🔗 関連
+
+- 設計思想・設計判断の根拠: `docs/design-philosophy.md`
+- ファイル配置ポリシー: `docs/file-placement.md`
+- セキュリティポリシー: `docs/SECURITY.md`
+- 秘密情報配布方式の判断根拠: `docs/secrets-handling.md`
+- トラブルシューティング: `docs/troubleshooting.md`
+- 経路 2 影響評価: `docs/route2-impact-analysis.md`
+- AI レビュー依存マップ: `docs/ai-review-dependency.md`
+- プロダクト方針 5 大方針: `docs/POLICY.md`

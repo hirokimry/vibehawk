@@ -21,9 +21,7 @@ permissions:
 jobs:
   chat:
     runs-on: ubuntu-latest
-    # 起動条件:
-    # - コメント本文に @vibehawk を含む
-    # - 投稿者が vibehawk-for-* Bot 自身ではない（無限ループ防止）
+    # Bot 自身のメンションで再発火する無限ループを防止する
     if: |
       contains(github.event.comment.body, '@vibehawk') &&
       !startsWith(github.event.comment.user.login, 'vibehawk-for-')
@@ -39,18 +37,7 @@ jobs:
           APP_ID: ${{ secrets.VIBEHAWK_APP_ID }}
           PRIVATE_KEY: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
           OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: |
-          missing=""
-          if [[ -z "$APP_ID" ]]; then missing="$missing VIBEHAWK_APP_ID"; fi
-          if [[ -z "$PRIVATE_KEY" ]]; then missing="$missing VIBEHAWK_PRIVATE_KEY"; fi
-          if [[ -z "$OAUTH_TOKEN" ]]; then missing="$missing CLAUDE_CODE_OAUTH_TOKEN"; fi
-          if [[ -n "$missing" ]]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
-            echo "::warning::vibehawk chat: 未設定 secret(s):$missing。レビュー workflow と同じ 3 secrets を設定してください（README.md / docs/secrets-handling.md 参照）"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          fi
+        run: bash scripts/ci/vibehawk-chat/check-secrets.sh
 
       - name: secrets 未設定時のプレースホルダ投稿
         if: steps.check_secrets.outputs.ready != 'true'
@@ -58,8 +45,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           MISSING: ${{ steps.check_secrets.outputs.missing }}
-        run: |
-          gh issue comment "$ISSUE_NUMBER" --body "🦅 vibehawk chat: 未設定 secret(s): \`$MISSING\` のため応答をスキップしました。3 secrets（VIBEHAWK_APP_ID / VIBEHAWK_PRIVATE_KEY / CLAUDE_CODE_OAUTH_TOKEN）を Settings で設定してください。"
+        run: bash scripts/ci/vibehawk-chat/post-placeholder.sh
 
       - name: vibehawk-for-<owner> App Installation Token を取得
         id: app-token
@@ -76,55 +62,12 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: |
-          set -euo pipefail
-          # スレッド全コメント取得（時系列、--paginate で全件）
-          # 5 大方針 4「専用 DB なし」: 状態は GitHub の thread 自体が保持
-          history_file="/tmp/vibehawk-thread-${ISSUE_NUMBER}.json"
-
-          # --paginate は各ページごとに JSON 配列を出力するため、
-          # --jq '.[] | {...}' で各要素を改行区切りで出力 → jq -s で 1 配列に slurp する
-          # （CodeRabbit PR #87 指摘: 旧 .[0] + .[1] は 2 ページ前提でページ数 N 任意に対応できない）
-          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
-            --jq '.[] | {user: .user.login, created_at, body}' \
-            | jq -s '.' \
-            > "$history_file"
-
-          # Issue 本文も含める（最初のコメントとして）
-          issue_body="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
-            --jq '{user: .user.login, created_at, body}')"
-
-          # Issue 本文を最初に挿入: [issue_body, ...comments]
-          jq --argjson issue "$issue_body" '[$issue] + .' "$history_file" \
-            > "${history_file}.combined"
-          mv "${history_file}.combined" "$history_file"
-
-          comment_count="$(jq 'length' "$history_file")"
-          echo "vibehawk chat: スレッド ${comment_count} コメント取得 → ${history_file}"
-
-          echo "history_file=$history_file" >> "$GITHUB_OUTPUT"
-          echo "comment_count=$comment_count" >> "$GITHUB_OUTPUT"
+        run: bash scripts/ci/vibehawk-chat/fetch-thread-history.sh
 
       - name: vibehawk 設定読み込み（locale 等）
         id: vibehawk_config
         if: steps.check_secrets.outputs.ready == 'true'
-        run: |
-          set -euo pipefail
-          config_file=""
-          if [[ -f ".vibehawk.yaml" ]]; then
-            config_file=".vibehawk.yaml"
-          elif [[ -f ".coderabbit.yaml" ]]; then
-            config_file=".coderabbit.yaml"
-          fi
-
-          language="en"
-          if [[ -n "$config_file" ]]; then
-            python3 -c "import yaml" 2>/dev/null || pip install --user --quiet pyyaml
-            config_json="$(python3 -c "import yaml,json; print(json.dumps(yaml.safe_load(open('$config_file')) or {}))")"
-            language="$(echo "$config_json" | jq -r '.language // "en"')"
-          fi
-
-          echo "language=$language" >> "$GITHUB_OUTPUT"
+        run: bash scripts/ci/vibehawk-chat/load-config.sh
 
       # Issue #135: `@vibehawk review` 経路で必要な PR HEAD SHA を workflow step で取得する。
       # Claude prompt 内で `gh pr view` / `gh api` を呼ぶ必要をなくすことで、
@@ -140,10 +83,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
-        run: |
-          set -euo pipefail
-          HEAD_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+        run: bash scripts/ci/vibehawk-chat/fetch-pr-head.sh
 
       - name: claude-code-action でチャット応答
         if: steps.check_secrets.outputs.ready == 'true'
@@ -288,40 +228,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-          EVENT_FILE="/tmp/vibehawk-chat-review-event.txt"
-          BODY_FILE="/tmp/vibehawk-chat-review-body.txt"
-
-          # Claude が payload を書いていない場合（モード判定ミス等）はスキップ
-          if [[ ! -f "$EVENT_FILE" ]] || [[ ! -f "$BODY_FILE" ]]; then
-            echo "::warning::vibehawk chat: payload ファイル (event or body) が存在しないため bundled review POST をスキップ"
-            exit 0
-          fi
-
-          # event の validate: APPROVE / REQUEST_CHANGES 限定（プロンプト注入で COMMENTED 等
-          # の予期しない event 値を埋め込まれることを防ぐ）。改行・余分な空白も除去。
-          event="$(head -1 "$EVENT_FILE" | tr -d '[:space:]')"
-          if [[ "$event" != "APPROVE" && "$event" != "REQUEST_CHANGES" ]]; then
-            echo "::error::vibehawk chat: 不正な event 値: ${event}（APPROVE / REQUEST_CHANGES のみ許可）"
-            exit 1
-          fi
-
-          # body の validate: 非空であること
-          body="$(cat "$BODY_FILE")"
-          if [[ -z "${body// /}" ]]; then
-            echo "::error::vibehawk chat: REVIEW_BODY が空です"
-            exit 1
-          fi
-
-          # commit_id は workflow step で fetch した HEAD_SHA を使う（Claude が改ざんできないよう
-          # workflow 側で固定）。bundled review POST は jq で payload を組み立てて --input - で渡す。
-          jq -n \
-            --arg event "$event" \
-            --arg body "$body" \
-            --arg commit_id "$HEAD_SHA" \
-            '{event: $event, body: $body, commit_id: $commit_id}' \
-            | gh api -X POST "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --input -
+        run: bash scripts/ci/vibehawk-chat/post-bundled-review.sh
 
       # Issue #135: `@vibehawk review` コマンド経路で bundled review POST 後に
       # status check `vibehawk` を決定論的に更新する。vibehawk-review.yml の
@@ -342,77 +249,4 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
           OWNER: ${{ github.repository_owner }}
-        run: |
-          set -euo pipefail
-          BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
-
-          # PR HEAD SHA を取得（check-runs API は head_sha 必須）
-          HEAD_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-
-          # vibehawk-review.yml と同じ substantive review filter で
-          # 直前の Claude セッションが投稿した最新 review を取得する。
-          # bundled POST 後に副産物の空 COMMENTED review が混入する可能性があるため、
-          # state == APPROVED / CHANGES_REQUESTED かつ body 非空で絞り込む。
-          substantive_review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-            | jq -cs --arg bot "${BOT_LOGIN}" '
-                [ .[][]
-                  | select(.user.login == $bot)
-                  | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
-                  | select((.body // "") | length > 0)
-                ]
-                | sort_by(.submitted_at)
-                | last // empty
-              ')"
-
-          if [[ -n "${substantive_review_json}" ]]; then
-            review_json="${substantive_review_json}"
-          else
-            review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-              | jq -cs --arg bot "${BOT_LOGIN}" '
-                  [ .[][]
-                    | select(.user.login == $bot)
-                  ]
-                  | sort_by(.submitted_at)
-                  | last // empty
-                ')"
-          fi
-
-          # conclusion 導出表（vibehawk-review.yml と同じ）:
-          #   APPROVED         → success（merge OK）
-          #   CHANGES_REQUESTED → failure（merge ブロック）
-          #   COMMENTED 等その他 / review 未検出 → neutral（informational）
-          if [[ -z "${review_json}" ]]; then
-            conclusion="neutral"
-            title="vibehawk: review 未投稿（@vibehawk review）"
-            summary="@vibehawk review で再レビューが要求されましたが、bundled POST が確認できませんでした。chat workflow ログを確認してください。"
-          else
-            state="$(echo "${review_json}" | jq -r '.state // ""')"
-            body="$(echo "${review_json}" | jq -r '.body // ""')"
-
-            case "${state}" in
-              APPROVED)
-                conclusion="success"
-                title="vibehawk: APPROVED（@vibehawk review）"
-                ;;
-              CHANGES_REQUESTED)
-                conclusion="failure"
-                title="vibehawk: CHANGES_REQUESTED（@vibehawk review）"
-                ;;
-              *)
-                conclusion="neutral"
-                title="vibehawk: ${state}（@vibehawk review）"
-                ;;
-            esac
-            summary="${body}"
-          fi
-
-          # check-runs API の output.summary は最大 65535 文字。安全側で 60000 字で切る。
-          summary="${summary:0:60000}"
-
-          gh api -X POST "repos/${REPO}/check-runs" \
-            --field name="vibehawk" \
-            --field head_sha="${HEAD_SHA}" \
-            --field status="completed" \
-            --field conclusion="${conclusion}" \
-            --field "output[title]=${title}" \
-            --field "output[summary]=${summary}"
+        run: bash scripts/ci/vibehawk-chat/post-status-check.sh

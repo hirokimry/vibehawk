@@ -31,7 +31,49 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
+WORKFLOW_RAW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
+
+# Issue #176: ラッパー展開
+# `run: bash scripts/ci/vibehawk-review/<name>.sh` を当該 .sh の中身に inline 展開した
+# 「擬似 yaml」を作成する。本テストは `unresolved == 0` 等のリテラルを grep で探すが、
+# Issue #176 でこれらは decide-event.sh に移管された。展開後の yaml に対して grep する
+# ことで、Issue #176 の挙動不変リファクタを越えて prompt 規約検証が維持される。
+WORKFLOW_EXPANDED_TMP="$(mktemp)"
+trap 'rm -f "$WORKFLOW_EXPANDED_TMP"' EXIT
+python3 - "$WORKFLOW_RAW" "$REPO_ROOT" > "$WORKFLOW_EXPANDED_TMP" <<'PYEOF'
+import sys, os, re
+
+# Windows runner ではロケールが CP1252 で、open() / sys.stdout のデフォルト encoding が
+# CP1252 となるため、UTF-8 で書かれた yml / .sh（日本語コメント含む）を読み書きすると
+# UnicodeDecodeError になる。encoding を明示して runner OS 非依存にする。
+sys.stdout.reconfigure(encoding='utf-8')
+
+src_path = sys.argv[1]
+repo_root = sys.argv[2]
+with open(src_path, encoding='utf-8') as f:
+    yaml_text = f.read()
+
+pattern = re.compile(r'^(\s+)run:\s+bash\s+(scripts/ci/\S+\.sh)\s*$', re.MULTILINE)
+
+def replace(match):
+    indent = match.group(1)
+    rel = match.group(2).strip()
+    abs_path = os.path.join(repo_root, rel)
+    # 参照先 .sh が無いケースは「壊れた参照」として即エラー終了する
+    if not os.path.isfile(abs_path):
+        sys.stderr.write(f"::error::ラッパー参照先 .sh が存在しない: {abs_path}\n")
+        sys.exit(1)
+    with open(abs_path, encoding='utf-8') as g:
+        content = g.read()
+    indented = ''.join(f"{indent}  {line}" for line in content.splitlines(keepends=True))
+    if not indented.endswith('\n'):
+        indented += '\n'
+    return f"{indent}run: |\n{indented.rstrip(chr(10))}"
+
+sys.stdout.write(pattern.sub(replace, yaml_text))
+PYEOF
+
+WORKFLOW="$WORKFLOW_EXPANDED_TMP"
 
 echo "=== severity 5 段階絵文字（Issue #9） ==="
 
@@ -90,19 +132,44 @@ else
   fail "Suggestions 構文の制約説明が prompt に不足"
 fi
 
-echo "=== auto_resolve 制約（Issue #9） ==="
+echo "=== auto_resolve 制約（Issue #9 / Issue #167） ==="
 
-if grep -F 'resolveReviewThread' "$WORKFLOW" > /dev/null; then
-  pass "auto_resolve の GraphQL mutation (resolveReviewThread) が prompt に含まれる"
+# Issue #167: auto_resolve の GraphQL mutation 実行は Claude prompt から workflow step
+# (scripts/ci/vibehawk-review/auto-resolve.sh) に移管された。Claude prompt 側は
+# 「解決対象 thread の node_id を `resolved_thread_ids` 配列に列挙する」だけになる。
+#
+# CodeRabbit PR #193 Major 指摘対応: 旧 OR 条件 (`resolveReviewThread || resolved_thread_ids`)
+# だと resolved_thread_ids 契約が消えても通過してしまい、Issue #167 要件の退行を見逃す。
+# 新契約 `resolved_thread_ids` の存在は必須チェックに昇格し、`resolveReviewThread` の言及は
+# 「禁止文脈での記載のみ許容」と分離して検証する。
+if grep -F 'resolved_thread_ids' "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve の新契約（resolved_thread_ids 列挙）が prompt に含まれる（Issue #167、必須チェック）"
 else
-  fail "auto_resolve の GraphQL mutation が prompt に含まれない"
+  fail "auto_resolve の新契約（resolved_thread_ids）が prompt に含まれない（Issue #167、退行検出）"
 fi
 
+# 旧経路の語 `resolveReviewThread` が残る場合は「絶対禁止」「絶対に〜しない」等の禁止文脈で
+# 言及されていることを確認（Issue #167 で実行は workflow step に移管したため、prompt 内では
+# 禁止記述としてのみ残る想定）。
+if grep -F 'resolveReviewThread' "$WORKFLOW" > /dev/null; then
+  if grep -F '絶対禁止' "$WORKFLOW" > /dev/null || grep -F '絶対に' "$WORKFLOW" > /dev/null; then
+    pass "resolveReviewThread への言及は禁止文脈（絶対禁止 / 絶対に）で記載されている（Issue #167）"
+  else
+    fail "resolveReviewThread への言及があるが禁止文脈として検証されていない（Issue #167、混乱を招く）"
+  fi
+fi
+
+# 他者・他 Bot の thread に対する非操作制約は Issue #167 で文言が変わった
+# （旧: 「touch しない」、新: 「schema に含めない」「resolved_thread_ids に含めない」）。
+# どの文言でも「他者・他 Bot のレビュースレッドには絶対に〜しない」という制約が
+# prompt に明示されていれば pass。
 if grep -F '他者・他 Bot のコメントは絶対に touch しない' "$WORKFLOW" > /dev/null || \
-   grep -F '他者・他 Bot のレビュースレッドには **絶対に' "$WORKFLOW" > /dev/null; then
-  pass "auto_resolve の「他者・他 Bot は touch しない」制約が prompt に明示"
+   grep -F '他者・他 Bot のコメントは絶対に schema に含めない' "$WORKFLOW" > /dev/null || \
+   grep -F '他者・他 Bot のレビュースレッドには **絶対に' "$WORKFLOW" > /dev/null || \
+   grep -F '他者・他 Bot のレビュースレッドの node_id は **絶対に' "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve の「他者・他 Bot は触らない / schema に含めない」制約が prompt に明示（Issue #167 文言更新後）"
 else
-  fail "auto_resolve の他者非操作制約が prompt に不足（誤 resolve は信頼破壊）"
+  fail "auto_resolve の他者非操作制約が prompt に不足（誤 resolve は信頼破壊、Issue #167）"
 fi
 
 echo "=== sticky review state（Issue #9 / Issue #121 bundled review API） ==="

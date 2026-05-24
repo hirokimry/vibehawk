@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// vibehawk CLI entry
-// usage: npx vibehawk <command>
 
 'use strict';
 

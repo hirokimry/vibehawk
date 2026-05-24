@@ -3,26 +3,30 @@
 #
 # 目的:
 #   OS を判定し、対応するサンドボックス機構を使って引数で指定された
-#   コマンドを隔離実行する。Phase 1 では Darwin のみ実装する。
+#   コマンドを隔離実行する。Phase 1 (#309) で Darwin、Phase 2 (#310) で Linux を実装。
 #
 # 使い方:
 #   vibecorp-sandbox <command> [args...]
 #
-#   コマンドの解決は sandbox-exec 起動後の PATH に委ねる。
+#   コマンドの解決は sandbox 起動後の PATH に委ねる。
 #
 # 挙動:
 #   - Darwin: sandbox-exec -f <profile> -D ... env VIBECORP_SANDBOXED=1 "$@"
-#   - Linux:  stderr に Phase 2 未実装メッセージを出して exit 69（EX_UNAVAILABLE）
-#   - その他: 同上
+#   - Linux:  bwrap <args from bwrap-args.sh> -- env VIBECORP_SANDBOXED=1 "$@"
+#   - その他: stderr に未対応 OS メッセージを出して exit 69
+#
+# fail-closed 設計:
+#   - bwrap / sandbox-exec 起動失敗時に passthrough しない
+#   - exec 失敗（user namespace 無効・kernel ENOSYS・AppArmor 拒否等）はプロセス非ゼロ終了
 #
 # 終了コード規約（sysexits.h 準拠）:
 #   - 0:  正常終了
-#   - 1:  入力 / 環境バリデーション失敗（HOME / WORKTREE / TMPDIR の絶対パス検査等）
+#   - 1:  入力 / 環境バリデーション失敗（HOME / WORKTREE / TMPDIR の絶対パス検査等）/ bwrap 不在
 #   - 64: 引数エラー（EX_USAGE。引数不足等の使い方違反）
-#   - 69: 当該 OS 未対応（EX_UNAVAILABLE。Linux の Phase 2 未実装、その他 OS 全般）
+#   - 69: 当該 OS 未対応（EX_UNAVAILABLE。macOS / Linux 以外）
 #         「引数エラー（64）」と区別することで、呼び出し側は OS 不一致を引数誤りと誤認しない
 #
-# 参照: #293 / #309 / #514
+# 参照: #293 / #309 / #310 / #514
 
 set -euo pipefail
 
@@ -152,11 +156,137 @@ case "$OS" in
       env VIBECORP_SANDBOXED=1 "$@"
     ;;
   Linux)
-    # exit 69 (EX_UNAVAILABLE): 当該 OS 向け実装が未提供であることを示す。
-    # 引数エラー（exit 64 / EX_USAGE）と区別することで、呼び出し側が OS 不一致を
-    # 引数誤りと誤認するのを防ぐ。
-    echo "vibecorp-sandbox: Linux 向け実装は Phase 2 で追加されます（bwrap を使用予定）。" >&2
-    exit 69
+    BWRAP_ARGS_FILE="${SCRIPT_DIR}/../sandbox/bwrap-args.sh"
+    # symlink チェック（Link Following 脆弱性対策）:
+    # source 実行前に BWRAP_ARGS_FILE が symlink でないことを確認する。
+    # install.sh の copy_isolation_templates は配置時に symlink を排除する
+    # ガードを持つが、配置後に攻撃者制御の symlink へ差し替えられると、
+    # source "$BWRAP_ARGS_FILE" 時に任意シェルコードが実行される経路となる。
+    # 既知制約「bwrap-args.sh の TOCTOU」とは別の Link Following 攻撃面のため
+    # 本スクリプトでも独立に拒否する（CISO メタレビュー 2026-05-16、Issue #310）。
+    if [[ ! -f "$BWRAP_ARGS_FILE" || -L "$BWRAP_ARGS_FILE" ]]; then
+      echo "vibecorp-sandbox: bwrap-args.sh が見つからないか symlink です: $BWRAP_ARGS_FILE" >&2
+      exit 1
+    fi
+
+    # bwrap 起動失敗の区分別 preflight チェック（fail-closed）
+    # Issue #579: 4 区分（A/B/C/D）に分けて失敗原因を CEO に提示する。
+    #
+    #   A: バイナリ不在            → command -v bwrap で検出
+    #   B: バイナリ破損・権限      → bwrap --version で検出
+    #   C: user namespace 制限     → bwrap --unshare-pid ... -- /bin/sh -c : で検出
+    #   D: kernel/distro 固有問題  → 非 exec 化した bwrap の終了コードで検出
+    #
+    # メッセージはシングルクォートまたは printf でリテラル出力する（外部入力由来の
+    # コマンド出力が stderr に混入する経路を物理的に排除する）。
+    # 内部整数変数（${status} など）はダブルクォート内で展開してよい。
+
+    # 区分 A: バイナリ不在
+    # 不在時は install.sh が distro 別の案内を出すが、本スクリプト単独実行経路の保険として
+    # ここでも日本語メッセージで exit 1 する。passthrough は絶対にしない。
+    if ! command -v bwrap >/dev/null 2>&1; then
+      echo 'vibecorp-sandbox: bwrap (bubblewrap) が見つかりません。隔離レイヤには bwrap が必要です。' >&2
+      echo '  Debian/Ubuntu: sudo apt-get install bubblewrap' >&2
+      echo '  Fedora/RHEL:   sudo dnf install bubblewrap' >&2
+      echo '  Alpine:        sudo apk add bubblewrap' >&2
+      exit 1
+    fi
+
+    # 区分 B: バイナリ破損 / 実行権限の問題
+    # `bwrap --version` で起動可否のみを確認する。バイナリが存在しても権限不足や
+    # 共有ライブラリ欠落で起動できないケースをここで区別する。
+    if ! bwrap --version >/dev/null 2>&1; then
+      echo 'vibecorp-sandbox: bwrap バイナリは存在しますが `--version` で起動失敗しました。バイナリ破損または実行権限の問題です。' >&2
+      echo '  再インストール案内:' >&2
+      echo '    Debian/Ubuntu: sudo apt-get install --reinstall bubblewrap' >&2
+      echo '    Fedora/RHEL:   sudo dnf reinstall bubblewrap' >&2
+      echo '    Alpine:        sudo apk add --upgrade bubblewrap' >&2
+      echo '  実行権限の確認: ls -lah "$(command -v bwrap)"' >&2
+      exit 1
+    fi
+
+    # 区分 C: user namespace 制限
+    # `bwrap --unshare-pid --proc /proc --dev /dev --tmpfs /tmp -- /bin/sh -c :` で
+    # user namespace の動作確認のみを行う。/bin/true ではなく /bin/sh -c : を使うのは、
+    # NixOS 等の非標準 /bin レイアウト distro で /bin/true 不在による誤検知を避けるため
+    # （/bin/sh は POSIX 必須、`:` は組込みコマンド）。
+    if ! bwrap --unshare-pid --proc /proc --dev /dev --tmpfs /tmp -- /bin/sh -c : >/dev/null 2>&1; then
+      echo 'vibecorp-sandbox: user namespace で bwrap が動作しません。' >&2
+      echo '  切り分け手順:' >&2
+      echo '    sysctl kernel.unprivileged_userns_clone   # 0 なら unprivileged user namespace が無効' >&2
+      echo '    dmesg | grep -i bwrap                     # kernel 拒否ログ' >&2
+      echo '    aa-status; dmesg | grep -i apparmor       # AppArmor 制限の確認' >&2
+      echo '    getenforce                                 # SELinux モードの確認' >&2
+      echo '  GHA `ubuntu-latest` (Ubuntu 24.04) / Docker コンテナでは既知制約（AppArmor 4.0 の unprivileged_userns 制限）。' >&2
+      echo '  詳細は docs/SECURITY.md の「Linux (Phase 2) 固有制約」および「Linux 診断手段」を参照してください。' >&2
+      exit 1
+    fi
+
+    # macOS 同様に WORKTREE / HOME / LINUX_TMPDIR を validate + canonicalize する
+    # 1) raw 値の書式チェック（空文字 / 非絶対パス / ルート / .. / 危険文字）
+    WORKTREE_RAW="$PWD"
+    HOME_RAW="${HOME:-}"
+    LINUX_TMPDIR_RAW="${TMPDIR:-/tmp}"
+
+    validate_abs_path "$WORKTREE_RAW" "WORKTREE"
+    validate_abs_path "$HOME_RAW" "HOME"
+    validate_abs_path "$LINUX_TMPDIR_RAW" "LINUX_TMPDIR"
+
+    # 2) symlink を解決して canonical path に正規化
+    #    symlink 経由で HOME を別ディレクトリに飛ばして bwrap bind 境界をすり抜ける攻撃を防ぐ
+    WORKTREE_VALUE="$(canonicalize_dir "$WORKTREE_RAW" "WORKTREE")"
+    HOME_VALUE="$(canonicalize_dir "$HOME_RAW" "HOME")"
+    LINUX_TMPDIR_VALUE="$(canonicalize_dir "$LINUX_TMPDIR_RAW" "LINUX_TMPDIR")"
+
+    # 3) canonicalize 後の値も危険文字・ルートを再検証
+    validate_abs_path "$WORKTREE_VALUE" "WORKTREE (canonicalized)"
+    validate_abs_path "$HOME_VALUE" "HOME (canonicalized)"
+    validate_abs_path "$LINUX_TMPDIR_VALUE" "LINUX_TMPDIR (canonicalized)"
+
+    # 4) WORKTREE を HOME 自体にする設定は bwrap の書込境界を
+    #    ホームディレクトリ全体に広げてしまうため拒否する（macOS と同じロジック）
+    if [[ "$WORKTREE_VALUE" == "$HOME_VALUE" ]]; then
+      echo "vibecorp-sandbox: WORKTREE を HOME と同一にはできません: $WORKTREE_VALUE" >&2
+      exit 1
+    fi
+
+    # 5) WORKTREE が HOME を包含する（WORKTREE ⊇ HOME。例: WORKTREE=/home、HOME=/home/user）設定は、
+    #    (bind WORKTREE) により ~/.ssh / ~/.aws / ~/.gnupg まで RW になるため拒否する（macOS と同じロジック）。
+    #    判定式: ${HOME_VALUE}/ が ${WORKTREE_VALUE}/* で始まる場合に HOME が WORKTREE の配下にあると判定される
+    case "${HOME_VALUE}/" in
+      "${WORKTREE_VALUE}/"*)
+        echo "vibecorp-sandbox: WORKTREE が HOME を包含しています: WORKTREE=$WORKTREE_VALUE, HOME=$HOME_VALUE" >&2
+        exit 1
+        ;;
+    esac
+
+    # bwrap-args.sh を source して BWRAP_ARGS 配列を組み立て
+    export WORKTREE_VALUE HOME_VALUE LINUX_TMPDIR_VALUE
+    # shellcheck source=../sandbox/bwrap-args.sh
+    source "$BWRAP_ARGS_FILE"
+
+    # bwrap を起動（fail-closed）
+    # - "${BWRAP_ARGS[@]}" は bwrap-args.sh が組み立てた配列
+    # - --setenv VIBECORP_SANDBOXED 1 は bwrap-args.sh 内で追加済み
+    # - env VIBECORP_SANDBOXED=1 は二重に取りこぼし防止（信頼境界は claude シム側の
+    #   is_inside_sandbox の PPID 検証と AND で評価）
+    #
+    # Issue #579: 区分 D（preflight 通過後の kernel/distro 固有失敗）を catch するため、
+    # 従来の `exec bwrap ...` を非 exec 化する。shell が bwrap の終了を待ち、終了コードが
+    # 非 0 の場合に区分 D メッセージを stderr に出力して同じ終了コードで exit する。
+    # bwrap 自体の引数・隔離挙動は変わらない。fail-closed は維持（passthrough しない）。
+    # `set -e` 下で bwrap が非 0 で終わると、status=$? の取得前に shell が exit してしまう。
+    # `|| status=$?` で set -e を抑制し、終了コードを確実に取得する。
+    status=0
+    bwrap "${BWRAP_ARGS[@]}" -- env VIBECORP_SANDBOXED=1 "$@" || status=$?
+    if [[ "$status" -ne 0 ]]; then
+      # 区分 D: kernel/distro 固有問題（preflight 通過後の失敗）
+      # $status は内部生成の整数変数のためダブルクォート内で展開してよい。
+      echo "vibecorp-sandbox: bwrap の preflight は通過しましたが、本番起動で exit code ${status} で失敗しました。kernel / distro 固有の問題の可能性があります。" >&2
+      echo '  詳細は docs/SECURITY.md の「Linux 診断手段」の区分 D 診断手順を参照してください。' >&2
+      exit "$status"
+    fi
+    exit 0
     ;;
   *)
     # exit 69 (EX_UNAVAILABLE): 当該 OS 向け実装が未提供。引数エラー（64）とは別軸。

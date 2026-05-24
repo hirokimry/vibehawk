@@ -1,0 +1,33 @@
+name: shellcheck
+
+on:
+  push:
+  # Issue #135 と同等のトリガ設計: 再レビュー依頼で CI も再発火するよう
+  # types を明示する。
+  pull_request:
+    types: [opened, synchronize, reopened, review_requested]
+
+concurrency:
+  group: shellcheck-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    # test.yml と書式を揃える（変更時の追従漏れを防ぐ）
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck バージョン確認
+        run: shellcheck --version
+
+      - name: scripts/ci/**/*.sh を走査（strict）
+        # 詳細: scripts/ci/shellcheck/run-scripts-ci.sh（エピック #174 完了条件、Issue #175）
+        run: bash scripts/ci/shellcheck/run-scripts-ci.sh
+
+      - name: tests/test_*.sh を走査
+        # 詳細: scripts/ci/shellcheck/run-tests.sh（.claude/rules/testing.md 規約、Issue #175）
+        run: bash scripts/ci/shellcheck/run-tests.sh

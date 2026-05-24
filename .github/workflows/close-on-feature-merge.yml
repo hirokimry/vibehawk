@@ -35,46 +35,12 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: PR 本文の close キーワードに対応する Issue を抽出して close
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          set -euo pipefail
-
-          # close キーワード + 空白 + #N の形式のみを抽出。
-          # 抽出対象: close / closes / closed / fix / fixes / fixed / resolve / resolves / resolved
-          # 対象外:   refs / related to (暴発防止)
-          # GNU grep (ubuntu-latest) の -oiE で正規表現マッチを行う。
-          issues=$(
-            printf '%s\n' "${PR_BODY:-}" \
-              | grep -oiE '\b(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+#[0-9]+' \
-              | grep -oE '[0-9]+' \
-              | sort -u \
-              || true
-          )
-
-          if [[ -z "$issues" ]]; then
-            echo "::notice::PR 本文に close キーワード (Closes/Fixes/Resolves) #N が見つかりませんでした"
-            exit 0
-          fi
-
-          echo "対象 Issue 番号:"
-          echo "$issues"
-
-          # IFS 依存を排除するため while read で 1 行ずつ処理する。
-          # for issue_num in $issues は unquoted word splitting で IFS 設定に依存するため避ける。
-          while IFS= read -r issue_num; do
-            [[ -z "$issue_num" ]] && continue
-            state=$(gh issue view "$issue_num" --repo "$REPO" --json state --jq '.state')
-            if [[ "$state" == "CLOSED" ]]; then
-              echo "Issue #${issue_num} は既に close 済みのためスキップ"
-              continue
-            fi
-            gh issue close "$issue_num" \
-              --repo "$REPO" \
-              --comment "✅ feature ブランチへのマージにより自動 close (PR #${PR_NUMBER})"
-            echo "Issue #${issue_num} を close しました"
-          done <<< "$issues"
+        run: bash scripts/ci/intent-checks/close-on-feature-merge.sh
