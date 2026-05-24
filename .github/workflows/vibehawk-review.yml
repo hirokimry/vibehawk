@@ -390,6 +390,26 @@ jobs:
         # 詳細: scripts/ci/vibehawk-review/decide-event.sh（エピック #174 / Issue #176）
         run: bash scripts/ci/vibehawk-review/decide-event.sh
 
+      - name: vibehawk sticky walkthrough コメント upsert（Issue #219）
+        # PR ごとに 1 個固定の issue-comment sticky を維持する（CodeRabbit 模倣）。
+        # build-sticky-body.sh が body markdown を組み立て、post-sticky-comment.sh が
+        # 既存 sticky を bot 名義 + 先頭マーカーで find して POST/PATCH/DELETE 分岐の upsert を行う。
+        # 失敗時は warning ログ + exit 0 とし、後続の bundled review / status check post に影響させない。
+        # 配置: bundled review POST の **前** に置く（タイムライン上 sticky が inline review より先に
+        # 並ぶようにするため、CodeRabbit と同じ「PR を開いた瞬間に sticky が最上位」を実現する）。
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          STRUCTURED_OUTPUT: ${{ steps.claude_review.outputs.structured_output }}
+          DECIDED_EVENT: ${{ steps.decide_event.outputs.decided_event }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_STATUS: normal
+        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219）
+        run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
+
       - name: vibehawk bundled review を post（Issue #164 fix / Issue #166）
         # Issue #164 fix: 旧設計（Issue #152）では Claude が $GITHUB_WORKSPACE/vibehawk-review.json
         # にファイル書き出ししたものを本 step が hashFiles で検出して読み込んでいた。指摘 0 件 PR で

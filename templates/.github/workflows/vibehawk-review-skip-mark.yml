@@ -42,6 +42,7 @@ concurrency:
 
 permissions:
   checks: write
+  issues: write          # Issue #219: sticky walkthrough コメント upsert に必要（POST/PATCH/DELETE /issues/{n}/comments）
   pull-requests: read
   contents: read
 
@@ -74,3 +75,23 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
         run: bash scripts/ci/vibehawk-review-skip-mark/post-skip-check-run.sh
+
+      - name: vibehawk sticky walkthrough コメント upsert（skip 時「レビュー対象なし」表示、Issue #219）
+        # 案 B 採用: skip 時も sticky を「レビュー対象なし」サマリで更新する。
+        # 案 A（skip 時 sticky を post しない）だと non-skipped → skipped 切替時に
+        # 古い sticky が残置されるため、案 B で skip 状態も sticky 経路に反映する。
+        # 投稿者名義は default GITHUB_TOKEN により `github-actions[bot]` となり、
+        # vibehawk-review.yml 経路の `vibehawk-for-<owner>[bot]` とは異なるが、
+        # post-sticky-comment.sh は両 bot 名義を or 条件で識別し相互に上書き可能。
+        if: steps.classify.outputs.is_skip == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          STRUCTURED_OUTPUT: ''
+          DECIDED_EVENT: COMMENT
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_STATUS: skipped
+        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219）
+        run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
