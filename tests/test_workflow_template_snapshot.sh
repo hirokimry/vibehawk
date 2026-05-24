@@ -42,7 +42,6 @@ OPTIONAL_TARGETS=(
   ".github/workflows/vibehawk-chat.yml"
 )
 
-# 必須 + 存在する任意対象を結合して検査ループに渡す
 TARGETS=("${REQUIRED_TARGETS[@]}")
 for opt in "${OPTIONAL_TARGETS[@]}"; do
   if [[ -f "$opt" ]]; then

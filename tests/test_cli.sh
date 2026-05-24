@@ -25,7 +25,6 @@ fail() {
 
 echo "=== vibehawk CLI 検証 ==="
 
-# 必須ファイル存在
 for f in package.json cli/index.js cli/install.js cli/manifest.js; do
   if [[ -f "$f" ]]; then
     pass "$f が存在する"

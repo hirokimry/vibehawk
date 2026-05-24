@@ -47,7 +47,6 @@ done
 EOF
 chmod +x "$STUB_DIR/gh"
 
-# 1. 正常系: gh pr comment が呼ばれ、必須要素を含む
 out="$(PATH="$STUB_DIR:$PATH" PR_NUMBER=42 MISSING="VIBEHAWK_APP_ID CLAUDE_CODE_OAUTH_TOKEN" \
        bash "$SCRIPT" 2>&1)"
 if echo "$out" | grep -qx "pr" \
@@ -66,7 +65,6 @@ else
   fail "コメント本文が想定と異なる: '$out'"
 fi
 
-# 2. PR_NUMBER 未設定 → 非 0 終了
 set +e
 err_out="$(PATH="$STUB_DIR:$PATH" MISSING="X" bash "$SCRIPT" 2>&1)"
 err_rc=$?
@@ -77,7 +75,6 @@ else
   fail "PR_NUMBER 未設定時の挙動が想定と異なる: rc=$err_rc, out='$err_out'"
 fi
 
-# 3. MISSING 未設定 → 非 0 終了
 set +e
 err_out="$(PATH="$STUB_DIR:$PATH" PR_NUMBER=42 bash "$SCRIPT" 2>&1)"
 err_rc=$?

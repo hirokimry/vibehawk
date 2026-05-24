@@ -26,7 +26,6 @@ skip() {
   SKIPPED=$((SKIPPED + 1))
 }
 
-# PyYAML 可用性チェック（ubuntu-latest はプリインストール、ローカル macOS はなしの場合あり）
 if ! python3 -c "import yaml" 2>/dev/null; then
   echo "=== PyYAML 未インストール → 全テストスキップ（GitHub Actions runner では pip フォールバックで動作） ==="
   echo "  ⊘ ローカル環境スキップ（CI ubuntu-latest では pyyaml プリインストール、不在時は pip install --user --quiet pyyaml が workflow 側で実行される）"
@@ -35,11 +34,9 @@ if ! python3 -c "import yaml" 2>/dev/null; then
   exit 0
 fi
 
-# 一時ディレクトリで .vibehawk.yaml を作成してパース検証
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# パース関数（vibehawk_config ステップと同等のロジック）
 parse_yaml() {
   local file="$1"
   python3 -c "import yaml,json; print(json.dumps(yaml.safe_load(open('$file')) or {}))"
@@ -64,7 +61,6 @@ EOF
 
 config_json="$(parse_yaml "$TMPDIR/.vibehawk.yaml")"
 
-# language: ja
 language="$(echo "$config_json" | jq -r '.language // "en"')"
 if [[ "$language" == "ja" ]]; then
   pass "language: ja が抽出される"
@@ -72,7 +68,6 @@ else
   fail "language が想定と異なる: '$language'"
 fi
 
-# size_limits 3 値
 for key in full_review_files focused_review_files skip_inline_files; do
   expected="$(echo "$config_json" | jq -r ".reviews.size_limits.$key")"
   case "$key" in
@@ -87,7 +82,6 @@ for key in full_review_files focused_review_files skip_inline_files; do
   fi
 done
 
-# path_filters
 filters="$(echo "$config_json" | jq -c '.reviews.path_filters')"
 if [[ "$filters" == '["node_modules/**","dist/**"]' ]]; then
   pass "path_filters が JSON 配列として抽出される"
@@ -95,7 +89,6 @@ else
   fail "path_filters の抽出結果が想定と異なる: '$filters'"
 fi
 
-# path_instructions
 instructions="$(echo "$config_json" | jq -c '.reviews.path_instructions')"
 if [[ "$instructions" == '[{"path":"src/auth/**","instructions":"認証フローの観点で見て"}]' ]]; then
   pass "path_instructions が JSON 配列として抽出される"
@@ -115,7 +108,6 @@ else
   fail "空 YAML のパース結果が想定と異なる: '$empty_json'"
 fi
 
-# // デフォルト値が機能する
 language_default="$(echo "$empty_json" | jq -r '.language // "en"')"
 full_default="$(echo "$empty_json" | jq -r '.reviews.size_limits.full_review_files // 30')"
 if [[ "$language_default" == "en" ]] && [[ "$full_default" == "30" ]]; then

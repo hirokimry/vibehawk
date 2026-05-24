@@ -28,9 +28,6 @@ STUB_DIR="$(mktemp -d)"
 GITHUB_OUTPUT_FILE="$(mktemp)"
 trap 'rm -rf "$STUB_DIR" "$GITHUB_OUTPUT_FILE" /tmp/vibehawk-thread-9999.json /tmp/vibehawk-thread-9999.json.combined' EXIT
 
-# gh スタブ: 引数を判別し、用途別の JSON を返す
-# --paginate + comments エンドポイント: 各コメントを射影した JSON（--jq 適用後）を返す
-# 単発 issues/<n> エンドポイント: Issue 本文 JSON を返す
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 # 引数列を結合

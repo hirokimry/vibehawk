@@ -45,7 +45,6 @@ else
   fail "scripts/ci/**/*.sh が対象になっていない"
 fi
 
-# scripts/ci/ にシェルが無い空ディレクトリで実行 → exit 1
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 mkdir -p "${TMP_ROOT}/scripts/ci"
