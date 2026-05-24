@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# 用途: vibehawk-review.yml の bundled review POST ステップ本体（Issue #164 fix / #166）
+# 用途: vibehawk-review.yml の bundled review POST ステップ本体（Issue #164 fix / #166 / #222）
 #
 # structured_output の二重防御 validation を行い、decide-event.sh の決定値で
 # event フィールドを上書きしてから 1 回だけ POST する（試し打ちなし、Issue #152）。
 # validation 失敗は skip して exit 0（次の status check step が neutral に倒れる）。
+#
+# Issue #222: DECIDED_EVENT=APPROVE のときは .body と .comments を空に上書きしてから POST する
+# （CodeRabbit と同じ挙動。approve なのに長文サマリが毎回出るのは PR タイムラインのノイズになる）。
+# サマリは Issue #219 の sticky walkthrough コメント経路（issue-comment）で別途残るため、
+# レビュー本文を消しても CEO は引き続きサマリを参照できる。
 
 set -euo pipefail
 
@@ -47,8 +52,16 @@ if [[ "$DECIDED_EVENT" != "APPROVE" && "$DECIDED_EVENT" != "REQUEST_CHANGES" && 
   exit 0
 fi
 OVERRIDDEN="${RUNNER_TEMP}/vibehawk-review.overridden.json"
-jq --arg ev "$DECIDED_EVENT" '.event = $ev' "$PAYLOAD" > "$OVERRIDDEN"
-mv "$OVERRIDDEN" "$PAYLOAD"
+jq --arg ev "$DECIDED_EVENT" '.event = $ev' "$PAYLOAD" > "$OVERRIDDEN" && mv "$OVERRIDDEN" "$PAYLOAD"
+
+# Issue #222: APPROVE 時は body と comments を空に上書きする（CodeRabbit 模倣）。
+# サマリは sticky walkthrough コメント経路（Issue #219）で別途残る。
+# 既存 validation（line 22-38）の `.body | length > 0` は変更しない。validation は Claude の
+# 非空 body を従来通り検査し、validation 通過後にここで空に上書きする。
+if [[ "$DECIDED_EVENT" == "APPROVE" ]]; then
+  jq '.body = "" | .comments = []' "$PAYLOAD" > "$OVERRIDDEN" && mv "$OVERRIDDEN" "$PAYLOAD"
+  echo "vibehawk: DECIDED_EVENT=APPROVE のため body と comments を空に上書きしました（CodeRabbit 模倣、サマリは sticky comment 経路で残る、Issue #222）"
+fi
 
 event="$(jq -r '.event' "$PAYLOAD")"
 comments_count="$(jq -r '.comments | length' "$PAYLOAD")"

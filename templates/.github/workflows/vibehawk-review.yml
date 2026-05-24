@@ -152,6 +152,8 @@ jobs:
 
             理由（GitHub UI 仕様）: GitHub UI は review event 配下にサマリ本文 + inline 指摘がバンドルされている場合のみ colored badge（APPROVED→緑 / CHANGES_REQUESTED→赤）で表示する。3 段階分離投稿（inline 個別 POST + サマリ issue comment + `gh pr review` 系コマンドでの approve / request-changes 発火）では review event が空になり muted badge になるため、bundled review POST に統合する設計自体は維持する（POST の実行主体は workflow step、POST 用ペイロードの経路だけが ファイル → outputs に移る）。
 
+            Issue #222 追補: APPROVE 時は body 空 + comments 0 件でも GitHub UI は緑「APPROVED」バッジを付与する（CodeRabbit 実測 9/9 件で確認）。したがって approve に限り `post-bundled-review.sh` が POST 直前に `.body=""` / `.comments=[]` を jq で上書きする（PR タイムラインのノイズ抑制）。サマリは Issue #219 の sticky walkthrough コメント経路（issue-comment）で別途残るため CEO は引き続き読める。REQUEST_CHANGES 時は body + inline 指摘を必ず保持する（指摘内容の伝達が必須）。「3 段階分離は muted badge」の制約は依然有効なので、bundled POST 1 回に統合する設計自体は維持する。
+
             ### 投稿フロー（INCREMENTAL_MODE 共通）
 
             1. inline 指摘は **その場で POST せず**、JSON 配列 `comments[]` に貯める（path / line / side / body / 必要に応じ start_line+start_side）
