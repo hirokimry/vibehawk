@@ -494,13 +494,11 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     }
   }
 
-  // gh CLI 存在 / 認証確認
   const ghCheck = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' });
   if (ghCheck.status !== 0) {
     throw new Error('vibehawk: gh CLI が認証されていません。`gh auth login` を実行してから再試行してください。');
   }
 
-  // 既存ファイル検出（いずれか 1 つでも存在 + !overwrite なら skip）
   const existingFiles = [];
   for (const wf of WORKFLOWS) {
     const r = spawnSync('gh', ['api', `repos/${repo}/contents/${wf}`, '--silent'], { encoding: 'utf8' });
@@ -510,7 +508,6 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     return { skipped: true, reason: 'existing-files', existingFiles };
   }
 
-  // default branch 取得
   const defaultBranchResult = spawnSync(
     'gh',
     ['api', `repos/${repo}`, '--jq', '.default_branch'],
@@ -524,7 +521,6 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     throw new Error(`vibehawk: 対象リポジトリ ${repo} の default branch を取得できませんでした`);
   }
 
-  // default branch の最新 SHA 取得
   const refResult = spawnSync(
     'gh',
     ['api', `repos/${repo}/git/refs/heads/${defaultBranch}`, '--jq', '.object.sha'],
@@ -535,7 +531,6 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
   }
   const baseSha = (refResult.stdout || '').trim();
 
-  // 新規ブランチ作成（既存があれば上書き不可、別名で再試行）
   let branchName = WORKFLOW_BRANCH;
   let branchCreated = spawnSync(
     'gh',
@@ -560,13 +555,11 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     spawnSync('gh', ['api', `repos/${repo}/git/refs/heads/${branchName}`, '--method', 'DELETE'], { encoding: 'utf8' });
   };
 
-  // 各 workflow ファイルを順次 commit
   for (const wf of WORKFLOWS) {
     const tp = path.join(__dirname, '..', 'templates', wf);
     const content = fs.readFileSync(tp, 'utf8');
     const contentBase64 = Buffer.from(content, 'utf8').toString('base64');
 
-    // 既存ファイルの sha を取得（上書き時）
     let existingFileSha = null;
     if (existingFiles.includes(wf) && overwrite) {
       const shaResult = spawnSync(
@@ -605,7 +598,6 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     }
   }
 
-  // PR 作成
   const prBody = [
     '## vibehawk workflow を配置（PR auto-review + @mention chat）',
     '',
