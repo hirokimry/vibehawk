@@ -35,7 +35,6 @@ function validateOwner(owner) {
   return true;
 }
 
-// CLI 引数 --owner=foo または --owner foo を解析
 function parseOwnerArg(argv) {
   if (!Array.isArray(argv)) return null;
   for (let i = 0; i < argv.length; i++) {
