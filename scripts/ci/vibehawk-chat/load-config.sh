@@ -1,25 +1,11 @@
 #!/usr/bin/env bash
-# scripts/ci/vibehawk-chat/load-config.sh
+# 用途: vibehawk-chat.yml の設定読み込みステップ本体（Issue #10 / #172 / #177）
 #
-# vibehawk-chat.yml の `vibehawk 設定読み込み（locale 等）` step を切り出した
-# スクリプト（Issue #10 / Issue #172 / Issue #177）。`.vibehawk.yaml` の
-# `language` キーを読み取り、GITHUB_OUTPUT に `language=<value>` を書き出す。
-#
-# 仕様（Issue #172 で .coderabbit.yaml フォールバック撤廃）:
-#   - `.vibehawk.yaml` 存在時: yaml の `language` キー（未指定なら "en"）を採用
-#   - `.vibehawk.yaml` 不在時: "en" にフォールバック
-#
-# 入力（環境変数）:
-#   GITHUB_OUTPUT  -- GitHub Actions が自動付与する step output ファイルパス
-#
-# 出力:
-#   GITHUB_OUTPUT: language=<value>
+# .vibehawk.yaml の language キーを読み取り GITHUB_OUTPUT に書き出す。
+# Issue #172 で .coderabbit.yaml フォールバックを撤廃し、.vibehawk.yaml 単独受付に統一。
 
 set -euo pipefail
 
-# 設定ファイル選択（.vibehawk.yaml 単独受付、Issue #10 / #172）
-# Issue #172 で .coderabbit.yaml フォールバック分岐を撤廃。
-# `.vibehawk.yaml` 不在時は下記の default language ('en') に倒れる。
 config_file=""
 if [[ -f ".vibehawk.yaml" ]]; then
   config_file=".vibehawk.yaml"

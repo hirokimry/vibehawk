@@ -1,16 +1,5 @@
 #!/usr/bin/env bash
-# scripts/ci/vibehawk-review/post-placeholder-comment.sh
-#
-# vibehawk-review.yml の "secrets 未設定時のプレースホルダ投稿" ステップ（旧 L89
-# インライン）の本体。
-#
-# 必須 secrets が未設定で check-secrets.sh が `ready=false` を出力した場合に呼ばれ、
-# 利用者向け案内コメントを PR に投稿する。
-#
-# 入力 env:
-#   GH_TOKEN    — gh CLI が使う認証トークン（GitHub Actions のデフォルト GITHUB_TOKEN）
-#   PR_NUMBER   — 対象 PR の番号
-#   MISSING     — 未設定 secret 名のスペース区切りリスト
+# 用途: vibehawk-review.yml の secrets 未設定時プレースホルダ投稿ステップ本体
 
 set -euo pipefail
 

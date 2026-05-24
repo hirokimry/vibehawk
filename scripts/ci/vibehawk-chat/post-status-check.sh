@@ -1,31 +1,17 @@
 #!/usr/bin/env bash
-# scripts/ci/vibehawk-chat/post-status-check.sh
+# 用途: vibehawk-chat.yml の status check POST ステップ本体（Issue #135 / #177）
 #
-# vibehawk-chat.yml の `vibehawk status check を post（@vibehawk review 経路、
-# Issue #135）` step を切り出したスクリプト（Issue #135 / Issue #177）。
-# vibehawk-review.yml の `vibehawk status check を post` step と同等のロジック。
-#
-# Claude prompt から check-runs を呼ばない設計（Issue #121-C1 fix と同じ理由、
-# claude-code-action permission model で deny されるため）。
-#
-# 入力（環境変数）:
-#   GH_TOKEN       -- secrets.GITHUB_TOKEN（App permission 状態に依存しない、
-#                     checks: write をデフォルト workflow token に付与する設計）
-#   REPO           -- ${{ github.repository }}
-#   PR_NUMBER      -- ${{ github.event.issue.number }}
-#   OWNER          -- ${{ github.repository_owner }}
+# Claude prompt から check-runs を呼ばない設計（Issue #121-C1 fix と同じ思想、
+# claude-code-action の permission model で deny されるため workflow 側で実行する）。
 
 set -euo pipefail
 
 BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
 
-# PR HEAD SHA を取得（check-runs API は head_sha 必須）
 HEAD_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
 
-# vibehawk-review.yml と同じ substantive review filter で
-# 直前の Claude セッションが投稿した最新 review を取得する。
-# bundled POST 後に副産物の空 COMMENTED review が混入する可能性があるため、
-# state == APPROVED / CHANGES_REQUESTED かつ body 非空で絞り込む。
+# bundled POST 後に副産物の空 COMMENTED review が混入するため、
+# APPROVED / CHANGES_REQUESTED かつ body 非空で substantive review を優先取得する。
 substantive_review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
   | jq -cs --arg bot "${BOT_LOGIN}" '
       [ .[][]
@@ -50,10 +36,8 @@ else
       ')"
 fi
 
-# conclusion 導出表（vibehawk-review.yml と同じ）:
-#   APPROVED         → success（merge OK）
-#   CHANGES_REQUESTED → failure（merge ブロック）
-#   COMMENTED 等その他 / review 未検出 → neutral（informational）
+# conclusion 導出表（vibehawk-review.yml と同じ仕様）:
+# APPROVED → success / CHANGES_REQUESTED → failure / その他 → neutral
 if [[ -z "${review_json}" ]]; then
   conclusion="neutral"
   title="vibehawk: review 未投稿（@vibehawk review）"
@@ -79,7 +63,7 @@ else
   summary="${body}"
 fi
 
-# check-runs API の output.summary は最大 65535 文字。安全側で 60000 字で切る。
+# check-runs API の output.summary 上限 65535 文字に対して安全マージンを取る
 summary="${summary:0:60000}"
 
 gh api -X POST "repos/${REPO}/check-runs" \

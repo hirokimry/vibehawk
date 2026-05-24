@@ -1,20 +1,8 @@
 #!/usr/bin/env bash
-# scripts/ci/vibehawk-review/post-status-check.sh
+# 用途: vibehawk-review.yml の status check POST ステップ本体（Issue #121-C1 fix）
 #
-# vibehawk-review.yml の "vibehawk status check を post（Issue #121-C1 fix）"
-# ステップ（旧 L631 インライン）の本体。
-#
-# vibehawk bot が直前に投稿した最新の bundled review を取得し、その `state`
-# （APPROVED / CHANGES_REQUESTED / その他）から check-runs API の conclusion
-# (success / failure / neutral) に決定論的にマップして post する。branch protection
-# の required status check `vibehawk` を駆動する経路（vibehawk merge gate の主軸）。
-#
-# 入力 env:
-#   GH_TOKEN    — デフォルト GITHUB_TOKEN（checks: write 権限が付与済み）
-#   REPO        — owner/repo
-#   PR_NUMBER   — 対象 PR の番号
-#   HEAD_SHA    — PR HEAD の commit SHA
-#   OWNER       — リポジトリオーナー名
+# 最新の bundled review の state から conclusion を決定論的にマップして check-runs を POST する。
+# branch protection の required check `vibehawk` を駆動する経路（merge gate の主軸）。
 
 set -euo pipefail
 
@@ -25,19 +13,11 @@ set -euo pipefail
 
 BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
 
-# 直前の Claude セッションが投稿した vibehawk の最新 review を取得する。
-# bundled review POST 後に auto_resolve thread 解決で空の COMMENTED review が
-# 副産物として追加されるため、単純な「最後尾」では空 COMMENTED を拾い conclusion が
-# neutral に倒れる（Issue #121 追加修正、PR #129 観測）。substantive な review
-# （APPROVED / CHANGES_REQUESTED かつ body 非空）を優先取得し、無ければ素の最新を
-# fallback に使う。
-# `gh api --paginate` の生 JSON を `jq -cs` で slurp 集約してから一括フィルタする
-# （prev_summary ステップと同じパターン、ページ横断集約の必要性は cli/cli#1268 / #10459）。
-#
-# PR #153 (Issue #152) CodeRabbit Major 指摘対応: 現在の HEAD_SHA に紐づく review のみを
-# 抽出する。`.commit_id` で絞り込むことで、前回 run で投稿された別 commit の review を
-# 誤って拾って status check に stale な conclusion が載るのを防ぐ。GitHub Reviews API
-# では review オブジェクトに `commit_id` が含まれる。
+# auto_resolve 後に空の COMMENTED review が副産物として追加されるため、単純な最後尾では
+# neutral に倒れる（PR #129 観測）。APPROVED / CHANGES_REQUESTED かつ body 非空を優先取得し、
+# 無ければ最新を fallback にする。
+# また前回 run の別 commit review を拾わないよう HEAD_SHA で絞り込む（PR #153 Major 指摘対応）。
+# ページ横断集約は jq -cs で行う（--paginate --jq はページ単位評価のため最新を正しく取れない、cli/cli#1268）。
 substantive_review_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
   | jq -cs --arg bot "${BOT_LOGIN}" --arg head_sha "${HEAD_SHA}" '
       [ .[][]
@@ -64,10 +44,8 @@ else
       ')"
 fi
 
-# conclusion 導出表（Issue #121-C1、docs/specification.md status check 仕様）:
-#   APPROVED         → success（merge OK）
-#   CHANGES_REQUESTED → failure（merge ブロック）
-#   COMMENTED 等その他 / review 未検出 → neutral（informational）
+# conclusion 導出（Issue #121-C1 / docs/specification.md）:
+# APPROVED → success / CHANGES_REQUESTED → failure / その他 → neutral
 if [[ -z "${review_json}" ]]; then
   conclusion="neutral"
   title="vibehawk: review 未投稿"
@@ -93,7 +71,7 @@ else
   summary="${body}"
 fi
 
-# check-runs API の output.summary は最大 65535 文字。安全側で 60000 字で切る。
+# check-runs API の output.summary 上限 65535 文字に対して安全マージンを取る
 summary="${summary:0:60000}"
 
 gh api -X POST "repos/${REPO}/check-runs" \
