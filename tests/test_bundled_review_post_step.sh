@@ -498,6 +498,165 @@ else
 fi
 unset STRUCTURED_OUTPUT DECIDED_EVENT
 
+# ===== Issue #222: APPROVE 時の body / comments 抑制ロジック =====
+# vibehawk-for-<owner>[bot] が APPROVE する PR レビューの body と inline comments を空に
+# 上書きしてから POST する（CodeRabbit 模倣）。サマリは Issue #219 の sticky walkthrough
+# コメント経路で別途残るため、レビュー本文を消しても CEO は引き続きサマリを参照できる。
+# REQUEST_CHANGES / COMMENT 時は従来通り body と comments を維持する（指摘内容の伝達が必須）。
+
+echo ""
+echo "===== Issue #222: APPROVE 時の body / comments 抑制 ====="
+
+echo ""
+echo "--- ケース 15 (Issue #222): DECIDED_EVENT=APPROVE + 非空 body + comments 含む → POST 後 payload.body=\"\" / comments=[] ---"
+reset_logs
+STRUCTURED_OUTPUT='{"event":"COMMENT","body":"<!-- vibehawk:summary -->\n<!-- vibehawk:sha=abc123 -->\n✅ vibehawk: 未解決指摘なし\n\n## 変更サマリ\n長文サマリが続く...","commit_id":"abc123","comments":[{"path":"src/foo.ts","line":10,"side":"RIGHT","body":"⚪ **Info**: 助言コメント"}]}'
+DECIDED_EVENT='APPROVE'
+export STRUCTURED_OUTPUT DECIDED_EVENT
+if run_step > "${TEST_TMP}/step-stdout-15.log" 2>&1; then
+  pass "Issue #222: APPROVE + 非空 body + comments で step が exit 0"
+else
+  fail "Issue #222: APPROVE + 非空 body + comments で step が非ゼロ終了"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #222: APPROVE で gh api -X POST が 1 回（実測: $posts 回、抑制後でも POST は維持）"
+else
+  fail "Issue #222: APPROVE で POST 回数が想定外（期待: 1, 実測: $posts）"
+fi
+if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
+  final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  final_comments_count="$(jq -r '.comments | length' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  if [[ "$final_body" == "" ]]; then
+    pass "Issue #222: APPROVE で payload.body が空文字に上書きされる（CodeRabbit 模倣）"
+  else
+    fail "Issue #222: APPROVE で payload.body が空文字に上書きされていない（実測: '${final_body}'）"
+  fi
+  if [[ "$final_comments_count" == "0" ]]; then
+    pass "Issue #222: APPROVE で payload.comments が空配列に上書きされる（実測 length=${final_comments_count}）"
+  else
+    fail "Issue #222: APPROVE で payload.comments が空配列に上書きされていない（実測 length=${final_comments_count}）"
+  fi
+  if [[ "$final_event" == "APPROVE" ]]; then
+    pass "Issue #222: APPROVE で payload.event=APPROVE が維持される（抑制と event 上書きが干渉しない）"
+  else
+    fail "Issue #222: APPROVE で payload.event が想定外（期待: APPROVE, 実測: ${final_event}）"
+  fi
+else
+  fail "Issue #222: PAYLOAD ファイルが POST 後に残っていない"
+fi
+unset STRUCTURED_OUTPUT DECIDED_EVENT
+
+echo ""
+echo "--- ケース 16 (Issue #222): DECIDED_EVENT=APPROVE + 既に空 body + 空 comments → 冪等性（POST 後も空のまま） ---"
+reset_logs
+# 既に空 body / 空 comments を入力 → validation で body length=0 が弾かれる挙動を確認しつつ、
+# 入力 body が短い場合の境界（length>0 だが極小）を「✅」1 文字でテストする。
+# 抑制発動後の body は同じく空、event=APPROVE が維持される。
+STRUCTURED_OUTPUT='{"event":"COMMENT","body":"✅","commit_id":"deadbeef","comments":[]}'
+DECIDED_EVENT='APPROVE'
+export STRUCTURED_OUTPUT DECIDED_EVENT
+if run_step > "${TEST_TMP}/step-stdout-16.log" 2>&1; then
+  pass "Issue #222: APPROVE + 極小 body + 空 comments で step が exit 0"
+else
+  fail "Issue #222: APPROVE + 極小 body + 空 comments で step が非ゼロ終了"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #222: APPROVE 冪等性で gh api -X POST が 1 回（実測: $posts 回）"
+else
+  fail "Issue #222: APPROVE 冪等性で POST 回数が想定外（期待: 1, 実測: $posts）"
+fi
+if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
+  final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  final_comments_count="$(jq -r '.comments | length' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  if [[ "$final_body" == "" && "$final_comments_count" == "0" ]]; then
+    pass "Issue #222: APPROVE 冪等性 → body=\"\" / comments=[] が維持される"
+  else
+    fail "Issue #222: APPROVE 冪等性が壊れている（body='${final_body}', comments length=${final_comments_count}）"
+  fi
+else
+  fail "Issue #222: PAYLOAD ファイルが POST 後に残っていない"
+fi
+unset STRUCTURED_OUTPUT DECIDED_EVENT
+
+echo ""
+echo "--- ケース 17 (Issue #222): DECIDED_EVENT=REQUEST_CHANGES + 非空 body + comments → body / comments が維持される（regression 防止） ---"
+reset_logs
+# REQUEST_CHANGES では body と inline 指摘を絶対に消してはならない（指摘内容の伝達が必須）。
+# 抑制ロジックが APPROVE に限定されていることを境界で検証する。
+STRUCTURED_OUTPUT='{"event":"COMMENT","body":"⚠️ vibehawk: Critical 1 件 / Major 2 件","commit_id":"feedbeef","comments":[{"path":"src/bar.ts","line":42,"side":"RIGHT","body":"🔴 **Critical**: SQL injection の余地"},{"path":"src/baz.ts","line":99,"side":"RIGHT","body":"🟠 **Major**: 認証バイパスの懸念"}]}'
+DECIDED_EVENT='REQUEST_CHANGES'
+export STRUCTURED_OUTPUT DECIDED_EVENT
+if run_step > "${TEST_TMP}/step-stdout-17.log" 2>&1; then
+  pass "Issue #222: REQUEST_CHANGES + 非空 body + comments で step が exit 0"
+else
+  fail "Issue #222: REQUEST_CHANGES + 非空 body + comments で step が非ゼロ終了"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #222: REQUEST_CHANGES で gh api -X POST が 1 回（実測: $posts 回）"
+else
+  fail "Issue #222: REQUEST_CHANGES で POST 回数が想定外（期待: 1, 実測: $posts）"
+fi
+if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
+  final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  final_comments_count="$(jq -r '.comments | length' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  if [[ "$final_body" != "" ]]; then
+    pass "Issue #222: REQUEST_CHANGES で payload.body が維持される（regression なし、抑制は APPROVE 限定）"
+  else
+    fail "Issue #222: REQUEST_CHANGES で payload.body が空になっている（regression、抑制が APPROVE 以外にも発動）"
+  fi
+  if [[ "$final_comments_count" == "2" ]]; then
+    pass "Issue #222: REQUEST_CHANGES で payload.comments が 2 件維持される（regression なし）"
+  else
+    fail "Issue #222: REQUEST_CHANGES で payload.comments 件数が想定外（期待: 2, 実測: ${final_comments_count}）"
+  fi
+  if [[ "$final_event" == "REQUEST_CHANGES" ]]; then
+    pass "Issue #222: REQUEST_CHANGES で payload.event=REQUEST_CHANGES が維持される"
+  else
+    fail "Issue #222: REQUEST_CHANGES で payload.event が想定外（期待: REQUEST_CHANGES, 実測: ${final_event}）"
+  fi
+else
+  fail "Issue #222: PAYLOAD ファイルが POST 後に残っていない"
+fi
+unset STRUCTURED_OUTPUT DECIDED_EVENT
+
+echo ""
+echo "--- ケース 18 (Issue #222): DECIDED_EVENT=COMMENT + 非空 body + comments → body / comments が維持される（COMMENT も抑制対象外） ---"
+reset_logs
+# 抑制は APPROVE に限定する。COMMENT event は GitHub UI 上 muted badge となるが、
+# decide-event.sh が APPROVE / REQUEST_CHANGES を選ぶ通常運用では到達しない経路。
+# それでも仕様として COMMENT で body / comments が維持されることを境界で検証する。
+STRUCTURED_OUTPUT='{"event":"COMMENT","body":"ℹ️ vibehawk: 情報提供のみ","commit_id":"cafe1234","comments":[{"path":"src/qux.ts","line":1,"side":"RIGHT","body":"⚪ **Info**: 補足説明"}]}'
+DECIDED_EVENT='COMMENT'
+export STRUCTURED_OUTPUT DECIDED_EVENT
+if run_step > "${TEST_TMP}/step-stdout-18.log" 2>&1; then
+  pass "Issue #222: COMMENT + 非空 body + comments で step が exit 0"
+else
+  fail "Issue #222: COMMENT + 非空 body + comments で step が非ゼロ終了"
+fi
+posts="$(count_posts)"
+if [[ "$posts" == "1" ]]; then
+  pass "Issue #222: COMMENT で gh api -X POST が 1 回（実測: $posts 回）"
+else
+  fail "Issue #222: COMMENT で POST 回数が想定外（期待: 1, 実測: $posts）"
+fi
+if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
+  final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  final_comments_count="$(jq -r '.comments | length' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+  if [[ "$final_body" != "" && "$final_comments_count" == "1" ]]; then
+    pass "Issue #222: COMMENT で payload.body と payload.comments が維持される（抑制は APPROVE 限定の境界確認）"
+  else
+    fail "Issue #222: COMMENT で抑制が誤発動した（body='${final_body}', comments length=${final_comments_count}）"
+  fi
+else
+  fail "Issue #222: PAYLOAD ファイルが POST 後に残っていない"
+fi
+unset STRUCTURED_OUTPUT DECIDED_EVENT
+
 # ===== Issue #171: severity 不問・件数主軸ルールの統合実証 =====
 # decide-event.sh と bundled POST step を chain 実行し、新ルール（Minor/Info 1 件 → REQUEST_CHANGES、
 # 0 件 → APPROVE）が最終 payload.event に反映されることを実証する。
