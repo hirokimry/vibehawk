@@ -117,19 +117,35 @@ else
   severity_counts='{"critical":0,"major":0,"minor":0,"trivial":0,"info":0}'
 fi
 
-# 高レベル概要（.body 冒頭 1 段落、200 文字超は省略記号で切る）
+# 📝 Walkthrough セクション（CodeRabbit 互換、Issue #227）
+# Claude が schema で必須化された walkthrough_narrative + changes_table を返すため、
+# それらを <details><summary>📝 Walkthrough</summary> で折り畳んで展開する。
+# 後方互換: STRUCTURED_OUTPUT 空 or 必須フィールド欠落時はセクション非出力。
+# 既存「📝 概要」200 文字切り詰めは撤去（narrative が同等以上の情報を持つ、Issue #227）。
 if [ -n "$STRUCTURED_OUTPUT" ]; then
-  body_full=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.body // ""')
-  high_summary=$(printf '%s' "$body_full" | awk -v max=200 '
-    BEGIN { in_first = 1; total = "" }
-    in_first && NF == 0 { in_first = 0; next }
-    in_first { total = total (total == "" ? "" : "\n") $0 }
-    END {
-      if (length(total) > max) printf "%s…", substr(total, 1, max)
-      else printf "%s", total
-    }')
-  if [ -n "$high_summary" ]; then
-    printf '### 📝 概要\n\n%s\n\n' "$high_summary"
+  walkthrough_narrative=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.walkthrough_narrative // ""')
+  changes_table_json=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -c '.changes_table // []')
+  changes_count=$(printf '%s' "$changes_table_json" | jq -r 'length // 0')
+
+  if [ -n "$walkthrough_narrative" ] || [ "${changes_count:-0}" -gt 0 ]; then
+    printf '<details>\n<summary>📝 Walkthrough</summary>\n\n'
+
+    if [ -n "$walkthrough_narrative" ]; then
+      printf '## Walkthrough\n\n%s\n\n' "$walkthrough_narrative"
+    fi
+
+    if [ "${changes_count:-0}" -gt 0 ]; then
+      printf '## Changes\n\n'
+      printf '| Layer / File(s) | Summary |\n'
+      printf '|---|---|\n'
+      # 各 layer 行: "| <layer><br>**Files**: file1, file2 | <summary> |"
+      printf '%s' "$changes_table_json" | jq -r '
+        .[] | "| " + .layer + "<br>**Files**: " + (.files | join(", ")) + " | " + .summary + " |"
+      '
+      printf '\n'
+    fi
+
+    printf '</details>\n\n'
   fi
 fi
 
@@ -183,18 +199,8 @@ if [ -n "$TOOL_FAILURES" ]; then
   printf '\n'
 fi
 
-# Walkthrough（.body の残り全体、折り畳み）
-if [ -n "$STRUCTURED_OUTPUT" ] && [ -n "${body_full:-}" ]; then
-  walkthrough_body=$(printf '%s' "$body_full" | awk '
-    BEGIN { in_first = 1; out = "" }
-    in_first && NF == 0 { in_first = 0; next }
-    in_first { next }
-    { out = out (out == "" ? "" : "\n") $0 }
-    END { printf "%s", out }')
-  if [ -n "$walkthrough_body" ]; then
-    printf '<details>\n<summary>📖 詳細レビュー</summary>\n\n%s\n\n</details>\n\n' "$walkthrough_body"
-  fi
-fi
+# Issue #227: 旧「📖 詳細レビュー」（body_full 残り全体の折り畳み）は撤去。
+# walkthrough_narrative + changes_table が冒頭の「📝 Walkthrough」セクションで同等以上の情報を持つため。
 
 # Internal state JSON（マーカーで囲み、次回 incremental 判定の根拠）
 timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

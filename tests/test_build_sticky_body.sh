@@ -130,6 +130,47 @@ else
   fail "Case 9: ignored ファイル一覧が期待通りに表示されない"
 fi
 
+echo "Case 10: Issue #227 — walkthrough_narrative + changes_table がある → 📝 Walkthrough セクションが含まれる"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"narrative 本文","changes_table":[{"layer":"L1","files":["a.sh"],"summary":"S1"}]}' run_build)
+if grep -qF '📝 Walkthrough' <<< "$out" \
+  && grep -qF '## Walkthrough' <<< "$out" \
+  && grep -qF 'narrative 本文' <<< "$out" \
+  && grep -qF '## Changes' <<< "$out" \
+  && grep -qF '| Layer / File(s) | Summary |' <<< "$out" \
+  && grep -qF 'L1<br>**Files**: a.sh' <<< "$out"; then
+  pass "Case 10"
+else
+  fail "Case 10: Walkthrough セクションまたは Changes テーブルが期待通りに展開されない"
+fi
+
+echo "Case 11: Issue #227 — walkthrough_narrative が 1000 文字でも切り詰めなしで全文表示される"
+long_text=$(printf 'A%.0s' $(seq 1 1000))
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"'"${long_text}"'","changes_table":[]}' run_build)
+# 既存「📝 概要」セクションが撤去されており、「…」省略記号が出ない（200 文字切り詰め撤去確認）
+if grep -qF "$long_text" <<< "$out" && ! grep -qF '### 📝 概要' <<< "$out"; then
+  pass "Case 11"
+else
+  fail "Case 11: 切り詰めなしで 1000 文字が表示されていないか、旧『📝 概要』が撤去されていない"
+fi
+
+echo "Case 12: Issue #227 — changes_table に 3 layer → Markdown テーブルに 3 行表示される"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"layer":"L1","files":["f1"],"summary":"s1"},{"layer":"L2","files":["f2"],"summary":"s2"},{"layer":"L3","files":["f3"],"summary":"s3"}]}' run_build)
+# 3 行のテーブル行が含まれていることを確認
+row_count=$(grep -c '<br>\*\*Files\*\*:' <<< "$out" || true)
+if [[ "$row_count" -eq 3 ]]; then
+  pass "Case 12"
+else
+  fail "Case 12: changes_table 3 行が期待通り表示されない（row_count=$row_count）"
+fi
+
+echo "Case 13: Issue #227 — walkthrough_narrative 欠落 + changes_table 空 → Walkthrough セクション非出力（後方互換）"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[]}' run_build)
+if ! grep -qF '📝 Walkthrough' <<< "$out"; then
+  pass "Case 13"
+else
+  fail "Case 13: walkthrough_narrative 欠落でも Walkthrough セクションが出ている（後方互換破壊）"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"

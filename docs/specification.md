@@ -259,13 +259,15 @@ vibehawk は **2 つの sticky 経路** を独立に並走する。
    - 📥 Commits（base..HEAD SHA range）
    - 📒 Files selected for processing (N)
    - 💤 Files with no reviewable changes (N)
-5. 高レベル概要（`.body` 冒頭 1 段落、200 文字超は省略記号で切る）
+5. `<details><summary>📝 Walkthrough</summary>` セクション（Issue #227、CodeRabbit 互換）。配下に以下を含む:
+   - `## Walkthrough`: Claude が schema 必須化された `walkthrough_narrative` フィールドで返す物語的サマリ（1〜2 段落、200〜800 文字、切り詰めなしで全文展開）
+   - `## Changes`: Claude が schema 必須化された `changes_table[]` フィールドで返す変更一覧を `|Layer / File(s)|Summary|` Markdown テーブルで展開
+   - Issue #227 で旧「高レベル概要（200 文字切り詰め）」と旧「Walkthrough（`.body` 残り全体）」を撤去し、本セクションに統合
 6. severity 集計表（🔴 / 🟠 / 🟡 / 🔵 / ⚪ の件数）
 7. 主要指摘リスト（🔴 / 🟠 を上位 10 件、`path:line` + body 冒頭 80 字）
 8. Review Status callout（`normal` 以外で表示: `skipped` / `paused` / `draft`）
 9. Tool failures callout（外部ツール起動失敗）
-10. Walkthrough（`<details>` 折り畳み、`.body` の残り全体）
-11. Internal state JSON（`<!-- vibehawk:state {"last_sha":"...","decided_event":"...","severity":{...},"timestamp":"..."} -->`、次回 incremental 判定の根拠）
+10. Internal state JSON（`<!-- vibehawk:state {"last_sha":"...","decided_event":"...","severity":{...},"timestamp":"..."} -->`、次回 incremental 判定の根拠）
 
 `ℹ️ Recent review info` セクションのデータは `.github/scripts/fetch-recent-review-info.sh` が `gh api` で取得して GITHUB_OUTPUT に 1 行 JSON で書き出し、`build-sticky-body.sh` が env 経由で受け取る。Claude prompt schema は変更されない（課金影響ゼロ）。
 
