@@ -181,6 +181,14 @@ jobs:
                   "side": "RIGHT",
                   "body": "🟠 **Major**: 指摘内容..."
                 }
+              ],
+              "walkthrough_narrative": "変更全体の物語的サマリ（1〜2 段落、200〜800 文字、CodeRabbit 互換、Issue #227）",
+              "changes_table": [
+                {
+                  "layer": "ワークフロー仕様更新",
+                  "files": ["scripts/ci/foo.sh"],
+                  "summary": "POST 前ペイロードの上書きロジックを追加した"
+                }
               ]
             }
             ```
@@ -213,6 +221,21 @@ jobs:
             - PR 全体の変更内容の要約（簡潔に）
             - 検出した指摘の合計件数を severity 別に表示
             - 末尾に上記 2 行（`<!-- vibehawk:summary -->` / `<!-- vibehawk:sha=... -->`）を含める
+
+            ## walkthrough_narrative の必須要件（Issue #227、CodeRabbit 互換）
+
+            - 変更全体を **物語（narrative）として 1〜2 段落（200〜800 文字）** で書く
+            - 何が変わったか・なぜ変わったかを CEO が 30 秒でスキャンできる形にする
+            - 動作主語で書く（「〜できるようになった」「〜が止まった」「〜になった」）
+            - クラス名・メソッド名・ファイルパスの羅列を避ける（実装語彙は最小限）
+            - sticky walkthrough コメントの `## Walkthrough` セクションに切り詰めなしで全文展開される
+
+            ## changes_table の必須要件（Issue #227、CodeRabbit 互換）
+
+            - 変更を **意味的な layer** でグルーピング（例: 「ワークフロー仕様更新」「POST 前ペイロード上書き実装」「テストケース追加」）
+            - 各 layer に該当ファイル一覧（`files[]`）と 1〜2 文の `summary` を付ける
+            - **最大 10 layer まで**。それ以上は意味的に統合する（細粒度の `path:line` 単位の羅列にしない）
+            - sticky walkthrough コメントの `## Changes` セクションに Markdown テーブル `|Layer / File(s)|Summary|` 形式で展開される
 
             ## inline 指摘の severity 5 段階分類（CodeRabbit 公式仕様、`.claude/rules/severity/coderabbit.md` 準拠）
 
@@ -332,7 +355,7 @@ jobs:
             **ファイル書き出し全般（`$GITHUB_WORKSPACE/vibehawk-review.json` 等）も行わない**。schema 外の経路で結果を返さない（Issue #164 fix）。応答は claude-code-action の最終 assistant message として返すことが唯一の正解。
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
-            --json-schema '{"type":"object","required":["event","body","commit_id","comments"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}}}}'
+            --json-schema '{"type":"object","required":["event","body","commit_id","comments","walkthrough_narrative","changes_table"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}},"walkthrough_narrative":{"type":"string","minLength":1},"changes_table":{"type":"array","items":{"type":"object","required":["layer","files","summary"],"additionalProperties":false,"properties":{"layer":{"type":"string","minLength":1},"files":{"type":"array","items":{"type":"string","minLength":1},"minItems":1},"summary":{"type":"string","minLength":1}}}}}}'
 
       - name: vibehawk auto_resolve（直った旧指摘を resolved 化、Issue #167）
         # Issue #167: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql
