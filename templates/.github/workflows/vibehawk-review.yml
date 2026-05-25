@@ -390,13 +390,30 @@ jobs:
         # 詳細: scripts/ci/vibehawk-review/decide-event.sh（エピック #174 / Issue #176）
         run: bash scripts/ci/vibehawk-review/decide-event.sh
 
-      - name: vibehawk sticky walkthrough コメント upsert（Issue #219）
+      - name: vibehawk Recent review info 用データ取得（Issue #226）
+        # sticky walkthrough コメントの ℹ️ Recent review info セクション用に、
+        # PR commits / 処理対象ファイル / 除外ファイルの 3 種を gh api で取得して
+        # GITHUB_OUTPUT に 1 行 JSON で書き込む（load-config.sh と同じパターン）。
+        # 失敗しても sticky upsert step 側で env 空 = セクション非出力で degrade する。
+        id: recent_info
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PATH_FILTERS_JSON: ${{ steps.vibehawk_config.outputs.path_filters }}
+        # 詳細: .github/scripts/fetch-recent-review-info.sh（Issue #226）
+        run: bash .github/scripts/fetch-recent-review-info.sh
+
+      - name: vibehawk sticky walkthrough コメント upsert（Issue #219 / #226）
         # PR ごとに 1 個固定の issue-comment sticky を維持する（CodeRabbit 模倣）。
         # build-sticky-body.sh が body markdown を組み立て、post-sticky-comment.sh が
         # 既存 sticky を bot 名義 + 先頭マーカーで find して POST/PATCH/DELETE 分岐の upsert を行う。
         # 失敗時は warning ログ + exit 0 とし、後続の bundled review / status check post に影響させない。
         # 配置: bundled review POST の **前** に置く（タイムライン上 sticky が inline review より先に
         # 並ぶようにするため、CodeRabbit と同じ「PR を開いた瞬間に sticky が最上位」を実現する）。
+        # Issue #226: Recent review info セクション用の env 4 種（RUN_ID / COMMITS_JSON /
+        # FILES_SELECTED_JSON / FILES_IGNORED_JSON）を fetch-recent-review-info.sh 経由で受ける。
         if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -407,7 +424,11 @@ jobs:
           DECIDED_EVENT: ${{ steps.decide_event.outputs.decided_event }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_STATUS: normal
-        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219）
+          RUN_ID: ${{ github.run_id }}
+          COMMITS_JSON: ${{ steps.recent_info.outputs.commits_json }}
+          FILES_SELECTED_JSON: ${{ steps.recent_info.outputs.files_selected_json }}
+          FILES_IGNORED_JSON: ${{ steps.recent_info.outputs.files_ignored_json }}
+        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219 / #226）
         run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
 
       - name: vibehawk bundled review を post（Issue #164 fix / Issue #166）

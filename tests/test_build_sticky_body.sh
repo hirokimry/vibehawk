@@ -90,6 +90,46 @@ else
   fail "Case 6: state JSON が valid でない（抽出 = ${state_json}）"
 fi
 
+echo "Case 7: Issue #226 — env 4 種が空で Recent review info セクションが出力されない（後方互換）"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"テスト","commit_id":"abc","comments":[]}' run_build)
+if ! grep -qF 'ℹ️ Recent review info' <<< "$out"; then
+  pass "Case 7"
+else
+  fail "Case 7: env 未設定でも Recent review info セクションが出力されている（既存テスト破壊）"
+fi
+
+echo "Case 8: Issue #226 — env 4 種が揃うと Recent review info + 4 サブセクションが含まれる"
+out=$(RUN_ID=12345 \
+  COMMITS_JSON='[{"sha":"abc1234567"},{"sha":"def4567890"}]' \
+  FILES_SELECTED_JSON='["a.sh","b.ts"]' \
+  FILES_IGNORED_JSON='["package-lock.json"]' \
+  STRUCTURED_OUTPUT='{"event":"COMMENT","body":"テスト","commit_id":"abc","comments":[]}' \
+  run_build)
+if grep -qF 'ℹ️ Recent review info' <<< "$out" \
+  && grep -qF '⚙️ Run configuration' <<< "$out" \
+  && grep -qF '📥 Commits' <<< "$out" \
+  && grep -qF '📒 Files selected for processing (2)' <<< "$out" \
+  && grep -qF '💤 Files with no reviewable changes (1)' <<< "$out" \
+  && grep -qF '| Run ID | 12345 |' <<< "$out" \
+  && grep -qF 'abc1234 and def4567' <<< "$out"; then
+  pass "Case 8"
+else
+  fail "Case 8: Recent review info セクションまたはサブセクション 4 種が揃わない"
+fi
+
+echo "Case 9: Issue #226 — FILES_IGNORED_JSON に複数ファイルがあれば全件列挙される"
+out=$(RUN_ID=99 \
+  FILES_IGNORED_JSON='["package-lock.json","bun.lockb"]' \
+  STRUCTURED_OUTPUT='' \
+  run_build)
+if grep -qF '💤 Files with no reviewable changes (2)' <<< "$out" \
+  && grep -qF '`package-lock.json`' <<< "$out" \
+  && grep -qF '`bun.lockb`' <<< "$out"; then
+  pass "Case 9"
+else
+  fail "Case 9: ignored ファイル一覧が期待通りに表示されない"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"
