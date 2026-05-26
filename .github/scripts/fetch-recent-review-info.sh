@@ -20,6 +20,12 @@
 
 set -euo pipefail
 
+# `docs/**` のような再帰 glob を bash で評価するため globstar を有効化する
+# （bash 4+ で機能、bash 3.2 ではエラーになるが || true で無害化、macOS では bash 5+ 推奨）。
+# 有効化しないと Windows Git Bash で「[[ "docs/api.md" == docs/** ]]」が false になり、
+# path_filters による include / exclude 分類が壊れる（PR #235 CI windows fail で実証）。
+shopt -s globstar 2>/dev/null || true
+
 : "${REPO:?REPO must be set}"
 : "${PR_NUMBER:?PR_NUMBER must be set}"
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
