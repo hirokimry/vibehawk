@@ -171,6 +171,54 @@ else
   fail "Case 13: walkthrough_narrative 欠落でも Walkthrough セクションが出ている（後方互換破壊）"
 fi
 
+echo "Case 14: Issue #228 — review_effort difficulty 3 → 🎯 3 (Moderate) | ⏱️ ~M minutes 表示"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":3,"minutes":25}}' run_build)
+if grep -qF '## 🎯 3 (Moderate) | ⏱️ ~25 minutes' <<< "$out"; then
+  pass "Case 14"
+else
+  fail "Case 14: review_effort 行が期待形式で表示されない"
+fi
+
+echo "Case 15: Issue #228 — RELATED_PRS_JSON に 2 件 → ## Possibly related PRs に列挙、0 件は『No related PRs found.』"
+out=$(RELATED_PRS_JSON='[{"number":150,"title":"sticky 機能拡張"},{"number":160,"title":"レビュー仕様変更"}]' \
+  STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10}}' \
+  run_build)
+if grep -qF '## Possibly related PRs' <<< "$out" \
+  && grep -qF -e '- #150: sticky 機能拡張' <<< "$out" \
+  && grep -qF -e '- #160: レビュー仕様変更' <<< "$out"; then
+  pass "Case 15a (列挙)"
+else
+  fail "Case 15a: Possibly related PRs の列挙が期待通りでない"
+fi
+out_empty=$(RELATED_PRS_JSON='[]' \
+  STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":1,"minutes":5}}' \
+  run_build)
+if grep -qF 'No related PRs found.' <<< "$out_empty"; then
+  pass "Case 15b (0 件 fallback)"
+else
+  fail "Case 15b: 0 件時の『No related PRs found.』が出ない"
+fi
+
+echo "Case 16: Issue #228 — SUGGESTED_REVIEWERS_JSON に 2 名 → ## Suggested reviewers に列挙、0 名は『No suggested reviewers.』"
+out=$(SUGGESTED_REVIEWERS_JSON='["hirokimry","alice"]' \
+  STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":3,"minutes":20}}' \
+  run_build)
+if grep -qF '## Suggested reviewers' <<< "$out" \
+  && grep -qF -e '- @hirokimry' <<< "$out" \
+  && grep -qF -e '- @alice' <<< "$out"; then
+  pass "Case 16a (列挙)"
+else
+  fail "Case 16a: Suggested reviewers の列挙が期待通りでない"
+fi
+out_empty=$(SUGGESTED_REVIEWERS_JSON='[]' \
+  STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":1,"minutes":5}}' \
+  run_build)
+if grep -qF 'No suggested reviewers.' <<< "$out_empty"; then
+  pass "Case 16b (0 名 fallback)"
+else
+  fail "Case 16b: 0 名時の『No suggested reviewers.』が出ない"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"

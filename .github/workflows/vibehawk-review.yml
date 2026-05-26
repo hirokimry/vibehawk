@@ -189,7 +189,8 @@ jobs:
                   "files": ["scripts/ci/foo.sh"],
                   "summary": "POST 前ペイロードの上書きロジックを追加した"
                 }
-              ]
+              ],
+              "review_effort": {"difficulty": 3, "minutes": 20}
             }
             ```
 
@@ -236,6 +237,18 @@ jobs:
             - 各 layer に該当ファイル一覧（`files[]`）と 1〜2 文の `summary` を付ける
             - **最大 10 layer まで**。それ以上は意味的に統合する（細粒度の `path:line` 単位の羅列にしない）
             - sticky walkthrough コメントの `## Changes` セクションに Markdown テーブル `|Layer / File(s)|Summary|` 形式で展開される
+
+            ## review_effort の必須要件（Issue #228、CodeRabbit 互換）
+
+            - `difficulty`: 1〜5 の整数で変更の難易度を判定する。ラベル対応:
+              - 1 = Trivial（タイポ修正 / 単一行変更）
+              - 2 = Easy（小規模・既存パターン踏襲）
+              - 3 = Moderate（複数ファイル・新規ロジック）
+              - 4 = Complex（アーキテクチャ変更 / 横断的修正）
+              - 5 = Very Complex（依存メジャー更新 / 大規模リファクタ）
+            - `minutes`: レビュアーが PR 全体を確認するのに要する見積もり時間（分単位の整数、最低 1）
+            - 例: `{"difficulty": 3, "minutes": 20}`
+            - sticky walkthrough コメントに `## 🎯 N (Label) | ⏱️ ~M minutes` 形式で展開される
 
             ## inline 指摘の severity 5 段階分類（CodeRabbit 公式仕様、`.claude/rules/severity/coderabbit.md` 準拠）
 
@@ -355,7 +368,7 @@ jobs:
             **ファイル書き出し全般（`$GITHUB_WORKSPACE/vibehawk-review.json` 等）も行わない**。schema 外の経路で結果を返さない（Issue #164 fix）。応答は claude-code-action の最終 assistant message として返すことが唯一の正解。
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
-            --json-schema '{"type":"object","required":["event","body","commit_id","comments","walkthrough_narrative","changes_table"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}},"walkthrough_narrative":{"type":"string","minLength":1},"changes_table":{"type":"array","items":{"type":"object","required":["layer","files","summary"],"additionalProperties":false,"properties":{"layer":{"type":"string","minLength":1},"files":{"type":"array","items":{"type":"string","minLength":1},"minItems":1},"summary":{"type":"string","minLength":1}}}}}}'
+            --json-schema '{"type":"object","required":["event","body","commit_id","comments","walkthrough_narrative","changes_table","review_effort"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}},"walkthrough_narrative":{"type":"string","minLength":1},"changes_table":{"type":"array","items":{"type":"object","required":["layer","files","summary"],"additionalProperties":false,"properties":{"layer":{"type":"string","minLength":1},"files":{"type":"array","items":{"type":"string","minLength":1},"minItems":1},"summary":{"type":"string","minLength":1}}}},"review_effort":{"type":"object","required":["difficulty","minutes"],"additionalProperties":false,"properties":{"difficulty":{"type":"integer","minimum":1,"maximum":5},"minutes":{"type":"integer","minimum":1}}}}}'
 
       - name: vibehawk auto_resolve（直った旧指摘を resolved 化、Issue #167）
         # Issue #167: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql
@@ -428,6 +441,30 @@ jobs:
         # 詳細: .github/scripts/fetch-recent-review-info.sh（Issue #226）
         run: bash .github/scripts/fetch-recent-review-info.sh
 
+      - name: vibehawk Possibly related PRs 取得（Issue #228）
+        # sticky walkthrough コメントの ## Possibly related PRs セクション用に
+        # search/issues API で関連 closed PR を最大 5 件取得する（課金影響なし）。
+        # 失敗時は空配列 [] で degrade（sticky 側で「No related PRs found.」表示）。
+        id: related_prs
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .github/scripts/fetch-related-prs.sh
+
+      - name: vibehawk Suggested reviewers 取得（Issue #228）
+        # sticky walkthrough コメントの ## Suggested reviewers セクション用に
+        # CODEOWNERS + git log 上位コミッターから最大 3 名を取得する（課金影響なし）。
+        id: suggested_reviewers
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: bash .github/scripts/fetch-suggested-reviewers.sh
+
       - name: vibehawk sticky walkthrough コメント upsert（Issue #219 / #226）
         # PR ごとに 1 個固定の issue-comment sticky を維持する（CodeRabbit 模倣）。
         # build-sticky-body.sh が body markdown を組み立て、post-sticky-comment.sh が
@@ -451,7 +488,9 @@ jobs:
           COMMITS_JSON: ${{ steps.recent_info.outputs.commits_json }}
           FILES_SELECTED_JSON: ${{ steps.recent_info.outputs.files_selected_json }}
           FILES_IGNORED_JSON: ${{ steps.recent_info.outputs.files_ignored_json }}
-        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219 / #226）
+          RELATED_PRS_JSON: ${{ steps.related_prs.outputs.related_prs_json }}
+          SUGGESTED_REVIEWERS_JSON: ${{ steps.suggested_reviewers.outputs.suggested_reviewers_json }}
+        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219 / #226 / #228）
         run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
 
       - name: vibehawk bundled review を post（Issue #164 fix / Issue #166）
