@@ -190,7 +190,11 @@ jobs:
                   "summary": "POST 前ペイロードの上書きロジックを追加した"
                 }
               ],
-              "review_effort": {"difficulty": 3, "minutes": 20}
+              "review_effort": {"difficulty": 3, "minutes": 20},
+              "pre_merge_checks": {
+                "linked_issues_check": {"status": "passed", "explanation": "Issue #226 の完了条件 6 件全て実装済み"},
+                "out_of_scope_check": {"status": "passed", "explanation": "全変更が Issue 提案範囲内"}
+              }
             }
             ```
 
@@ -237,6 +241,19 @@ jobs:
             - 各 layer に該当ファイル一覧（`files[]`）と 1〜2 文の `summary` を付ける
             - **最大 10 layer まで**。それ以上は意味的に統合する（細粒度の `path:line` 単位の羅列にしない）
             - sticky walkthrough コメントの `## Changes` セクションに Markdown テーブル `|Layer / File(s)|Summary|` 形式で展開される
+
+            ## pre_merge_checks の必須要件（Issue #229、CodeRabbit 互換）
+
+            5 項目のマージ前チェックのうち、**Claude が判定するのは linked_issues_check と out_of_scope_check の 2 項目**（意味的判断が必要なため）。残り 3 項目（Title check / Description check / Docstring Coverage）は workflow step が機械判定する。
+
+            - `linked_issues_check`:
+              - `status`: `"passed"` / `"failed"` / `"skipped"`
+              - `explanation`: 判定理由を 1〜2 文で。「Issue #N の完了条件 X を本 PR は実装している」など。Issue が紐づかない PR では `skipped`
+            - `out_of_scope_check`:
+              - `status`: `"passed"` / `"failed"` / `"skipped"`
+              - `explanation`: Issue 本文の「📝 提案」「📍 関連ファイル」と PR diff が一致するかを判定。範囲外変更があれば `failed`、Issue が紐づかなければ `skipped`
+            - 例: `{"linked_issues_check": {"status": "passed", "explanation": "完了条件 5 件全て実装済み"}, "out_of_scope_check": {"status": "passed", "explanation": "全変更が Issue 提案範囲内"}}`
+            - sticky walkthrough コメントに `<details><summary>🚥 Pre-merge checks</summary>` セクションで 5 行表示される
 
             ## review_effort の必須要件（Issue #228、CodeRabbit 互換）
 
@@ -368,7 +385,7 @@ jobs:
             **ファイル書き出し全般（`$GITHUB_WORKSPACE/vibehawk-review.json` 等）も行わない**。schema 外の経路で結果を返さない（Issue #164 fix）。応答は claude-code-action の最終 assistant message として返すことが唯一の正解。
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
-            --json-schema '{"type":"object","required":["event","body","commit_id","comments","walkthrough_narrative","changes_table","review_effort"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}},"walkthrough_narrative":{"type":"string","minLength":1},"changes_table":{"type":"array","items":{"type":"object","required":["layer","files","summary"],"additionalProperties":false,"properties":{"layer":{"type":"string","minLength":1},"files":{"type":"array","items":{"type":"string","minLength":1},"minItems":1},"summary":{"type":"string","minLength":1}}}},"review_effort":{"type":"object","required":["difficulty","minutes"],"additionalProperties":false,"properties":{"difficulty":{"type":"integer","minimum":1,"maximum":5},"minutes":{"type":"integer","minimum":1}}}}}'
+            --json-schema '{"type":"object","required":["event","body","commit_id","comments","walkthrough_narrative","changes_table","review_effort","pre_merge_checks"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}},"walkthrough_narrative":{"type":"string","minLength":1},"changes_table":{"type":"array","items":{"type":"object","required":["layer","files","summary"],"additionalProperties":false,"properties":{"layer":{"type":"string","minLength":1},"files":{"type":"array","items":{"type":"string","minLength":1},"minItems":1},"summary":{"type":"string","minLength":1}}}},"review_effort":{"type":"object","required":["difficulty","minutes"],"additionalProperties":false,"properties":{"difficulty":{"type":"integer","minimum":1,"maximum":5},"minutes":{"type":"integer","minimum":1}}},"pre_merge_checks":{"type":"object","required":["linked_issues_check","out_of_scope_check"],"additionalProperties":false,"properties":{"linked_issues_check":{"type":"object","required":["status","explanation"],"additionalProperties":false,"properties":{"status":{"enum":["passed","failed","skipped"]},"explanation":{"type":"string","minLength":1}}},"out_of_scope_check":{"type":"object","required":["status","explanation"],"additionalProperties":false,"properties":{"status":{"enum":["passed","failed","skipped"]},"explanation":{"type":"string","minLength":1}}}}}}}'
 
       - name: vibehawk auto_resolve（直った旧指摘を resolved 化、Issue #167）
         # Issue #167: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql
@@ -465,6 +482,30 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: bash .github/scripts/fetch-suggested-reviewers.sh
 
+      - name: vibehawk Pre-merge Title check（Issue #229）
+        # sticky walkthrough コメントの 🚥 Pre-merge checks セクション用に
+        # PR タイトルが Conventional Commits 形式に従うかを機械判定する（課金影響なし）。
+        id: pre_merge_title
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bash .github/scripts/check-pr-title.sh
+
+      - name: vibehawk Pre-merge Description check（Issue #229）
+        # sticky walkthrough コメントの 🚥 Pre-merge checks セクション用に
+        # PR 本文に必須要素（Issue 参照 + ## 見出し）があるかを機械判定する（課金影響なし）。
+        id: pre_merge_description
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash .github/scripts/check-pr-description.sh
+
+      - name: vibehawk Pre-merge Docstring coverage check（Issue #229）
+        # v1 は言語不問で skipped を出力。言語別ツール統合は別 Issue で。
+        id: pre_merge_docstring
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        run: bash .github/scripts/check-docstring-coverage.sh
+
       - name: vibehawk sticky walkthrough コメント upsert（Issue #219 / #226）
         # PR ごとに 1 個固定の issue-comment sticky を維持する（CodeRabbit 模倣）。
         # build-sticky-body.sh が body markdown を組み立て、post-sticky-comment.sh が
@@ -490,7 +531,13 @@ jobs:
           FILES_IGNORED_JSON: ${{ steps.recent_info.outputs.files_ignored_json }}
           RELATED_PRS_JSON: ${{ steps.related_prs.outputs.related_prs_json }}
           SUGGESTED_REVIEWERS_JSON: ${{ steps.suggested_reviewers.outputs.suggested_reviewers_json }}
-        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219 / #226 / #228）
+          PRE_MERGE_TITLE_STATUS: ${{ steps.pre_merge_title.outputs.title_check_status }}
+          PRE_MERGE_TITLE_EXPLANATION: ${{ steps.pre_merge_title.outputs.title_check_explanation }}
+          PRE_MERGE_DESCRIPTION_STATUS: ${{ steps.pre_merge_description.outputs.description_check_status }}
+          PRE_MERGE_DESCRIPTION_EXPLANATION: ${{ steps.pre_merge_description.outputs.description_check_explanation }}
+          PRE_MERGE_DOCSTRING_STATUS: ${{ steps.pre_merge_docstring.outputs.docstring_check_status }}
+          PRE_MERGE_DOCSTRING_EXPLANATION: ${{ steps.pre_merge_docstring.outputs.docstring_check_explanation }}
+        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219 / #226 / #228 / #229）
         run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
 
       - name: vibehawk bundled review を post（Issue #164 fix / Issue #166）

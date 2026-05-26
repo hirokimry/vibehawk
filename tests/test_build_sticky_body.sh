@@ -219,6 +219,34 @@ else
   fail "Case 16b: 0 名時の『No suggested reviewers.』が出ない"
 fi
 
+echo "Case 17: Issue #229 — Pre-merge checks 5 項目すべて passed → ✅ 4 passed (skipped 1 件) summary"
+out=$(PRE_MERGE_TITLE_STATUS="passed" PRE_MERGE_TITLE_EXPLANATION="OK" \
+      PRE_MERGE_DESCRIPTION_STATUS="passed" PRE_MERGE_DESCRIPTION_EXPLANATION="OK" \
+      PRE_MERGE_DOCSTRING_STATUS="skipped" PRE_MERGE_DOCSTRING_EXPLANATION="N/A" \
+      STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10},"pre_merge_checks":{"linked_issues_check":{"status":"passed","explanation":"A"},"out_of_scope_check":{"status":"passed","explanation":"B"}}}' \
+      run_build)
+if grep -qF '🚥 Pre-merge checks | ✅ 4 passed' <<< "$out" \
+  && grep -qF '| Title check | ✅ passed' <<< "$out" \
+  && grep -qF '| Linked Issues check | ✅ passed' <<< "$out" \
+  && grep -qF '| Docstring Coverage | ⏭️ skipped' <<< "$out"; then
+  pass "Case 17"
+else
+  fail "Case 17: Pre-merge checks の summary または 5 項目表示が期待通りでない"
+fi
+
+echo "Case 18: Issue #229 — Pre-merge checks に failed 1 件あり → ⚠️ 1 failed summary"
+out=$(PRE_MERGE_TITLE_STATUS="failed" PRE_MERGE_TITLE_EXPLANATION="形式違反" \
+      PRE_MERGE_DESCRIPTION_STATUS="passed" PRE_MERGE_DESCRIPTION_EXPLANATION="OK" \
+      PRE_MERGE_DOCSTRING_STATUS="skipped" PRE_MERGE_DOCSTRING_EXPLANATION="N/A" \
+      STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10},"pre_merge_checks":{"linked_issues_check":{"status":"passed","explanation":"A"},"out_of_scope_check":{"status":"passed","explanation":"B"}}}' \
+      run_build)
+if grep -qF '🚥 Pre-merge checks | ⚠️ 1 failed' <<< "$out" \
+  && grep -qF '| Title check | ❌ failed' <<< "$out"; then
+  pass "Case 18"
+else
+  fail "Case 18: failed 1 件時の summary 切替が期待通りでない"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"
