@@ -20,12 +20,6 @@
 
 set -euo pipefail
 
-# `docs/**` のような再帰 glob を bash で評価するため globstar を有効化する
-# （bash 4+ で機能、bash 3.2 ではエラーになるが || true で無害化、macOS では bash 5+ 推奨）。
-# 有効化しないと Windows Git Bash で「[[ "docs/api.md" == docs/** ]]」が false になり、
-# path_filters による include / exclude 分類が壊れる（PR #235 CI windows fail で実証）。
-shopt -s globstar 2>/dev/null || true
-
 : "${REPO:?REPO must be set}"
 : "${PR_NUMBER:?PR_NUMBER must be set}"
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
@@ -50,7 +44,11 @@ exclude_patterns="$(printf '%s' "$PATH_FILTERS_JSON" | jq -c 'map(select(startsw
 
 # 機能: 1 ファイルが include / exclude のどちらに該当するかを判定する
 # 採用判定: 1) exclude にマッチ → 除外、2) include 空 or マッチ → 採用、3) include 非空でマッチなし → 除外
-# シンプル glob のみ（bash の `[[ $path == $pattern ]]`）。複雑な構文拡張は YAGNI。
+# bash の `[[ $path == $pattern ]]` でマッチング。
+# パターン中の `**` は事前に `*` に置換する（bash の `[[ ]]` パターンマッチで `**` は
+# 単独だと `*` と等価扱いだが、Windows Git Bash の bash 実装では path separator を
+# 超えないため `docs/**` が `docs/api.md` にマッチしない。`*` に正規化することで
+# 全環境で同じ挙動になる）。
 classify_files() {
   local files_json="$1"
   local include_json="$2"
@@ -60,7 +58,7 @@ classify_files() {
 
   local selected=()
   local ignored=()
-  local i path matched
+  local i path matched pat
 
   for ((i = 0; i < files_count; i++)); do
     path="$(printf '%s' "$files_json" | jq -r --argjson i "$i" '.[$i]')"
@@ -69,6 +67,8 @@ classify_files() {
     matched=0
     while IFS= read -r pat; do
       [ -z "$pat" ] && continue
+      # `**` を `*` に正規化（Windows 環境互換）
+      pat="${pat//\*\*/*}"
       # shellcheck disable=SC2053
       if [[ "$path" == $pat ]]; then
         matched=1
@@ -92,6 +92,8 @@ classify_files() {
     matched=0
     while IFS= read -r pat; do
       [ -z "$pat" ] && continue
+      # `**` を `*` に正規化（Windows 環境互換）
+      pat="${pat//\*\*/*}"
       # shellcheck disable=SC2053
       if [[ "$path" == $pat ]]; then
         matched=1
