@@ -103,11 +103,12 @@ selected_value="$(extract_value "$output_file" "files_selected_json")"
   echo "[DEBUG] ignored_value=$ignored_value"
   # 直接 case マッチを試す（process substitution 経由せず）
   pat='docs/*'
-  if case "docs/api.md" in $pat) true ;; *) false ;; esac; then
-    echo '[DEBUG] direct case "docs/api.md" in docs/* → match'
-  else
-    echo '[DEBUG] direct case "docs/api.md" in docs/* → NO match'
-  fi
+  test_path='docs/api.md'
+  # shellcheck disable=SC2254
+  case "$test_path" in
+    $pat) echo '[DEBUG] direct case docs/api.md in docs/* -> match' ;;
+    *)    echo '[DEBUG] direct case docs/api.md in docs/* -> NO match' ;;
+  esac
 } >&2
 if printf '%s' "$ignored_value" | jq -e 'index("docs/api.md") != null' > /dev/null \
   && ! printf '%s' "$selected_value" | jq -e 'index("docs/api.md") != null' > /dev/null; then
