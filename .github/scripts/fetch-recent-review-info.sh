@@ -42,66 +42,56 @@ include_patterns="$(printf '%s' "$PATH_FILTERS_JSON" | jq -c 'map(select(startsw
 # 要素単位で `!` で始まる要素だけ残してから先頭の `!` を除去する（map の中で select + 変換を行う）
 exclude_patterns="$(printf '%s' "$PATH_FILTERS_JSON" | jq -c 'map(select(startswith("!")) | .[1:])')"
 
+# 機能: 1 ファイルが パターンリストのいずれかにマッチするか判定する
+# POSIX `case` 文を使用（bash `[[ ]]` の glob 評価は Windows Git Bash で
+# path separator を超えないという挙動差があるため、全環境で一貫する `case` を採用）。
+# パターン中の `**` は事前に `*` に置換する（POSIX glob で `**` は `*` と等価だが、
+# 入力側の表記揺れを吸収する）。
+glob_match() {
+  local path="$1"
+  local patterns_json="$2"
+  local pat
+  while IFS= read -r pat; do
+    [ -z "$pat" ] && continue
+    pat="${pat//\*\*/*}"
+    case "$path" in
+      $pat) return 0 ;;
+    esac
+  done < <(printf '%s' "$patterns_json" | jq -r '.[]?')
+  return 1
+}
+
 # 機能: 1 ファイルが include / exclude のどちらに該当するかを判定する
 # 採用判定: 1) exclude にマッチ → 除外、2) include 空 or マッチ → 採用、3) include 非空でマッチなし → 除外
-# bash の `[[ $path == $pattern ]]` でマッチング。
-# パターン中の `**` は事前に `*` に置換する（bash の `[[ ]]` パターンマッチで `**` は
-# 単独だと `*` と等価扱いだが、Windows Git Bash の bash 実装では path separator を
-# 超えないため `docs/**` が `docs/api.md` にマッチしない。`*` に正規化することで
-# 全環境で同じ挙動になる）。
 classify_files() {
   local files_json="$1"
   local include_json="$2"
   local exclude_json="$3"
-  local files_count
+  local files_count include_count
   files_count="$(printf '%s' "$files_json" | jq -r 'length')"
+  include_count="$(printf '%s' "$include_json" | jq -r 'length')"
 
   local selected=()
   local ignored=()
-  local i path matched pat
+  local i path
 
   for ((i = 0; i < files_count; i++)); do
     path="$(printf '%s' "$files_json" | jq -r --argjson i "$i" '.[$i]')"
 
-    # exclude マッチ判定
-    matched=0
-    while IFS= read -r pat; do
-      [ -z "$pat" ] && continue
-      # `**` を `*` に正規化（Windows 環境互換）
-      pat="${pat//\*\*/*}"
-      # shellcheck disable=SC2053
-      if [[ "$path" == $pat ]]; then
-        matched=1
-        break
-      fi
-    done < <(printf '%s' "$exclude_json" | jq -r '.[]?')
-
-    if [ "$matched" -eq 1 ]; then
+    # exclude にマッチすれば除外
+    if glob_match "$path" "$exclude_json"; then
       ignored+=("$path")
       continue
     fi
 
-    # include マッチ判定（include 空なら全件採用）
-    local include_count
-    include_count="$(printf '%s' "$include_json" | jq -r 'length')"
+    # include 空なら全件採用
     if [ "$include_count" -eq 0 ]; then
       selected+=("$path")
       continue
     fi
 
-    matched=0
-    while IFS= read -r pat; do
-      [ -z "$pat" ] && continue
-      # `**` を `*` に正規化（Windows 環境互換）
-      pat="${pat//\*\*/*}"
-      # shellcheck disable=SC2053
-      if [[ "$path" == $pat ]]; then
-        matched=1
-        break
-      fi
-    done < <(printf '%s' "$include_json" | jq -r '.[]?')
-
-    if [ "$matched" -eq 1 ]; then
+    # include にマッチすれば採用、しなければ除外
+    if glob_match "$path" "$include_json"; then
       selected+=("$path")
     else
       ignored+=("$path")
