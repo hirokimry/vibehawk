@@ -40,6 +40,12 @@ FILES_SELECTED_JSON="${FILES_SELECTED_JSON:-}"
 FILES_IGNORED_JSON="${FILES_IGNORED_JSON:-}"
 RELATED_PRS_JSON="${RELATED_PRS_JSON:-}"
 SUGGESTED_REVIEWERS_JSON="${SUGGESTED_REVIEWERS_JSON:-}"
+PRE_MERGE_TITLE_STATUS="${PRE_MERGE_TITLE_STATUS:-}"
+PRE_MERGE_TITLE_EXPLANATION="${PRE_MERGE_TITLE_EXPLANATION:-}"
+PRE_MERGE_DESCRIPTION_STATUS="${PRE_MERGE_DESCRIPTION_STATUS:-}"
+PRE_MERGE_DESCRIPTION_EXPLANATION="${PRE_MERGE_DESCRIPTION_EXPLANATION:-}"
+PRE_MERGE_DOCSTRING_STATUS="${PRE_MERGE_DOCSTRING_STATUS:-}"
+PRE_MERGE_DOCSTRING_EXPLANATION="${PRE_MERGE_DOCSTRING_EXPLANATION:-}"
 
 printf '%s\n' "<!-- This is an auto-generated comment: sticky-summary by vibehawk -->"
 printf '%s\n' "<!-- vibehawk:sticky -->"
@@ -263,6 +269,60 @@ if [ -n "$TOOL_FAILURES" ]; then
   printf '> [!WARNING]\n> 🔧 外部ツール起動失敗\n'
   printf '%s' "$TOOL_FAILURES" | awk '{ printf "> %s\n", $0 }'
   printf '\n'
+fi
+
+# 🚥 Pre-merge checks セクション（CodeRabbit 互換、Issue #229）
+# 5 項目: Title check / Description check / Linked Issues check / Out of Scope Changes check / Docstring Coverage
+# - Title / Description / Docstring: workflow step 機械判定（env で渡される）
+# - Linked Issues / Out of Scope: Claude prompt 判定（STRUCTURED_OUTPUT の pre_merge_checks）
+# - 全 5 項目の status を集計して summary に passed/failed 件数を表示
+if [ -n "$PRE_MERGE_TITLE_STATUS" ] || [ -n "$PRE_MERGE_DESCRIPTION_STATUS" ] || [ -n "$STRUCTURED_OUTPUT" ]; then
+  linked_status=""
+  linked_explanation=""
+  out_of_scope_status=""
+  out_of_scope_explanation=""
+  if [ -n "$STRUCTURED_OUTPUT" ]; then
+    linked_status=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.linked_issues_check.status // ""')
+    linked_explanation=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.linked_issues_check.explanation // ""')
+    out_of_scope_status=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.out_of_scope_check.status // ""')
+    out_of_scope_explanation=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.out_of_scope_check.explanation // ""')
+  fi
+
+  # 5 項目の status を集計
+  passed_count=0
+  failed_count=0
+  for s in "$PRE_MERGE_TITLE_STATUS" "$PRE_MERGE_DESCRIPTION_STATUS" "$linked_status" "$out_of_scope_status" "$PRE_MERGE_DOCSTRING_STATUS"; do
+    case "$s" in
+      passed) passed_count=$((passed_count + 1)) ;;
+      failed) failed_count=$((failed_count + 1)) ;;
+    esac
+  done
+
+  # summary 表記: failed が 1 件以上なら ⚠️ N failed、それ以外は ✅ N passed
+  if [ "$failed_count" -gt 0 ]; then
+    summary_label="⚠️ ${failed_count} failed"
+  else
+    summary_label="✅ ${passed_count} passed"
+  fi
+
+  printf '<details>\n<summary>🚥 Pre-merge checks | %s</summary>\n\n' "$summary_label"
+  printf '| Check | Status | Explanation |\n'
+  printf '|---|---|---|\n'
+  # 各 status を絵文字に変換
+  status_icon() {
+    case "$1" in
+      passed) printf '✅ passed' ;;
+      failed) printf '❌ failed' ;;
+      skipped) printf '⏭️ skipped' ;;
+      *) printf '— unknown' ;;
+    esac
+  }
+  printf '| Title check | %s | %s |\n' "$(status_icon "$PRE_MERGE_TITLE_STATUS")" "${PRE_MERGE_TITLE_EXPLANATION:-—}"
+  printf '| Description check | %s | %s |\n' "$(status_icon "$PRE_MERGE_DESCRIPTION_STATUS")" "${PRE_MERGE_DESCRIPTION_EXPLANATION:-—}"
+  printf '| Linked Issues check | %s | %s |\n' "$(status_icon "$linked_status")" "${linked_explanation:-—}"
+  printf '| Out of Scope Changes check | %s | %s |\n' "$(status_icon "$out_of_scope_status")" "${out_of_scope_explanation:-—}"
+  printf '| Docstring Coverage | %s | %s |\n' "$(status_icon "$PRE_MERGE_DOCSTRING_STATUS")" "${PRE_MERGE_DOCSTRING_EXPLANATION:-—}"
+  printf '\n</details>\n\n'
 fi
 
 # Issue #227: 旧「📖 詳細レビュー」（body_full 残り全体の折り畳み）は撤去。

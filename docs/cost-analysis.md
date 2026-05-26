@@ -122,6 +122,10 @@ reviews:
 
 ツール側が持つのは「PR サイズ閾値」のみ。残りは外部委譲する。
 
+### PR ごとの追加トークン消費（Issue #229: pre_merge_checks 追加）
+
+Issue #229 で Claude prompt schema に `pre_merge_checks: {linked_issues_check, out_of_scope_check}` を必須フィールドとして追加した。出力側のトークン増分は **約 60〜120 トークン / PR**（2 オブジェクト × explanation 30-60 トークン）で軽微。Title / Description / Docstring の 3 項目は workflow step (grep + 言語ツール) で取得するため Claude API への影響はゼロ。
+
 ### PR ごとの追加トークン消費（Issue #228: review_effort 追加）
 
 Issue #228 で Claude prompt schema に `review_effort: {difficulty, minutes}` を必須フィールドとして追加した。出力側のトークン増分は **約 20〜30 トークン / PR**（小規模オブジェクト 1 個）で軽微。Possibly related PRs と Suggested reviewers は workflow step 取得（gh api + git log）のため Claude API への影響はゼロ。

@@ -270,7 +270,13 @@ vibehawk は **2 つの sticky 経路** を独立に並走する。
 7. 主要指摘リスト（🔴 / 🟠 を上位 10 件、`path:line` + body 冒頭 80 字）
 8. Review Status callout（`normal` 以外で表示: `skipped` / `paused` / `draft`）
 9. Tool failures callout（外部ツール起動失敗）
-10. Internal state JSON（`<!-- vibehawk:state {"last_sha":"...","decided_event":"...","severity":{...},"timestamp":"..."} -->`、次回 incremental 判定の根拠）
+10. `<details><summary>🚥 Pre-merge checks | <summary>...</summary>` セクション（Issue #229、CodeRabbit 互換）。5 項目を Markdown テーブルで表示。failed 1 件以上で summary 表記が `⚠️ N failed`、全 passed で `✅ N passed`:
+    - Title check（workflow step `check-pr-title.sh` で grep 機械判定）
+    - Description check（workflow step `check-pr-description.sh` で grep 機械判定）
+    - Linked Issues check（Claude `pre_merge_checks.linked_issues_check` で意味判定）
+    - Out of Scope Changes check（Claude `pre_merge_checks.out_of_scope_check` で意味判定）
+    - Docstring Coverage（workflow step `check-docstring-coverage.sh`、v1 は言語不問で `skipped` 固定、言語別ツール統合は別 Issue）
+11. Internal state JSON（`<!-- vibehawk:state {"last_sha":"...","decided_event":"...","severity":{...},"timestamp":"..."} -->`、次回 incremental 判定の根拠）
 
 `ℹ️ Recent review info` セクションのデータは `.github/scripts/fetch-recent-review-info.sh` が `gh api` で取得して GITHUB_OUTPUT に 1 行 JSON で書き出し、`build-sticky-body.sh` が env 経由で受け取る。Claude prompt schema は変更されない（課金影響ゼロ）。
 
