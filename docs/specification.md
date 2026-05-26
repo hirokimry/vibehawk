@@ -259,9 +259,12 @@ vibehawk は **2 つの sticky 経路** を独立に並走する。
    - 📥 Commits（base..HEAD SHA range）
    - 📒 Files selected for processing (N)
    - 💤 Files with no reviewable changes (N)
-5. `<details><summary>📝 Walkthrough</summary>` セクション（Issue #227、CodeRabbit 互換）。配下に以下を含む:
+5. `<details><summary>📝 Walkthrough</summary>` セクション（Issue #227 / #228、CodeRabbit 互換）。配下に以下を含む:
    - `## Walkthrough`: Claude が schema 必須化された `walkthrough_narrative` フィールドで返す物語的サマリ（1〜2 段落、200〜800 文字、切り詰めなしで全文展開）
    - `## Changes`: Claude が schema 必須化された `changes_table[]` フィールドで返す変更一覧を `|Layer / File(s)|Summary|` Markdown テーブルで展開
+   - `## 🎯 N (Label) | ⏱️ ~M minutes`: Claude が schema 必須化された `review_effort: {difficulty, minutes}` フィールドで返す推定レビュー労力（Issue #228、difficulty 1-5 ラベル: Trivial/Easy/Moderate/Complex/Very Complex）
+   - `## Possibly related PRs`: workflow step `.github/scripts/fetch-related-prs.sh` が `gh api search/issues` で取得した類似 closed PR 一覧（最大 5 件、0 件時は「No related PRs found.」、Issue #228）
+   - `## Suggested reviewers`: workflow step `.github/scripts/fetch-suggested-reviewers.sh` が CODEOWNERS / git log から取得した推奨レビュワー一覧（最大 3 名、0 名時は「No suggested reviewers.」、自己除外、Issue #228）
    - Issue #227 で旧「高レベル概要（200 文字切り詰め）」と旧「Walkthrough（`.body` 残り全体）」を撤去し、本セクションに統合
 6. severity 集計表（🔴 / 🟠 / 🟡 / 🔵 / ⚪ の件数）
 7. 主要指摘リスト（🔴 / 🟠 を上位 10 件、`path:line` + body 冒頭 80 字）

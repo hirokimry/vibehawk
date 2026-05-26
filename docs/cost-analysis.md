@@ -122,6 +122,10 @@ reviews:
 
 ツール側が持つのは「PR サイズ閾値」のみ。残りは外部委譲する。
 
+### PR ごとの追加トークン消費（Issue #228: review_effort 追加）
+
+Issue #228 で Claude prompt schema に `review_effort: {difficulty, minutes}` を必須フィールドとして追加した。出力側のトークン増分は **約 20〜30 トークン / PR**（小規模オブジェクト 1 個）で軽微。Possibly related PRs と Suggested reviewers は workflow step 取得（gh api + git log）のため Claude API への影響はゼロ。
+
 ### PR ごとの追加トークン消費（Issue #227）
 
 Issue #227 で Claude prompt の schema に `walkthrough_narrative` + `changes_table[]` を必須フィールドとして追加した。利用者の Claude Max OAuth 個人クォータ（または ANTHROPIC_API_KEY 従量課金）への影響として、PR ごとに以下の追加トークン消費が発生する。

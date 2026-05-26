@@ -9,10 +9,12 @@
 #   REPO                 owner/repo（必須）
 #   REVIEW_STATUS        normal / skipped / paused / draft（デフォルト normal）
 #   TOOL_FAILURES        外部ツール失敗テキスト（空可、空でなければ WARNING callout に展開）
-#   RUN_ID               GitHub Actions run id（空可、Recent review info / Run configuration 用、Issue #226）
-#   COMMITS_JSON         PR commits 配列の 1 行 JSON（空可、Recent review info / Commits 用、Issue #226）
-#   FILES_SELECTED_JSON  処理対象ファイル一覧の 1 行 JSON 配列（空可、Recent review info / Files selected 用、Issue #226）
-#   FILES_IGNORED_JSON   除外ファイル一覧の 1 行 JSON 配列（空可、Recent review info / Files with no reviewable changes 用、Issue #226）
+#   RUN_ID                    GitHub Actions run id（空可、Recent review info / Run configuration 用、Issue #226）
+#   COMMITS_JSON              PR commits 配列の 1 行 JSON（空可、Recent review info / Commits 用、Issue #226）
+#   FILES_SELECTED_JSON       処理対象ファイル一覧の 1 行 JSON 配列（空可、Recent review info / Files selected 用、Issue #226）
+#   FILES_IGNORED_JSON        除外ファイル一覧の 1 行 JSON 配列（空可、Recent review info / Files with no reviewable changes 用、Issue #226）
+#   RELATED_PRS_JSON          関連 PR の 1 行 JSON 配列（空可、Possibly related PRs 用、Issue #228）
+#   SUGGESTED_REVIEWERS_JSON  推奨レビュワーの 1 行 JSON 配列（空可、Suggested reviewers 用、Issue #228）
 #
 # 出力: 標準出力に sticky 本文 markdown 全体。
 #
@@ -36,6 +38,8 @@ RUN_ID="${RUN_ID:-}"
 COMMITS_JSON="${COMMITS_JSON:-}"
 FILES_SELECTED_JSON="${FILES_SELECTED_JSON:-}"
 FILES_IGNORED_JSON="${FILES_IGNORED_JSON:-}"
+RELATED_PRS_JSON="${RELATED_PRS_JSON:-}"
+SUGGESTED_REVIEWERS_JSON="${SUGGESTED_REVIEWERS_JSON:-}"
 
 printf '%s\n' "<!-- This is an auto-generated comment: sticky-summary by vibehawk -->"
 printf '%s\n' "<!-- vibehawk:sticky -->"
@@ -117,17 +121,40 @@ else
   severity_counts='{"critical":0,"major":0,"minor":0,"trivial":0,"info":0}'
 fi
 
-# 📝 Walkthrough セクション（CodeRabbit 互換、Issue #227）
-# Claude が schema で必須化された walkthrough_narrative + changes_table を返すため、
-# それらを <details><summary>📝 Walkthrough</summary> で折り畳んで展開する。
-# 後方互換: STRUCTURED_OUTPUT 空 or 必須フィールド欠落時はセクション非出力。
-# 既存「📝 概要」200 文字切り詰めは撤去（narrative が同等以上の情報を持つ、Issue #227）。
-if [ -n "$STRUCTURED_OUTPUT" ]; then
-  walkthrough_narrative=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.walkthrough_narrative // ""')
-  changes_table_json=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -c '.changes_table // []')
-  changes_count=$(printf '%s' "$changes_table_json" | jq -r 'length // 0')
+# 📝 Walkthrough セクション（CodeRabbit 互換、Issue #227 / #228）
+# Claude が schema で必須化された walkthrough_narrative + changes_table + review_effort を返すため、
+# それらと workflow step 取得の related_prs / suggested_reviewers を
+# <details><summary>📝 Walkthrough</summary> で折り畳んで展開する。
+# 後方互換: 全フィールド欠落時はセクション非出力。
+if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
+  walkthrough_narrative=""
+  changes_table_json="[]"
+  changes_count=0
+  review_effort_difficulty=""
+  review_effort_minutes=""
 
-  if [ -n "$walkthrough_narrative" ] || [ "${changes_count:-0}" -gt 0 ]; then
+  if [ -n "$STRUCTURED_OUTPUT" ]; then
+    walkthrough_narrative=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.walkthrough_narrative // ""')
+    changes_table_json=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -c '.changes_table // []')
+    changes_count=$(printf '%s' "$changes_table_json" | jq -r 'length // 0')
+    review_effort_difficulty=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.review_effort.difficulty // empty')
+    review_effort_minutes=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.review_effort.minutes // empty')
+  fi
+
+  related_prs_count=0
+  if [ -n "$RELATED_PRS_JSON" ]; then
+    related_prs_count=$(printf '%s' "$RELATED_PRS_JSON" | jq -r 'length // 0' 2>/dev/null || printf '0')
+  fi
+
+  suggested_reviewers_count=0
+  if [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
+    suggested_reviewers_count=$(printf '%s' "$SUGGESTED_REVIEWERS_JSON" | jq -r 'length // 0' 2>/dev/null || printf '0')
+  fi
+
+  # いずれかの要素があれば Walkthrough セクションを開く
+  if [ -n "$walkthrough_narrative" ] || [ "${changes_count:-0}" -gt 0 ] \
+    || [ -n "$review_effort_difficulty" ] \
+    || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
     printf '<details>\n<summary>📝 Walkthrough</summary>\n\n'
 
     if [ -n "$walkthrough_narrative" ]; then
@@ -143,6 +170,45 @@ if [ -n "$STRUCTURED_OUTPUT" ]; then
         .[] | "| " + .layer + "<br>**Files**: " + (.files | join(", ")) + " | " + .summary + " |"
       '
       printf '\n'
+    fi
+
+    # 🎯 推定レビュー労力（Issue #228、CodeRabbit 互換 difficulty 5 段階）
+    if [ -n "$review_effort_difficulty" ] && [ -n "$review_effort_minutes" ]; then
+      case "$review_effort_difficulty" in
+        1) effort_label="Trivial" ;;
+        2) effort_label="Easy" ;;
+        3) effort_label="Moderate" ;;
+        4) effort_label="Complex" ;;
+        5) effort_label="Very Complex" ;;
+        *) effort_label="Unknown" ;;
+      esac
+      printf '## 🎯 %s (%s) | ⏱️ ~%s minutes\n\n' "$review_effort_difficulty" "$effort_label" "$review_effort_minutes"
+    fi
+
+    # 🔗 Possibly related PRs（Issue #228、workflow step 取得）
+    if [ -n "$RELATED_PRS_JSON" ]; then
+      printf '## Possibly related PRs\n\n'
+      if [ "${related_prs_count:-0}" -gt 0 ]; then
+        printf '%s' "$RELATED_PRS_JSON" | jq -r '
+          .[] | "- #" + (.number | tostring) + ": " + .title
+        '
+        printf '\n'
+      else
+        printf 'No related PRs found.\n\n'
+      fi
+    fi
+
+    # 👥 Suggested reviewers（Issue #228、workflow step 取得）
+    if [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
+      printf '## Suggested reviewers\n\n'
+      if [ "${suggested_reviewers_count:-0}" -gt 0 ]; then
+        printf '%s' "$SUGGESTED_REVIEWERS_JSON" | jq -r '
+          .[] | "- @" + .
+        '
+        printf '\n'
+      else
+        printf 'No suggested reviewers.\n\n'
+      fi
     fi
 
     printf '</details>\n\n'
