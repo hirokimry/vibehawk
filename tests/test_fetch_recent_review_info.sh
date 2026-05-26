@@ -69,6 +69,7 @@ run_fetch() {
     PR_NUMBER="${PR_NUMBER:-226}" \
     PATH_FILTERS_JSON="${PATH_FILTERS_JSON:-[]}" \
     GITHUB_OUTPUT="$github_output_file" \
+    VIBEHAWK_GLOB_DEBUG="${VIBEHAWK_GLOB_DEBUG:-}" \
     bash "$SCRIPT" > /dev/null
   printf '%s' "$github_output_file"
 }
@@ -93,7 +94,8 @@ else
 fi
 
 echo "Case 2: PATH_FILTERS_JSON=[\"!docs/**\"] で docs/api.md が ignored に分類される"
-PATH_FILTERS_JSON='["!docs/**"]' output_file="$(run_fetch)"
+# Windows での glob_match 挙動を診断するため VIBEHAWK_GLOB_DEBUG を有効化
+PATH_FILTERS_JSON='["!docs/**"]' VIBEHAWK_GLOB_DEBUG=1 output_file="$(run_fetch)"
 ignored_value="$(extract_value "$output_file" "files_ignored_json")"
 selected_value="$(extract_value "$output_file" "files_selected_json")"
 # デバッグ情報を stderr に出力（Windows での挙動差を診断、PR #235 windows fail 調査用、Issue #229）
