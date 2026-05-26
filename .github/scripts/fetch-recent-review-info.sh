@@ -47,17 +47,23 @@ exclude_patterns="$(printf '%s' "$PATH_FILTERS_JSON" | jq -c 'map(select(startsw
 # path separator を超えないという挙動差があるため、全環境で一貫する `case` を採用）。
 # パターン中の `**` は事前に `*` に置換する（POSIX glob で `**` は `*` と等価だが、
 # 入力側の表記揺れを吸収する）。
+# **Windows Git Bash 対応**: process substitution `< <(...)` は Windows で一部の組み合わせで
+# 動かないことがあるため、一時ファイル経由で while ループに食わせる（test_fetch_recent_review_info.sh
+# の Case 2 が Windows でのみ落ちていた PR #235 fix）。
 glob_match() {
   local path="$1"
   local patterns_json="$2"
-  local pat
+  local pat tmp
+  tmp="$(mktemp)"
+  printf '%s' "$patterns_json" | jq -r '.[]?' > "$tmp"
   while IFS= read -r pat; do
     [ -z "$pat" ] && continue
     pat="${pat//\*\*/*}"
     case "$path" in
-      $pat) return 0 ;;
+      $pat) rm -f "$tmp"; return 0 ;;
     esac
-  done < <(printf '%s' "$patterns_json" | jq -r '.[]?')
+  done < "$tmp"
+  rm -f "$tmp"
   return 1
 }
 
