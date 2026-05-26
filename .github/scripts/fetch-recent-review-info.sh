@@ -25,9 +25,11 @@ set -euo pipefail
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
 PATH_FILTERS_JSON="${PATH_FILTERS_JSON:-[]}"
 
-# 機能: PR の commits 配列を取得して 1 行 JSON 化する
+# 機能: PR の commits 配列を取得して 1 行 JSON 化する。
+# `gh api --paginate` はページごとに別 JSON 配列を出力する場合があるため、`jq -s 'add'` で
+# 全ページを 1 配列に集約してから 1 行 JSON 化する（複数行混入で GITHUB_OUTPUT を壊さない）。
 commits_json="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/commits" --paginate \
-  | jq -c 'if type == "array" then map({sha}) else [] end')"
+  | jq -s -c '(add // []) | if type == "array" then map({sha}) else [] end')"
 
 # 機能: PR の変更ファイル一覧を取得して 1 行 JSON 配列にする
 files_all_json="$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only \

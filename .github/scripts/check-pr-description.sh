@@ -16,7 +16,10 @@
 
 set -euo pipefail
 
-: "${PR_BODY:?PR_BODY must be set}"
+# PR_BODY は空文字を許容する（draft PR や本文未記入の PR を passed=failed で評価するため）。
+# 旧 `: "${PR_BODY:?...}"` だと空文字でも fail し、step がエラー終了して
+# 後続の pre_merge step に到達できない（CodeRabbit Major 指摘、PR #235）。
+PR_BODY="${PR_BODY-}"
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
 
 has_issue_ref=0
