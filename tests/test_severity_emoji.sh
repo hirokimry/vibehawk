@@ -73,6 +73,13 @@ def replace(match):
 sys.stdout.write(pattern.sub(replace, yaml_text))
 PYEOF
 
+# プロンプト本文は .github/prompts/vibehawk-review.md に切り出されたため（PR #235、21000 chars 制限回避）、
+# 展開後 yaml に prompt md を連結して検証対象に含める。これにより prompt 規約検証が切り出し後も維持される。
+PROMPT_MD="${REPO_ROOT}/.github/prompts/vibehawk-review.md"
+if [[ -f "$PROMPT_MD" ]]; then
+  cat "$PROMPT_MD" >> "$WORKFLOW_EXPANDED_TMP"
+fi
+
 WORKFLOW="$WORKFLOW_EXPANDED_TMP"
 
 echo "=== severity 5 段階絵文字（Issue #9） ==="

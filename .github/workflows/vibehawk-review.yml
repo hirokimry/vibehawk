@@ -107,6 +107,29 @@ jobs:
         # 詳細: scripts/ci/vibehawk-review/load-config.sh（エピック #174 / Issue #176）
         run: bash scripts/ci/vibehawk-review/load-config.sh
 
+      - name: vibehawk prompt を外部 .md から読み込み + envsubst で展開
+        # GitHub Actions の expression length 21000 chars 制限を回避するため、
+        # 長文プロンプトを .github/prompts/vibehawk-review.md に切り出して envsubst で動的値を展開する。
+        # 外部 .md 内の動的値は ${VAR} 形式（${{ ... }} ではない）で記述する。
+        id: load_prompt
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+          INCREMENTAL_MODE: ${{ steps.prev_summary.outputs.incremental }}
+          EXISTING_COMMENT_ID: ${{ steps.prev_summary.outputs.comment_id }}
+          PREV_SHA: ${{ steps.prev_summary.outputs.prev_sha }}
+          REVIEW_RANGE: ${{ steps.prev_summary.outputs.review_range }}
+          CONFIG_SOURCE: ${{ steps.vibehawk_config.outputs.config_source }}
+          LANGUAGE: ${{ steps.vibehawk_config.outputs.language }}
+          FILES_COUNT: ${{ steps.vibehawk_config.outputs.files_count }}
+          DEPTH: ${{ steps.vibehawk_config.outputs.depth }}
+          PATH_FILTERS_JSON: ${{ steps.vibehawk_config.outputs.path_filters }}
+          PATH_INSTRUCTIONS_JSON: ${{ steps.vibehawk_config.outputs.path_instructions }}
+        run: bash .github/scripts/load-vibehawk-prompt.sh
+
       - name: claude-code-action でレビュー実行
         # Issue #164 fix: Claude のファイル書き出し（$GITHUB_WORKSPACE/vibehawk-review.json）依存を廃止し、
         # claude-code-action の公式機能 `--json-schema` を使って Claude の最終 assistant message を
@@ -120,219 +143,12 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token }}
-          prompt: |
-            REPO: ${{ github.repository }}
-            PR_NUMBER: ${{ github.event.pull_request.number }}
-            HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-            BASE_REF: ${{ github.base_ref }}
-            INCREMENTAL_MODE: ${{ steps.prev_summary.outputs.incremental }}
-            EXISTING_COMMENT_ID: ${{ steps.prev_summary.outputs.comment_id }}
-            PREV_SHA: ${{ steps.prev_summary.outputs.prev_sha }}
-            REVIEW_RANGE: ${{ steps.prev_summary.outputs.review_range }}
-            CONFIG_SOURCE: ${{ steps.vibehawk_config.outputs.config_source }}
-            LANGUAGE: ${{ steps.vibehawk_config.outputs.language }}
-            FILES_COUNT: ${{ steps.vibehawk_config.outputs.files_count }}
-            DEPTH: ${{ steps.vibehawk_config.outputs.depth }}
-            PATH_FILTERS_JSON: ${{ steps.vibehawk_config.outputs.path_filters }}
-            PATH_INSTRUCTIONS_JSON: ${{ steps.vibehawk_config.outputs.path_instructions }}
-
-            🦅 vibehawk PR レビュー（Issue #8 / #9 / #10 対応版）。
-
-            ## レビュー範囲（INCREMENTAL_MODE 別）
-
-            - INCREMENTAL_MODE=true（前回サマリあり、通常 push）: `git diff $REVIEW_RANGE` で前回レビュー以降の差分のみをレビュー
-            - INCREMENTAL_MODE=false かつ EXISTING_COMMENT_ID が空（初回レビュー）: PR 全体（base ブランチからの全差分 `git diff origin/$BASE_REF...HEAD`）をレビュー
-            - INCREMENTAL_MODE=false かつ EXISTING_COMMENT_ID が設定済（force push / rebase 検出）: PR 全体を **完全再レビュー**（前回サマリは古い SHA に紐づいているため棄却し、最新差分で書き直す）
-
-            ## 投稿方法（最重要、Issue #164 fix で `outputs.structured_output` 経路に再構築）
-
-            **bundled review POST も JSON ファイル書き出しも Claude prompt 内で実行しない。Claude は本セッションの最終 assistant message として下記 schema に従う JSON 1 個 を返すだけ。それ以外のテキストは出力しない。claude-code-action が `--json-schema` で schema validation を行い、validated JSON を `outputs.structured_output` に流す。後続の workflow step (`vibehawk bundled review を post`) が `steps.claude_review.outputs.structured_output` を読み、GitHub Reviews API を決定論的に 1 回だけ呼び出す（Issue #164 fix）。**
-
-            背景: Issue #152 / PR #128 で bundled review POST 自体は Claude → workflow step に移管済だが、Claude に「`$GITHUB_WORKSPACE/vibehawk-review.json` への書き出し」という副作用が残っていた。指摘 0 件 PR で Claude が書き出しに失敗する事象（PR #159 で実証 = Issue #164）が prompt 強化（Issue #162 / PR #163）では再発したため、ファイル書き出し経路そのものを廃止する。Claude が「応答を返す」のは API の最低保証であり、「副作用を必ず実行する」より遥かに強い保証となる（CEO 採用案）。
-
-            理由（GitHub UI 仕様）: GitHub UI は review event 配下にサマリ本文 + inline 指摘がバンドルされている場合のみ colored badge（APPROVED→緑 / CHANGES_REQUESTED→赤）で表示する。3 段階分離投稿（inline 個別 POST + サマリ issue comment + `gh pr review` 系コマンドでの approve / request-changes 発火）では review event が空になり muted badge になるため、bundled review POST に統合する設計自体は維持する（POST の実行主体は workflow step、POST 用ペイロードの経路だけが ファイル → outputs に移る）。APPROVE 時の body 抑制根拠は scripts/ci/vibehawk-review/post-bundled-review.sh のコメントを参照。
-
-            ### 投稿フロー（INCREMENTAL_MODE 共通）
-
-            1. inline 指摘は **その場で POST せず**、JSON 配列 `comments[]` に貯める（path / line / side / body / 必要に応じ start_line+start_side）
-            2. レビュー本文（severity 別件数を含む長文サマリ）を変数として組み立てる。**末尾に必ず以下 2 行を含める**（インクリメンタルレビューの一意特定に必須、Issue #57）:
-
-            ```text
-            <!-- vibehawk:summary -->
-            <!-- vibehawk:sha=${{ github.event.pull_request.head.sha }} -->
-            ```
-
-            この 2 行が欠落すると、次回 push で前回 SHA が抽出できず、incremental が破綻し完全再レビュー扱いになります。
-
-            3. **event 判定は行わない**（Issue #166）。Claude は `event` フィールドに placeholder として `COMMENT` を返すこと。最終的な `event` (APPROVE / REQUEST_CHANGES) は後続の workflow step `vibehawk event を決定` が `comments[]` の severity 分布（`body` 冒頭の絵文字を集計）と `gh api graphql reviewThreads` から取得する unresolved 数を組み合わせて決定論的に計算し、`vibehawk bundled review を post` step が JSON の `event` フィールドを上書きしてから GitHub に POST する。Claude が `event` 判定を試みても workflow step の計算値が最終値となるため、本 prompt 内では severity 分布カウント / unresolved 取得 / event 判定ルールを記述しない（Issue #166 で構造的に廃止）。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
-            4. **最終 assistant message として下記 schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`gh api` POST なし）。claude-code-action が `--json-schema` で schema validation し、`outputs.structured_output` に流す。応答以外のテキスト（説明文・進捗ログ等）は最終応答に含めない（schema validation が失敗する）。
-
-            ### 最終応答の JSON shape（`--json-schema` で機械検証される）
-
-            ```json
-            {
-              "event": "COMMENT",
-              "body": "サマリ本文（末尾の vibehawk:summary / vibehawk:sha 2 行必須）",
-              "commit_id": "${{ github.event.pull_request.head.sha }}",
-              "comments": [
-                {
-                  "path": "src/foo.ts",
-                  "line": 42,
-                  "side": "RIGHT",
-                  "body": "🟠 **Major**: 指摘内容..."
-                }
-              ]
-            }
-            ```
-
-            **`event` フィールドの placeholder 規約（Issue #166）**: Claude は **必ず `COMMENT` を返すこと**。schema の enum (`APPROVE` / `REQUEST_CHANGES` / `COMMENT`) は GitHub Reviews API 契約のため維持しているが、最終的な `event` 値は workflow step `vibehawk event を決定` が `comments[]` の severity 分布 + reviewThreads の unresolved 数から決定論的に計算し、`vibehawk bundled review を post` step が POST 前に上書きする。Claude が `APPROVE` / `REQUEST_CHANGES` を直接返しても workflow 計算値で上書きされるため、placeholder としての `COMMENT` 固定が運用上最も安全（混乱を避ける）。
-
-            複数行範囲指摘なら `comments[]` 要素に `start_line` / `start_side` を追加。指摘 0 件でも `comments: []` で **必ず最終 JSON を返す**（応答が空になると `outputs.structured_output` が空となり後続 skip → status neutral になる）。
-
-            ### incremental（前回サマリあり）の扱い
-
-            GitHub Reviews API には review body の edit エンドポイントがない（PATCH 不可）。したがって incremental でも **新規 review を都度作成** する（workflow step 経由で 1 回 POST）。前回 review は GitHub UI 上で履歴として残るが、最新 review が APPROVED/CHANGES_REQUESTED の最終結論となるため運用上問題ない。
-
-            旧 issue comment 形式のサマリ（Issue #121 以前）が PR に残っていた場合は、touch せず放置（自然消滅）。
-
-            **絶対禁止**（Issue #164 fix で強化 / Issue #167 で追加）:
-            - **`$GITHUB_WORKSPACE/vibehawk-review.json` 等の schema 外経路（ファイル書き出し）で結果を返す**（**Issue #164 fix で構造的に廃止**、最終応答は assistant message としての schema 適合 JSON のみ）
-            - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/reviews` で bundled review を直接 POST する（**bundled review POST は workflow step が決定論的に行う**、Issue #152）
-            - `gh api graphql` で `resolveReviewThread` mutation を実行する（**Issue #167 で workflow step に移管**、`resolved_thread_ids` 配列に列挙して workflow step `vibehawk auto_resolve` に委譲する）。`gh api graphql ... mutation` 系の副作用呼び出し全般を prompt 内で実行しない（query は許可、mutation は禁止）
-            - `gh pr comment` 系コマンドでサマリを別投稿する（重複・badge 失効の原因）
-            - `gh pr review` 系コマンドで review event を別発火する（本来 bundled で 1 回呼出に統合、approve / request-changes の発火経路は workflow step の bundled POST のみ）
-            - `gh api -X POST repos/$REPO/pulls/$PR_NUMBER/comments` で inline を個別投稿する（バンドルから外れ muted badge の原因）
-            - 旧 issue comment 形式のサマリを edit する経路（issue comment 経路は撤廃、bundled review に統一）
-
-            ## status check 投稿も workflow step が決定論的に行う（Issue #121-C1 fix）
-
-            Claude prompt 内では check-runs API を **絶対に呼ばない**。check-runs POST は claude-code-action の次の次の step（`vibehawk status check を post`）が GitHub Actions の GITHUB_TOKEN を使って実行する。Claude prompt から POST を呼ぶ旧設計は claude-code-action の permission model により deny されるため、本 prompt は JSON 書き出しまででタスク完了とすること。
-
-            ## サマリ本文（REVIEW_BODY）の必須要件
-
-            - PR 全体の変更内容の要約（簡潔に）
-            - 検出した指摘の合計件数を severity 別に表示
-            - 末尾に上記 2 行（`<!-- vibehawk:summary -->` / `<!-- vibehawk:sha=... -->`）を含める
-
-            ## inline 指摘の severity 5 段階分類（CodeRabbit 公式仕様、`.claude/rules/severity/coderabbit.md` 準拠）
-
-            | Marker | severity | 定義 |
-            |--------|---------|---------|
-            | 🔴 | Critical | システム障害、セキュリティ侵害、データ損失を引き起こす重大な問題 |
-            | 🟠 | Major | 機能・パフォーマンスに大きく影響する重要な問題 |
-            | 🟡 | Minor | 対応すべきだがシステムに致命的な影響はない問題 |
-            | 🔵 | Trivial | コード品質を高めるための軽微な提案 |
-            | ⚪ | Info | 情報提供のみ、対応不要 |
-
-            `comments[].body` の冒頭に必ず該当 severity の絵文字を 1 つ付ける（例: `🟠 **Major**: ...`）。重大度判定は本仕様（CodeRabbit 公式定義）に厳格に従う。
-
-            ### GitHub Suggestions 構文（修正案、利用者が 1 クリックで適用可）
-
-            必要に応じて `comments[].body` に GitHub Suggestions 構文を埋め込んでください。**Bot 自身は commit しない**（5 大方針 2 の例外として「Suggestions 構文の生成」は明示的に許可、Bot 自身が PR に commit を作る行為は禁止）:
-
-            ````text
-            🟡 **Minor**: 変数名を意図がわかる名前に
-            ```suggestion
-            const userCount = users.length;
-            ```
-            ````
-
-            ## auto_resolve（push で直った旧指摘を resolved 化、Issue #9 / Issue #167）
-
-            **Issue #167 で workflow step に移管**: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql resolveReviewThread` mutation を直接実行していた。Issue #164（structured_output 経路の確立）/ Issue #166（event 判定の workflow 移管）に続く責務分離の完成形として、Claude は「解決対象 thread の node_id を `resolved_thread_ids` 配列に列挙する」だけになり、mutation の実行は workflow step `vibehawk auto_resolve` が担う。
-
-            INCREMENTAL_MODE=true の場合、最終 assistant message JSON に以下を含める:
-
-            1. `gh api repos/$REPO/pulls/$PR_NUMBER/comments --paginate` で既存 inline comments を取得
-            2. **投稿者 ID が `vibehawk-for-<owner>[bot]` のコメントのみ**フィルタ（他者・他 Bot のコメントは絶対に schema に含めない）
-            3. 各コメントの `path` + `line` の差分が今回の REVIEW_RANGE で消えている／類似度が著しく下がっているかを判定
-            4. 「直った」と判定したスレッドの **GraphQL node_id**（`reviewThreads { nodes { id } }` クエリで取得）を `resolved_thread_ids: [string]` 配列に列挙する
-            5. INCREMENTAL_MODE=false や直った thread が無い場合は `resolved_thread_ids: []` を返す（フィールド省略でも workflow step 側で `// []` 吸収）
-
-            ```bash
-            # thread の node_id 取得は許可（クエリのみ、mutation は禁止）
-            gh api graphql -f query='query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } body path } } } } } } }' \
-              -F owner=... -F name=... -F pr=...
-            ```
-
-            **重要制約**: 他者・他 Bot のレビュースレッドの node_id は **絶対に `resolved_thread_ids` に含めない**（誤 resolve は信頼破壊）。投稿者 ID チェック（`vibehawk-for-<owner>[bot]` のみ）は schema 出力前に必ず実施。
-
-            **二重防御**: workflow step `vibehawk auto_resolve` も同じ author 検証を GraphQL で再実行する（Claude のフィルタミス対策、`scripts/ci/vibehawk-review/auto-resolve.sh`）。それでもなお schema に他者 thread を含めるのは絶対禁止。
-
-            ## review event 決定（Issue #166 で workflow step に移管）
-
-            **本 prompt 内では event 判定を行わない**。auto_resolve 完了後、bundled review POST の前段にある独立 workflow step `vibehawk event を決定`（`id: decide_event`）が以下を決定論的に実行する:
-
-            1. `gh api graphql` で `reviewThreads(first: 100)` を取得し、`isResolved == false` の数を jq でカウント
-            2. Claude が返した `comments[]` の `body` 冒頭絵文字（🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info）から severity 分布を jq でカウント
-            3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、旧 prompt 内ロジックの 1:1 移植）:
-               - unresolved >= 1 件 → `decided_event=REQUEST_CHANGES`
-               - 新規 inline に Critical/Major (🔴/🟠) が 1 件でもある → `decided_event=REQUEST_CHANGES`
-               - それ以外 → `decided_event=APPROVE`
-            4. `decided_event` を GITHUB_OUTPUT に出力 → `vibehawk bundled review を post` step が JSON の `.event` を jq で上書きしてから POST
-
-            Claude の責務は `body`（severity 別件数を含むサマリ）と `comments[]`（severity 絵文字を冒頭に付与した inline 指摘）の生成のみ。`event` フィールドは placeholder として `COMMENT` を返すこと（schema enum で validation 通過）。最終的な review event は workflow step `vibehawk bundled review を post` が POST 時に上書きする値が真値となる。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
-
-            **body 冒頭の status 行は引き続き Claude が出力する**（利用者向け要約として）。判定根拠の二重表現になっても問題ない（最終 event は workflow 計算値だが、body 内のテキストは Claude の認識を表すもの）。目安:
-            - 未解決指摘あり想定 → `⚠️ vibehawk: 未解決指摘 N 件 / 新規指摘 M 件`
-            - 新規 Critical/Major あり想定 → `⚠️ vibehawk: 新規 Critical/Major M 件`
-            - それ以外 → `✅ vibehawk: 未解決指摘なし`（新規 0 件）または `✅ vibehawk: 助言 N 件（要対応指摘なし）`（Minor 以下のみ）
-
-            状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
-
-            ## .vibehawk.yaml 設定の反映（Issue #10）
-
-            ### 言語 locale（LANGUAGE）
-
-            - `LANGUAGE=ja`: レビューサマリ・inline comment を **日本語** で出力
-            - `LANGUAGE=en` または未設定: 英語で出力（デフォルト）
-
-            ### path_filters（除外パス、PATH_FILTERS_JSON）
-
-            PATH_FILTERS_JSON は JSON 配列（例: `["node_modules/**","dist/**"]`）。これらの glob パターンに該当するファイルは **レビュー対象から除外** してください（diff には含まれていても指摘しない）。
-
-            ### path_instructions（パス別カスタム指示、PATH_INSTRUCTIONS_JSON）
-
-            PATH_INSTRUCTIONS_JSON は JSON 配列（例: `[{"path":"src/auth/**","instructions":"認証フローの観点で見て"}]`）。該当パスのファイルを指摘する際は、対応する instructions を **追加観点として** プロンプト文脈に含めて評価してください（5 大方針 1: カスタムは外から注入）。
-
-            ### depth（PR サイズによる段階的劣化、DEPTH）
-
-            DEPTH の値で本レビューの粒度を切り替える（`docs/cost-analysis.md` 仕様）:
-
-            - `full` (FILES_COUNT < 30): フル品質レビュー。severity 全段階の inline 指摘 + 詳細サマリ
-            - `focused` (30 ≤ FILES_COUNT < 80): 主要ファイル優先。Critical / Major のみ inline、Minor 以下はサマリで言及
-            - `lightweight` (80 ≤ FILES_COUNT < 3000): 各ファイル軽量レビュー。Critical のみ inline、それ以外はサマリで件数表示
-            - `summary_only` (FILES_COUNT ≥ 3000): サマリのみ、inline は完全スキップ
-
-            利用者は `.vibehawk.yaml` の `reviews.size_limits` で閾値を上書き可能。
-
-            ## レビュー範囲を確認するコマンド例
-
-            INCREMENTAL_MODE=true:
-            - `git log --oneline $REVIEW_RANGE`（差分 commit 一覧）
-            - `git diff $REVIEW_RANGE`（コード差分）
-
-            INCREMENTAL_MODE=false:
-            - `git log --oneline origin/$BASE_REF..HEAD`（PR 全体の commit 一覧）
-            - `gh pr diff $PR_NUMBER`（PR 全体の差分）
-
-            Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0）。投稿者は `vibehawk-for-<owner>[bot]` 名義になります（bundled review POST は workflow step が App Installation Token を使って実行するため、bot 名義は維持される）。コード生成（docstring 全文 / unit-test ファイル新設 / 自動 commit）は **絶対に禁止**（5 大方針 2）。
-
-            ## タスク完了条件（Issue #164 fix / Issue #166 / Issue #167）
-
-            本 prompt のタスクは以下で完了する:
-
-            1. （INCREMENTAL_MODE=true なら）解決対象 thread の GraphQL node_id を `resolved_thread_ids: [string]` 配列に列挙する（`vibehawk-for-<owner>[bot]` 名義の thread のみ、schema 出力前にフィルタ済み）。実際の `resolveReviewThread` mutation 実行は workflow step `vibehawk auto_resolve` が `resolved_thread_ids` を foreach で実行する（Issue #167 で workflow step に移管）
-            2. **最終 assistant message として `{event, body, commit_id, comments, resolved_thread_ids?}` の schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`event` は placeholder `COMMENT` 固定、Issue #166）
-
-            **指摘が 0 件であっても、必ず schema 適合 JSON を最終 assistant message として返すこと**（`event=COMMENT`・`comments=[]` で OK、Issue #166 で placeholder 固定）。応答が空になると `outputs.structured_output` が空となり後続 bundled POST step が skip → status check neutral に倒れ、required status check が灰色「未投稿」のまま残る（PR #159 で実証された Issue #164 の症状）。
-
-            **`gh api -X POST` で bundled review を POST しない**。POST は workflow の次の step が `outputs.structured_output` を読んで決定論的に 1 回実行する。POST を試し打ちで実行すると同一 workflow run 内で利用者の PR に複数の review が残る（PR #151 で観測されたノイズ事象、Issue #152）。
-
-            **ファイル書き出し全般（`$GITHUB_WORKSPACE/vibehawk-review.json` 等）も行わない**。schema 外の経路で結果を返さない（Issue #164 fix）。応答は claude-code-action の最終 assistant message として返すことが唯一の正解。
+          prompt: ${{ steps.load_prompt.outputs.content }}
+          # 旧 prompt: | block (262 行) は .github/prompts/vibehawk-review.md に切り出し済み。
+          # 21000 chars 制限を超えていたため startup_failure を起こしていた（PR #235 で実証）。
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(jq:*)"
-            --json-schema '{"type":"object","required":["event","body","commit_id","comments"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}}}}'
+            --json-schema '{"type":"object","required":["event","body","commit_id","comments","walkthrough_narrative","changes_table","review_effort","pre_merge_checks"],"additionalProperties":false,"properties":{"event":{"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","minLength":1},"commit_id":{"type":"string","minLength":1},"comments":{"type":"array","items":{"type":"object","required":["path","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"number"},"side":{"enum":["LEFT","RIGHT"]},"start_line":{"type":"number"},"start_side":{"enum":["LEFT","RIGHT"]},"body":{"type":"string","minLength":1}}}},"resolved_thread_ids":{"type":"array","items":{"type":"string"}},"walkthrough_narrative":{"type":"string","minLength":1},"changes_table":{"type":"array","minItems":1,"items":{"type":"object","required":["layer","files","summary"],"additionalProperties":false,"properties":{"layer":{"type":"string","minLength":1},"files":{"type":"array","items":{"type":"string","minLength":1},"minItems":1},"summary":{"type":"string","minLength":1}}}},"review_effort":{"type":"object","required":["difficulty","minutes"],"additionalProperties":false,"properties":{"difficulty":{"type":"integer","minimum":1,"maximum":5},"minutes":{"type":"integer","minimum":1}}},"pre_merge_checks":{"type":"object","required":["linked_issues_check","out_of_scope_check"],"additionalProperties":false,"properties":{"linked_issues_check":{"type":"object","required":["status","explanation"],"additionalProperties":false,"properties":{"status":{"enum":["passed","failed","skipped"]},"explanation":{"type":"string","minLength":1}}},"out_of_scope_check":{"type":"object","required":["status","explanation"],"additionalProperties":false,"properties":{"status":{"enum":["passed","failed","skipped"]},"explanation":{"type":"string","minLength":1}}}}}}}'
 
       - name: vibehawk auto_resolve（直った旧指摘を resolved 化、Issue #167）
         # Issue #167: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql
@@ -390,13 +206,78 @@ jobs:
         # 詳細: scripts/ci/vibehawk-review/decide-event.sh（エピック #174 / Issue #176）
         run: bash scripts/ci/vibehawk-review/decide-event.sh
 
-      - name: vibehawk sticky walkthrough コメント upsert（Issue #219）
+      - name: vibehawk Recent review info 用データ取得（Issue #226）
+        # sticky walkthrough コメントの ℹ️ Recent review info セクション用に、
+        # PR commits / 処理対象ファイル / 除外ファイルの 3 種を gh api で取得して
+        # GITHUB_OUTPUT に 1 行 JSON で書き込む（load-config.sh と同じパターン）。
+        # 失敗しても sticky upsert step 側で env 空 = セクション非出力で degrade する。
+        id: recent_info
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PATH_FILTERS_JSON: ${{ steps.vibehawk_config.outputs.path_filters }}
+        # 詳細: .github/scripts/fetch-recent-review-info.sh（Issue #226）
+        run: bash .github/scripts/fetch-recent-review-info.sh
+
+      - name: vibehawk Possibly related PRs 取得（Issue #228）
+        # sticky walkthrough コメントの ## Possibly related PRs セクション用に
+        # search/issues API で関連 closed PR を最大 5 件取得する（課金影響なし）。
+        # 失敗時は空配列 [] で degrade（sticky 側で「No related PRs found.」表示）。
+        id: related_prs
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .github/scripts/fetch-related-prs.sh
+
+      - name: vibehawk Suggested reviewers 取得（Issue #228）
+        # sticky walkthrough コメントの ## Suggested reviewers セクション用に
+        # CODEOWNERS + git log 上位コミッターから最大 3 名を取得する（課金影響なし）。
+        id: suggested_reviewers
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: bash .github/scripts/fetch-suggested-reviewers.sh
+
+      - name: vibehawk Pre-merge Title check（Issue #229）
+        # sticky walkthrough コメントの 🚥 Pre-merge checks セクション用に
+        # PR タイトルが Conventional Commits 形式に従うかを機械判定する（課金影響なし）。
+        id: pre_merge_title
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bash .github/scripts/check-pr-title.sh
+
+      - name: vibehawk Pre-merge Description check（Issue #229）
+        # sticky walkthrough コメントの 🚥 Pre-merge checks セクション用に
+        # PR 本文に必須要素（Issue 参照 + ## 見出し）があるかを機械判定する（課金影響なし）。
+        id: pre_merge_description
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash .github/scripts/check-pr-description.sh
+
+      - name: vibehawk Pre-merge Docstring coverage check（Issue #229）
+        # v1 は言語不問で skipped を出力。言語別ツール統合は別 Issue で。
+        id: pre_merge_docstring
+        if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
+        run: bash .github/scripts/check-docstring-coverage.sh
+
+      - name: vibehawk sticky walkthrough コメント upsert（Issue #219 / #226）
         # PR ごとに 1 個固定の issue-comment sticky を維持する（CodeRabbit 模倣）。
         # build-sticky-body.sh が body markdown を組み立て、post-sticky-comment.sh が
         # 既存 sticky を bot 名義 + 先頭マーカーで find して POST/PATCH/DELETE 分岐の upsert を行う。
         # 失敗時は warning ログ + exit 0 とし、後続の bundled review / status check post に影響させない。
         # 配置: bundled review POST の **前** に置く（タイムライン上 sticky が inline review より先に
         # 並ぶようにするため、CodeRabbit と同じ「PR を開いた瞬間に sticky が最上位」を実現する）。
+        # Issue #226: Recent review info セクション用の env 4 種（RUN_ID / COMMITS_JSON /
+        # FILES_SELECTED_JSON / FILES_IGNORED_JSON）を fetch-recent-review-info.sh 経由で受ける。
         if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -407,7 +288,19 @@ jobs:
           DECIDED_EVENT: ${{ steps.decide_event.outputs.decided_event }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_STATUS: normal
-        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219）
+          RUN_ID: ${{ github.run_id }}
+          COMMITS_JSON: ${{ steps.recent_info.outputs.commits_json }}
+          FILES_SELECTED_JSON: ${{ steps.recent_info.outputs.files_selected_json }}
+          FILES_IGNORED_JSON: ${{ steps.recent_info.outputs.files_ignored_json }}
+          RELATED_PRS_JSON: ${{ steps.related_prs.outputs.related_prs_json }}
+          SUGGESTED_REVIEWERS_JSON: ${{ steps.suggested_reviewers.outputs.suggested_reviewers_json }}
+          PRE_MERGE_TITLE_STATUS: ${{ steps.pre_merge_title.outputs.title_check_status }}
+          PRE_MERGE_TITLE_EXPLANATION: ${{ steps.pre_merge_title.outputs.title_check_explanation }}
+          PRE_MERGE_DESCRIPTION_STATUS: ${{ steps.pre_merge_description.outputs.description_check_status }}
+          PRE_MERGE_DESCRIPTION_EXPLANATION: ${{ steps.pre_merge_description.outputs.description_check_explanation }}
+          PRE_MERGE_DOCSTRING_STATUS: ${{ steps.pre_merge_docstring.outputs.docstring_check_status }}
+          PRE_MERGE_DOCSTRING_EXPLANATION: ${{ steps.pre_merge_docstring.outputs.docstring_check_explanation }}
+        # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219 / #226 / #228 / #229）
         run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
 
       - name: vibehawk bundled review を post（Issue #164 fix / Issue #166）

@@ -122,6 +122,36 @@ reviews:
 
 ツール側が持つのは「PR サイズ閾値」のみ。残りは外部委譲する。
 
+### PR ごとの追加トークン消費（Issue #229: pre_merge_checks 追加）
+
+Issue #229 で Claude prompt schema に `pre_merge_checks: {linked_issues_check, out_of_scope_check}` を必須フィールドとして追加した。出力側のトークン増分は **約 60〜120 トークン / PR**（2 オブジェクト × explanation 30-60 トークン）で軽微。Title / Description / Docstring の 3 項目は workflow step (grep + 言語ツール) で取得するため Claude API への影響はゼロ。
+
+### PR ごとの追加トークン消費（Issue #228: review_effort 追加）
+
+Issue #228 で Claude prompt schema に `review_effort: {difficulty, minutes}` を必須フィールドとして追加した。出力側のトークン増分は **約 20〜30 トークン / PR**（小規模オブジェクト 1 個）で軽微。Possibly related PRs と Suggested reviewers は workflow step 取得（gh api + git log）のため Claude API への影響はゼロ。
+
+### PR ごとの追加トークン消費（Issue #227）
+
+Issue #227 で Claude prompt の schema に `walkthrough_narrative` + `changes_table[]` を必須フィールドとして追加した。利用者の Claude Max OAuth 個人クォータ（または ANTHROPIC_API_KEY 従量課金）への影響として、PR ごとに以下の追加トークン消費が発生する。
+
+| 経路 | 推定追加トークン / PR | 備考 |
+|---|---|---|
+| 出力側: `walkthrough_narrative` | 約 100〜400 トークン | 200〜800 文字、日本語 0.5 文字 = 1 トークン換算 |
+| 出力側: `changes_table[]`（5〜10 layer 想定） | 約 250〜500 トークン | layer あたり約 50 トークン |
+| 入力側: prompt 内の指示文追加 | 約 100 トークン | walkthrough_narrative / changes_table の生成指示 2 ブロック |
+| **合計** | **約 450〜1000 トークン / PR** | 平均 700 トークン想定 |
+
+### 月間試算（上限ケース）
+
+利用者リポジトリで 1 日 10 PR を上限とした場合の月間追加トークン消費:
+
+| シナリオ | 1 日の PR 数 | 月間追加トークン | 影響 |
+|---|---|---|---|
+| 平均ケース | 5 PR / day | 5 × 700 × 30 = 105k トークン / 月 | Claude Max クォータに対して軽微 |
+| 上限ケース | 10 PR / day | 10 × 1000 × 30 = 300k トークン / 月 | Max 5x プランの月間出力 1M-1.5M トークンに対し 20〜30% を占有 |
+
+Claude Pro / Max 個人クォータ枯渇リスクへの影響度は中程度。利用者が大量 PR を出すリポジトリでは Max 20x プランへのアップグレード or `.vibehawk.yaml` の `size_limits` 厳格化（PR サイズ閾値を下げて段階的劣化を早めに発火）で抑制可能。
+
 ### 5 大方針との整合
 
 5 大方針の本体定義は `docs/POLICY.md` の「## プロダクト方針（5 大方針）」を参照。
