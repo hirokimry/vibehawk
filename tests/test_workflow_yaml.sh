@@ -92,8 +92,21 @@ PYEOF
 
 WORKFLOW="$WORKFLOW_EXPANDED_TMP"
 
-# コメント行を除外したワークフロー本文（行頭 # を除外）
+# プロンプト本文は .github/prompts/vibehawk-review.md に切り出されたため（PR #235、21000 chars 制限回避）。
+PROMPT_MD="${REPO_ROOT}/.github/prompts/vibehawk-review.md"
+
+# コメント行を除外したワークフロー本文（行頭 # を除外）。
+# 重要: prompt md 連結の **前** に awk 除外する。md は markdown 見出し `## ...` を含み、
+# `!/^[[:space:]]*#/` で除外されてしまうため。md はコメント除外の対象外として後で丸ごと連結する。
 WORKFLOW_BODY="$(awk '!/^[[:space:]]*#/' "$WORKFLOW")"
+
+# WORKFLOW_BODY（コメント除外済み yaml）に prompt md を連結し、prompt 規約検証を切り出し後も維持する。
+if [[ -f "$PROMPT_MD" ]]; then
+  WORKFLOW_BODY="${WORKFLOW_BODY}"$'\n'"$(cat "$PROMPT_MD")"
+  # `$WORKFLOW`（ファイル）を直接 grep する assertion 用に、ファイル自体にも md を連結する。
+  # WORKFLOW_BODY の awk 除外は連結前に済んでいるため二重連結にならない。
+  cat "$PROMPT_MD" >> "$WORKFLOW_EXPANDED_TMP"
+fi
 
 # pull_request トリガー
 if echo "$WORKFLOW_BODY" | grep -E "^[[:space:]]*pull_request:" > /dev/null; then
@@ -611,9 +624,14 @@ fi
 # 新設計では claude-code-action ステップの後に独立した GitHub Actions step を追加し、
 # デフォルト GITHUB_TOKEN（checks: write 付き）で check-runs を POST する。
 
-# prompt 部分とそれ以外を分離するため、prompt セクション（`prompt: |` から `claude_args:` 直前まで）を抽出
-# awk で "prompt: |" 〜 "claude_args:" の範囲を取る
-WORKFLOW_PROMPT="$(awk '/prompt:[[:space:]]*\|/{flag=1; next} /^[[:space:]]+claude_args:/{flag=0} flag' "$WORKFLOW")"
+# プロンプト本文は .github/prompts/vibehawk-review.md に切り出されたため（PR #235、21000 chars 制限回避）、
+# prompt セクション検証は md ファイルを直接読む。旧 `prompt: |` block awk 抽出は切り出しで空になる。
+if [[ -f "$PROMPT_MD" ]]; then
+  WORKFLOW_PROMPT="$(cat "$PROMPT_MD")"
+else
+  # 後方互換: md が無ければ旧来の `prompt: |` block 抽出にフォールバック
+  WORKFLOW_PROMPT="$(awk '/prompt:[[:space:]]*\|/{flag=1; next} /^[[:space:]]+claude_args:/{flag=0} flag' "$WORKFLOW")"
+fi
 # prompt より後（claude_args: 以降、後続 step を含む）を抽出
 WORKFLOW_POST_PROMPT="$(awk '/^[[:space:]]+claude_args:/{flag=1} flag' "$WORKFLOW")"
 
@@ -1061,7 +1079,7 @@ fi
 # 15. Claude prompt のタスク完了条件から「event を決定」項目が削除されている
 # 旧設計では「2. event を決定（APPROVE / REQUEST_CHANGES / COMMENT）」がタスク完了条件に含まれていたが、
 # Issue #166 で workflow step に移管したため Claude のタスクからは外れる
-if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]+2\. event を決定' > /dev/null; then
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]*2\. event を決定' > /dev/null; then
   fail "Claude prompt のタスク完了条件に旧「event を決定」項目が残っている（Issue #166、workflow step 移管で外すべき）"
 else
   pass "Claude prompt のタスク完了条件から「event を決定」項目が削除されている（Issue #166）"
@@ -1179,12 +1197,12 @@ fi
 # 12. Claude prompt のタスク完了条件 1 が「resolved_thread_ids に列挙」に書き換えられている
 # 旧: 「（INCREMENTAL_MODE=true なら）auto_resolve で旧指摘を resolved 化」
 # 新: 「（INCREMENTAL_MODE=true なら）解決対象 thread の GraphQL node_id を `resolved_thread_ids` に列挙」
-if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]+1\.' | grep -F 'auto_resolve で旧指摘を resolved 化' > /dev/null; then
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]*1\.' | grep -F 'auto_resolve で旧指摘を resolved 化' > /dev/null; then
   fail "Claude prompt のタスク完了条件 1 に旧記述「auto_resolve で旧指摘を resolved 化」が残っている（Issue #167、resolved_thread_ids 列挙に書き換えるべき）"
 else
   pass "Claude prompt のタスク完了条件 1 から旧記述「auto_resolve で旧指摘を resolved 化」が削除されている（Issue #167）"
 fi
-if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]+1\.' | grep -F 'resolved_thread_ids' > /dev/null; then
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]*1\.' | grep -F 'resolved_thread_ids' > /dev/null; then
   pass "Claude prompt のタスク完了条件 1 が「resolved_thread_ids に列挙」に書き換えられている（Issue #167）"
 else
   fail "Claude prompt のタスク完了条件 1 に resolved_thread_ids の言及がない（Issue #167、新タスク完了条件として必須）"
