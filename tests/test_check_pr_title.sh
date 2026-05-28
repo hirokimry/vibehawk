@@ -41,6 +41,10 @@ echo "Case 4: CC prefix なし → failed"
 status="$(run_check "ただのタイトル")"
 if [ "$status" = "failed" ]; then pass "Case 4"; else fail "Case 4: $status"; fi
 
+echo "Case 5: release prefix (vibehawk リリース PR) → passed"
+status="$(run_check "🚀 release: epic #225 vibehawk sticky walkthrough")"
+if [ "$status" = "passed" ]; then pass "Case 5"; else fail "Case 5: $status"; fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"

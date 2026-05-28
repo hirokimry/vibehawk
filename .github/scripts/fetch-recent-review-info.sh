@@ -56,34 +56,19 @@ glob_match() {
   local pat tmp
   tmp="$(mktemp)"
   printf '%s' "$patterns_json" | jq -r '.[]?' > "$tmp"
-  # CI debug: 一時ファイルの hex 内容を stderr に出力（PR #235 Windows 調査用、Issue #229）
-  if [ -n "${VIBEHAWK_GLOB_DEBUG:-}" ]; then
-    printf '[GLOB_DEBUG] tmp=%s\n' "$tmp" >&2
-    printf '[GLOB_DEBUG] tmp content (hex): ' >&2
-    od -An -tx1 -c < "$tmp" | head -2 >&2
-  fi
   while IFS= read -r pat; do
     [ -z "$pat" ] && continue
-    if [ -n "${VIBEHAWK_GLOB_DEBUG:-}" ]; then
-      printf '[GLOB_DEBUG] raw pat: ' >&2; printf '%s' "$pat" | od -An -tx1 | head -1 >&2
-    fi
     # 末尾 CR を除去（Windows jq + Cygwin で CRLF 出力されることへの対応）
     pat="${pat%$'\r'}"
     pat="${pat//\*\*/*}"
-    if [ -n "${VIBEHAWK_GLOB_DEBUG:-}" ]; then
-      printf '[GLOB_DEBUG] normalized pat: ' >&2; printf '%s' "$pat" | od -An -tx1 | head -1 >&2
-      printf '[GLOB_DEBUG] path: ' >&2; printf '%s' "$path" | od -An -tx1 | head -1 >&2
-    fi
     # $pat は意図的に glob 展開する
     # shellcheck disable=SC2254
     case "$path" in
       $pat)
-        [ -n "${VIBEHAWK_GLOB_DEBUG:-}" ] && printf '[GLOB_DEBUG] match!\n' >&2
         rm -f "$tmp"
         return 0
         ;;
     esac
-    [ -n "${VIBEHAWK_GLOB_DEBUG:-}" ] && printf '[GLOB_DEBUG] no match\n' >&2
   done < "$tmp"
   rm -f "$tmp"
   return 1

@@ -69,7 +69,6 @@ run_fetch() {
     PR_NUMBER="${PR_NUMBER:-226}" \
     PATH_FILTERS_JSON="${PATH_FILTERS_JSON:-[]}" \
     GITHUB_OUTPUT="$github_output_file" \
-    VIBEHAWK_GLOB_DEBUG="${VIBEHAWK_GLOB_DEBUG:-}" \
     bash "$SCRIPT" > /dev/null
   printf '%s' "$github_output_file"
 }
@@ -94,24 +93,9 @@ else
 fi
 
 echo "Case 2: PATH_FILTERS_JSON=[\"!docs/**\"] で docs/api.md が ignored に分類される"
-# Windows での glob_match 挙動を診断するため VIBEHAWK_GLOB_DEBUG を有効化
-PATH_FILTERS_JSON='["!docs/**"]' VIBEHAWK_GLOB_DEBUG=1 output_file="$(run_fetch)"
+PATH_FILTERS_JSON='["!docs/**"]' output_file="$(run_fetch)"
 ignored_value="$(extract_value "$output_file" "files_ignored_json")"
 selected_value="$(extract_value "$output_file" "files_selected_json")"
-# デバッグ情報を stderr に出力（Windows での挙動差を診断、PR #235 windows fail 調査用、Issue #229）
-{
-  echo "[DEBUG] BASH_VERSION=$BASH_VERSION OS=${OSTYPE:-unknown}"
-  echo "[DEBUG] selected_value=$selected_value"
-  echo "[DEBUG] ignored_value=$ignored_value"
-  # 直接 case マッチを試す（process substitution 経由せず）
-  pat='docs/*'
-  test_path='docs/api.md'
-  # shellcheck disable=SC2254
-  case "$test_path" in
-    $pat) echo '[DEBUG] direct case docs/api.md in docs/* -> match' ;;
-    *)    echo '[DEBUG] direct case docs/api.md in docs/* -> NO match' ;;
-  esac
-} >&2
 if printf '%s' "$ignored_value" | jq -e 'index("docs/api.md") != null' > /dev/null \
   && ! printf '%s' "$selected_value" | jq -e 'index("docs/api.md") != null' > /dev/null; then
   pass "Case 2"
