@@ -187,8 +187,8 @@ out=$(RELATED_PRS_JSON='[{"number":150,"title":"sticky 機能拡張"},{"number":
   STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10}}' \
   run_build)
 if grep -qF '## Possibly related PRs' <<< "$out" \
-  && grep -qF -e '- #150: sticky 機能拡張' <<< "$out" \
-  && grep -qF -e '- #160: レビュー仕様変更' <<< "$out"; then
+  && grep -qF -e '- [hirokimry/vibehawk#150](https://github.com/hirokimry/vibehawk/pull/150): sticky 機能拡張' <<< "$out" \
+  && grep -qF -e '- [hirokimry/vibehawk#160](https://github.com/hirokimry/vibehawk/pull/160): レビュー仕様変更' <<< "$out"; then
   pass "Case 15a (列挙)"
 else
   fail "Case 15a: Possibly related PRs の列挙が期待通りでない"
@@ -200,6 +200,14 @@ if grep -qF 'No related PRs found.' <<< "$out_empty"; then
   pass "Case 15b (0 件 fallback)"
 else
   fail "Case 15b: 0 件時の『No related PRs found.』が出ない"
+fi
+out_special=$(RELATED_PRS_JSON='[{"number":99,"title":"[WIP] fix (edge) case"}]' \
+  STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":1,"minutes":5}}' \
+  run_build)
+if grep -qF -e '- [hirokimry/vibehawk#99](https://github.com/hirokimry/vibehawk/pull/99): [WIP] fix (edge) case' <<< "$out_special"; then
+  pass "Case 15c (特殊文字タイトル)"
+else
+  fail "Case 15c: [] や () を含むタイトルの related PR リンクが期待通りでない"
 fi
 
 echo "Case 16: Issue #228 — SUGGESTED_REVIEWERS_JSON に 2 名 → ## Suggested reviewers に列挙、0 名は『No suggested reviewers.』"
