@@ -240,9 +240,7 @@ if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED
       ')"
     fi
 
-    # 推定レビュー労力（Issue #228 / #238、CodeRabbit 互換 difficulty 5 段階）
-    # Issue #238: 値そのものを見出し（##）にしていた不揃いを解消し、
-    # `## Estimated code review effort` 見出し + 改行 + 🎯 行で他の名詞見出しと並びを揃える。
+    # 推定レビュー労力（Issue #228 / #238）。値を見出しにせず名詞見出し + 🎯 行で並びを揃える。
     if [ -n "$review_effort_difficulty" ] && [ -n "$review_effort_minutes" ]; then
       case "$review_effort_difficulty" in
         1) effort_label="Trivial" ;;
