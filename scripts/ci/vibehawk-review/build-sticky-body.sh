@@ -227,10 +227,15 @@ if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED
     # 各グループ = {group, changes:[{files, summary}]}。大型 PR でも領域別に 30 秒でスキャンできる。
     if [ "${changes_count:-0}" -gt 0 ]; then
       printf '## Changes\n\n'
+      # セル内の `|` / 改行は Markdown テーブルを壊すためエスケープする（Issue #237 / CodeRabbit 指摘）。
       printf '%s\n\n' "$(printf '%s' "$changes_table_json" | jq -r '
+        def esc_cell:
+          tostring
+          | gsub("\\|"; "\\|")
+          | gsub("\\r?\\n"; "<br>");
         [ .[]
-          | "**" + .group + "**\n\n| File(s) | Summary |\n|---|---|\n"
-            + ([.changes[] | "| " + (.files | join(", ")) + " | " + .summary + " |"] | join("\n"))
+          | "**" + (.group | tostring | gsub("\\r?\\n"; " ")) + "**\n\n| File(s) | Summary |\n|---|---|\n"
+            + ([.changes[] | "| " + (.files | map(esc_cell) | join(", ")) + " | " + (.summary | esc_cell) + " |"] | join("\n"))
         ] | join("\n\n")
       ')"
     fi

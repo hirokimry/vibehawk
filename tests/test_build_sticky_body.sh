@@ -290,6 +290,14 @@ else
   fail "Case 22: changes_table のグループ別太字見出しが出ない"
 fi
 
+echo "Case 23: Issue #237 — Changes セルの | と改行がエスケープされ表崩れしない（CodeRabbit 指摘）"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"group":"G","changes":[{"files":["a.sh"],"summary":"foo | bar\nbaz"}]}]}' run_build)
+if grep -qF 'foo \| bar<br>baz' <<< "$out"; then
+  pass "Case 23"
+else
+  fail "Case 23: セルの | / 改行がエスケープされていない"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"
