@@ -271,11 +271,11 @@ vibehawk は **2 つの sticky 経路** を独立に並走する。
     - `## Possibly related PRs`: workflow step `.github/scripts/fetch-related-prs.sh` が `gh api search/issues` で取得した類似 closed PR 一覧を `[owner/repo#N](フル URL): title` リンク形式で展開（最大 5 件、0 件時は「No related PRs found.」、Issue #228 / #239）
     - `## Suggested reviewers`: workflow step `.github/scripts/fetch-suggested-reviewers.sh` が CODEOWNERS / git log から取得した推奨レビュワー一覧（最大 3 名、0 名時は「No suggested reviewers.」、自己除外、Issue #228）
     - Issue #227 で旧「高レベル概要（200 文字切り詰め）」と旧「Walkthrough（`.body` 残り全体）」を撤去し、本セクションに統合
-11. `<details><summary>🚥 Pre-merge checks | <summary>...</summary>` セクション（Issue #229、CodeRabbit 互換）。5 項目を Markdown テーブルで表示。failed 1 件以上で summary 表記が `⚠️ N failed`、全 passed で `✅ N passed`:
-    - Title check（workflow step `check-pr-title.sh` で grep 機械判定）
-    - Description check（workflow step `check-pr-description.sh` で grep 機械判定）
-    - Linked Issues check（Claude `pre_merge_checks.linked_issues_check` で意味判定）
-    - Out of Scope Changes check（Claude `pre_merge_checks.out_of_scope_check` で意味判定）
+11. `<details><summary>🚥 Pre-merge checks | ✅ N | ❌ M</summary>` セクション（Issue #229 / #240、CodeRabbit 互換）。summary は `✅ N | ❌ M` の両件数併記。`failed` は `### ❌ Failed checks (M)` の Resolution 列付きテーブルで先頭に分離表示し、`failed` 以外は入れ子 `<details><summary>✅ Passed checks (N)</summary>`（Resolution 列なし）に格納する。5 項目:
+    - Title check（workflow step `check-pr-title.sh` で grep 機械判定、`failed` 時の Resolution は静的文言）
+    - Description check（workflow step `check-pr-description.sh` で grep 機械判定、`failed` 時の Resolution は静的文言）
+    - Linked Issues check（Claude `pre_merge_checks.linked_issues_check` で意味判定、`failed` 時の Resolution は schema `resolution` 由来）
+    - Out of Scope Changes check（Claude `pre_merge_checks.out_of_scope_check` で意味判定、`failed` 時の Resolution は schema `resolution` 由来）
     - Docstring Coverage（workflow step `check-docstring-coverage.sh`、v1 は言語不問で `skipped` 固定、言語別ツール統合は別 Issue）
 12. Internal state JSON（`<!-- vibehawk:state {"last_sha":"...","decided_event":"...","severity":{...},"timestamp":"..."} -->`、次回 incremental 判定の根拠）
 

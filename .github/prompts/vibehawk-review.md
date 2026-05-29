@@ -127,11 +127,14 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 - `linked_issues_check`:
   - `status`: `"passed"` / `"failed"` / `"skipped"`
   - `explanation`: 判定理由を 1〜2 文で。「Issue #N の完了条件 X を本 PR は実装している」など。Issue が紐づかない PR では `skipped`
+  - `resolution`（任意、Issue #240）: `status` が `failed` のときは **直し方を 1 文で** 添える（例: 「未実装の完了条件 Y を実装してください」）。`passed` / `skipped` では省略可
 - `out_of_scope_check`:
   - `status`: `"passed"` / `"failed"` / `"skipped"`
   - `explanation`: Issue 本文の「📝 提案」「📍 関連ファイル」と PR diff が一致するかを判定。範囲外変更があれば `failed`、Issue が紐づかなければ `skipped`
-- 例: `{"linked_issues_check": {"status": "passed", "explanation": "完了条件 5 件全て実装済み"}, "out_of_scope_check": {"status": "passed", "explanation": "全変更が Issue 提案範囲内"}}`
-- sticky walkthrough コメントに `<details><summary>🚥 Pre-merge checks</summary>` セクションで 5 行表示される
+  - `resolution`（任意、Issue #240）: `status` が `failed` のときは **直し方を 1 文で** 添える（例: 「無関係な変更を別 PR に分離してください」）。`passed` / `skipped` では省略可
+- 例（passed）: `{"linked_issues_check": {"status": "passed", "explanation": "完了条件 5 件全て実装済み"}, "out_of_scope_check": {"status": "passed", "explanation": "全変更が Issue 提案範囲内"}}`
+- 例（failed + resolution）: `{"out_of_scope_check": {"status": "failed", "explanation": "認証ロジックの変更が Issue 範囲外", "resolution": "認証変更を別 PR に分離してください"}}`
+- sticky walkthrough コメントに `<details><summary>🚥 Pre-merge checks | ✅ N | ❌ M</summary>` セクションで表示される（Issue #240: `failed` は Resolution 列付きの専用テーブルで先頭に分離、`failed` 以外は入れ子の `<details>` に格納、summary は `✅ N | ❌ M` の両件数併記）
 
 ## review_effort の必須要件（Issue #228、CodeRabbit 互換）
 
