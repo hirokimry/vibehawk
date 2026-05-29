@@ -126,6 +126,8 @@ reviews:
 
 Issue #229 で Claude prompt schema に `pre_merge_checks: {linked_issues_check, out_of_scope_check}` を必須フィールドとして追加した。出力側のトークン増分は **約 60〜120 トークン / PR**（2 オブジェクト × explanation 30-60 トークン）で軽微。Title / Description / Docstring の 3 項目は workflow step (grep + 言語ツール) で取得するため Claude API への影響はゼロ。
 
+Issue #240 で各 check に任意 `resolution` を追加したが、`status` が `failed` のときだけ Claude が出力する（通常の passed PR ではゼロ）。failed 時の増分は **約 30〜60 トークン / 該当 check** で軽微。
+
 ### PR ごとの追加トークン消費（Issue #228: review_effort 追加）
 
 Issue #228 で Claude prompt schema に `review_effort: {difficulty, minutes}` を必須フィールドとして追加した。出力側のトークン増分は **約 20〜30 トークン / PR**（小規模オブジェクト 1 個）で軽微。Possibly related PRs と Suggested reviewers は workflow step 取得（gh api + git log）のため Claude API への影響はゼロ。

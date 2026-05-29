@@ -285,43 +285,28 @@ if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED
   fi
 fi
 
-# 🚥 Pre-merge checks セクション（CodeRabbit 互換、Issue #229）
+# 🚥 Pre-merge checks セクション（CodeRabbit 互換、Issue #229 / #240）
 # 5 項目: Title check / Description check / Linked Issues check / Out of Scope Changes check / Docstring Coverage
-# - Title / Description / Docstring: workflow step 機械判定（env で渡される）
-# - Linked Issues / Out of Scope: Claude prompt 判定（STRUCTURED_OUTPUT の pre_merge_checks）
-# - 全 5 項目の status を集計して summary に passed/failed 件数を表示
+# - Title / Description / Docstring: workflow step 機械判定（env で渡される、Resolution は静的文言）
+# - Linked Issues / Out of Scope: Claude prompt 判定（STRUCTURED_OUTPUT の pre_merge_checks、Resolution は schema 由来）
+# - Issue #240: failed は Resolution 列付きの専用テーブルで先頭に分離表示し、failed 以外は入れ子 details に格納。
+#   summary は ✅ N | ❌ M の両件数併記にする。
 if [ -n "$PRE_MERGE_TITLE_STATUS" ] || [ -n "$PRE_MERGE_DESCRIPTION_STATUS" ] || [ -n "$STRUCTURED_OUTPUT" ]; then
   linked_status=""
   linked_explanation=""
+  linked_resolution=""
   out_of_scope_status=""
   out_of_scope_explanation=""
+  out_of_scope_resolution=""
   if [ -n "$STRUCTURED_OUTPUT" ]; then
     linked_status=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.linked_issues_check.status // ""')
     linked_explanation=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.linked_issues_check.explanation // ""')
+    linked_resolution=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.linked_issues_check.resolution // ""')
     out_of_scope_status=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.out_of_scope_check.status // ""')
     out_of_scope_explanation=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.out_of_scope_check.explanation // ""')
+    out_of_scope_resolution=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.out_of_scope_check.resolution // ""')
   fi
 
-  # 5 項目の status を集計
-  passed_count=0
-  failed_count=0
-  for s in "$PRE_MERGE_TITLE_STATUS" "$PRE_MERGE_DESCRIPTION_STATUS" "$linked_status" "$out_of_scope_status" "$PRE_MERGE_DOCSTRING_STATUS"; do
-    case "$s" in
-      passed) passed_count=$((passed_count + 1)) ;;
-      failed) failed_count=$((failed_count + 1)) ;;
-    esac
-  done
-
-  # summary 表記: failed が 1 件以上なら ⚠️ N failed、それ以外は ✅ N passed
-  if [ "$failed_count" -gt 0 ]; then
-    summary_label="⚠️ ${failed_count} failed"
-  else
-    summary_label="✅ ${passed_count} passed"
-  fi
-
-  printf '<details>\n<summary>🚥 Pre-merge checks | %s</summary>\n\n' "$summary_label"
-  printf '| Check | Status | Explanation |\n'
-  printf '|---|---|---|\n'
   # 各 status を絵文字に変換
   status_icon() {
     case "$1" in
@@ -331,12 +316,64 @@ if [ -n "$PRE_MERGE_TITLE_STATUS" ] || [ -n "$PRE_MERGE_DESCRIPTION_STATUS" ] ||
       *) printf '— unknown' ;;
     esac
   }
-  printf '| Title check | %s | %s |\n' "$(status_icon "$PRE_MERGE_TITLE_STATUS")" "${PRE_MERGE_TITLE_EXPLANATION:-—}"
-  printf '| Description check | %s | %s |\n' "$(status_icon "$PRE_MERGE_DESCRIPTION_STATUS")" "${PRE_MERGE_DESCRIPTION_EXPLANATION:-—}"
-  printf '| Linked Issues check | %s | %s |\n' "$(status_icon "$linked_status")" "${linked_explanation:-—}"
-  printf '| Out of Scope Changes check | %s | %s |\n' "$(status_icon "$out_of_scope_status")" "${out_of_scope_explanation:-—}"
-  printf '| Docstring Coverage | %s | %s |\n' "$(status_icon "$PRE_MERGE_DOCSTRING_STATUS")" "${PRE_MERGE_DOCSTRING_EXPLANATION:-—}"
+
+  # 機械判定 3 項目（Title / Description / Docstring）の Resolution は静的文言。
+  # Claude 判定 2 項目（Linked / Out of Scope）の Resolution は schema 由来（未設定なら —）。
+  title_resolution='Conventional Commits 形式（`type: 説明`）にタイトルを修正してください'
+  description_resolution='本文に Issue 参照（`#N`）と `##` 見出しを追加してください'
+  # Docstring Coverage は v1 で常に skipped のため Failed checks には出ない。将来の言語別ツール統合で failed を出す時に使う。
+  docstring_resolution='対象言語の docstring を追加してください'
+
+  # 5 項目を「名前 \t status \t explanation \t resolution」の TSV に正規化（current shell で集計するため here-string で読む）
+  checks_tsv=$(
+    printf '%s\t%s\t%s\t%s\n' "Title check" "$PRE_MERGE_TITLE_STATUS" "${PRE_MERGE_TITLE_EXPLANATION:-—}" "$title_resolution"
+    printf '%s\t%s\t%s\t%s\n' "Description check" "$PRE_MERGE_DESCRIPTION_STATUS" "${PRE_MERGE_DESCRIPTION_EXPLANATION:-—}" "$description_resolution"
+    printf '%s\t%s\t%s\t%s\n' "Linked Issues check" "$linked_status" "${linked_explanation:-—}" "${linked_resolution:-—}"
+    printf '%s\t%s\t%s\t%s\n' "Out of Scope Changes check" "$out_of_scope_status" "${out_of_scope_explanation:-—}" "${out_of_scope_resolution:-—}"
+    printf '%s\t%s\t%s\t%s\n' "Docstring Coverage" "$PRE_MERGE_DOCSTRING_STATUS" "${PRE_MERGE_DOCSTRING_EXPLANATION:-—}" "$docstring_resolution"
+  )
+
+  # failed / 非 failed を集計。summary の ✅ と内側「Passed checks」の集計軸を揃えるため、
+  # ✅ は failed 以外（passed + skipped）= non_failed_count を使う（行ごとの絵文字で passed/skipped は区別表示される）。
+  failed_count=0
+  non_failed_count=0
+  while IFS=$'\t' read -r name st _expl _reso; do
+    [ -z "$name" ] && continue
+    if [ "$st" = "failed" ]; then
+      failed_count=$((failed_count + 1))
+    else
+      non_failed_count=$((non_failed_count + 1))
+    fi
+  done <<< "$checks_tsv"
+
+  # summary 表記: ✅ N | ❌ M の両件数併記（Issue #240、N は failed 以外＝内側 Passed checks と一致）
+  printf '<details>\n<summary>🚥 Pre-merge checks | ✅ %s | ❌ %s</summary>\n\n' "$non_failed_count" "$failed_count"
+
+  # ❌ Failed checks（failed が 1 件以上のときだけ Resolution 列付きで先頭に分離表示）
+  if [ "$failed_count" -gt 0 ]; then
+    printf '### ❌ Failed checks (%s)\n\n' "$failed_count"
+    printf '| Check | Status | Explanation | Resolution |\n'
+    printf '|---|---|---|---|\n'
+    while IFS=$'\t' read -r name st expl reso; do
+      [ -z "$name" ] && continue
+      [ "$st" = "failed" ] || continue
+      printf '| %s | %s | %s | %s |\n' "$name" "$(status_icon "$st")" "$expl" "$reso"
+    done <<< "$checks_tsv"
+    printf '\n'
+  fi
+
+  # ✅ Passed checks（failed 以外を入れ子 details に格納、Resolution 列なし）
+  printf '<details>\n<summary>✅ Passed checks (%s)</summary>\n\n' "$non_failed_count"
+  printf '| Check | Status | Explanation |\n'
+  printf '|---|---|---|\n'
+  while IFS=$'\t' read -r name st expl _reso; do
+    [ -z "$name" ] && continue
+    [ "$st" = "failed" ] && continue
+    printf '| %s | %s | %s |\n' "$name" "$(status_icon "$st")" "$expl"
+  done <<< "$checks_tsv"
   printf '\n</details>\n\n'
+
+  printf '</details>\n\n'
 fi
 
 # Issue #227: 旧「📖 詳細レビュー」（body_full 残り全体の折り畳み）は撤去。
