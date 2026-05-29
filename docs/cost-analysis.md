@@ -137,7 +137,7 @@ Issue #227 で Claude prompt の schema に `walkthrough_narrative` + `changes_t
 | 経路 | 推定追加トークン / PR | 備考 |
 |---|---|---|
 | 出力側: `walkthrough_narrative` | 約 100〜400 トークン | 200〜800 文字、日本語 0.5 文字 = 1 トークン換算 |
-| 出力側: `changes_table[]`（5〜10 layer 想定） | 約 250〜500 トークン | layer あたり約 50 トークン |
+| 出力側: `changes_table[]`（5〜10 グループ想定） | 約 250〜500 トークン | グループ + 変更あたり約 50 トークン |
 | 入力側: prompt 内の指示文追加 | 約 100 トークン | walkthrough_narrative / changes_table の生成指示 2 ブロック |
 | **合計** | **約 450〜1000 トークン / PR** | 平均 700 トークン想定 |
 

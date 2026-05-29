@@ -266,7 +266,7 @@ vibehawk は **2 つの sticky 経路** を独立に並走する。
 9. Tool failures callout（外部ツール起動失敗）
 10. `<details><summary>📝 Walkthrough</summary>` セクション（Issue #227 / #228、CodeRabbit 互換）。配下に以下を含む:
     - `## Walkthrough`: Claude が schema 必須化された `walkthrough_narrative` フィールドで返す物語的サマリ（1〜2 段落、200〜800 文字、切り詰めなしで全文展開）
-    - `## Changes`: Claude が schema 必須化された `changes_table[]` フィールドで返す変更一覧を `|Layer / File(s)|Summary|` Markdown テーブルで展開
+    - `## Changes`: Claude が schema 必須化された `changes_table[]`（`{group, changes:[{files, summary}]}`）で返す変更一覧を、**意味グループごとの太字見出し + 小テーブル `|File(s)|Summary|`** で展開（Issue #237、CodeRabbit 同様のグループ分割）
     - `## 🎯 N (Label) | ⏱️ ~M minutes`: Claude が schema 必須化された `review_effort: {difficulty, minutes}` フィールドで返す推定レビュー労力（Issue #228、difficulty 1-5 ラベル: Trivial/Easy/Moderate/Complex/Very Complex）
     - `## Possibly related PRs`: workflow step `.github/scripts/fetch-related-prs.sh` が `gh api search/issues` で取得した類似 closed PR 一覧（最大 5 件、0 件時は「No related PRs found.」、Issue #228）
     - `## Suggested reviewers`: workflow step `.github/scripts/fetch-suggested-reviewers.sh` が CODEOWNERS / git log から取得した推奨レビュワー一覧（最大 3 名、0 名時は「No suggested reviewers.」、自己除外、Issue #228）
