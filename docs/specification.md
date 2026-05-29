@@ -254,29 +254,30 @@ vibehawk は **2 つの sticky 経路** を独立に並走する。
 1. 先頭識別マーカー `<!-- This is an auto-generated comment: sticky-summary by vibehawk -->`
 2. sticky マーカー `<!-- vibehawk:sticky -->`
 3. SHA マーカー `<!-- vibehawk:sha=<commit> -->`
-4. `<details><summary>ℹ️ Recent review info</summary>` セクション（Issue #226、CodeRabbit 互換）。Recent review info 系 env が全て空なら非出力（後方互換）。サブセクション 4 種を折り畳みで含む:
+4. `## 🦅 vibehawk Review Summary` 見出し（Issue #241）。**英語タイトル行**をコメントの**一番上**（Recent review info より上）に置き、後続の全セクションを束ねる容れ物にする（タイトル行のみ英語、配下の本文・各セクションは日本語のまま）。
+5. `<details><summary>ℹ️ Recent review info</summary>` セクション（Issue #226、CodeRabbit 互換）。Recent review info 系 env が全て空なら非出力（後方互換）。サブセクション 4 種を折り畳みで含む:
    - ⚙️ Run configuration（Config path / Review profile / Plan / Run ID）
    - 📥 Commits（base..HEAD SHA range）
    - 📒 Files selected for processing (N)
    - 💤 Files with no reviewable changes (N)
-5. `<details><summary>📝 Walkthrough</summary>` セクション（Issue #227 / #228、CodeRabbit 互換）。配下に以下を含む:
-   - `## Walkthrough`: Claude が schema 必須化された `walkthrough_narrative` フィールドで返す物語的サマリ（1〜2 段落、200〜800 文字、切り詰めなしで全文展開）
-   - `## Changes`: Claude が schema 必須化された `changes_table[]` フィールドで返す変更一覧を `|Layer / File(s)|Summary|` Markdown テーブルで展開
-   - `## 🎯 N (Label) | ⏱️ ~M minutes`: Claude が schema 必須化された `review_effort: {difficulty, minutes}` フィールドで返す推定レビュー労力（Issue #228、difficulty 1-5 ラベル: Trivial/Easy/Moderate/Complex/Very Complex）
-   - `## Possibly related PRs`: workflow step `.github/scripts/fetch-related-prs.sh` が `gh api search/issues` で取得した類似 closed PR 一覧（最大 5 件、0 件時は「No related PRs found.」、Issue #228）
-   - `## Suggested reviewers`: workflow step `.github/scripts/fetch-suggested-reviewers.sh` が CODEOWNERS / git log から取得した推奨レビュワー一覧（最大 3 名、0 名時は「No suggested reviewers.」、自己除外、Issue #228）
-   - Issue #227 で旧「高レベル概要（200 文字切り詰め）」と旧「Walkthrough（`.body` 残り全体）」を撤去し、本セクションに統合
 6. severity 集計表（🔴 / 🟠 / 🟡 / 🔵 / ⚪ の件数）
 7. 主要指摘リスト（🔴 / 🟠 を上位 10 件、`path:line` + body 冒頭 80 字）
 8. Review Status callout（`normal` 以外で表示: `skipped` / `paused` / `draft`）
 9. Tool failures callout（外部ツール起動失敗）
-10. `<details><summary>🚥 Pre-merge checks | <summary>...</summary>` セクション（Issue #229、CodeRabbit 互換）。5 項目を Markdown テーブルで表示。failed 1 件以上で summary 表記が `⚠️ N failed`、全 passed で `✅ N passed`:
+10. `<details><summary>📝 Walkthrough</summary>` セクション（Issue #227 / #228、CodeRabbit 互換）。配下に以下を含む:
+    - `## Walkthrough`: Claude が schema 必須化された `walkthrough_narrative` フィールドで返す物語的サマリ（1〜2 段落、200〜800 文字、切り詰めなしで全文展開）
+    - `## Changes`: Claude が schema 必須化された `changes_table[]` フィールドで返す変更一覧を `|Layer / File(s)|Summary|` Markdown テーブルで展開
+    - `## 🎯 N (Label) | ⏱️ ~M minutes`: Claude が schema 必須化された `review_effort: {difficulty, minutes}` フィールドで返す推定レビュー労力（Issue #228、difficulty 1-5 ラベル: Trivial/Easy/Moderate/Complex/Very Complex）
+    - `## Possibly related PRs`: workflow step `.github/scripts/fetch-related-prs.sh` が `gh api search/issues` で取得した類似 closed PR 一覧（最大 5 件、0 件時は「No related PRs found.」、Issue #228）
+    - `## Suggested reviewers`: workflow step `.github/scripts/fetch-suggested-reviewers.sh` が CODEOWNERS / git log から取得した推奨レビュワー一覧（最大 3 名、0 名時は「No suggested reviewers.」、自己除外、Issue #228）
+    - Issue #227 で旧「高レベル概要（200 文字切り詰め）」と旧「Walkthrough（`.body` 残り全体）」を撤去し、本セクションに統合
+11. `<details><summary>🚥 Pre-merge checks | <summary>...</summary>` セクション（Issue #229、CodeRabbit 互換）。5 項目を Markdown テーブルで表示。failed 1 件以上で summary 表記が `⚠️ N failed`、全 passed で `✅ N passed`:
     - Title check（workflow step `check-pr-title.sh` で grep 機械判定）
     - Description check（workflow step `check-pr-description.sh` で grep 機械判定）
     - Linked Issues check（Claude `pre_merge_checks.linked_issues_check` で意味判定）
     - Out of Scope Changes check（Claude `pre_merge_checks.out_of_scope_check` で意味判定）
     - Docstring Coverage（workflow step `check-docstring-coverage.sh`、v1 は言語不問で `skipped` 固定、言語別ツール統合は別 Issue）
-11. Internal state JSON（`<!-- vibehawk:state {"last_sha":"...","decided_event":"...","severity":{...},"timestamp":"..."} -->`、次回 incremental 判定の根拠）
+12. Internal state JSON（`<!-- vibehawk:state {"last_sha":"...","decided_event":"...","severity":{...},"timestamp":"..."} -->`、次回 incremental 判定の根拠）
 
 `ℹ️ Recent review info` セクションのデータは `.github/scripts/fetch-recent-review-info.sh` が `gh api` で取得して GITHUB_OUTPUT に 1 行 JSON で書き出し、`build-sticky-body.sh` が env 経由で受け取る。Claude prompt schema は変更されない（課金影響ゼロ）。
 

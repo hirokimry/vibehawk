@@ -247,6 +247,29 @@ else
   fail "Case 18: failed 1 件時の summary 切替が期待通りでない"
 fi
 
+echo "Case 19: Issue #241 — 英語見出し ## 🦅 vibehawk Review Summary が一番上（Recent review info より上）に来る"
+out=$(RUN_ID=12345 \
+  STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[]}' \
+  run_build)
+heading_line=$(grep -nF '## 🦅 vibehawk Review Summary' <<< "$out" | head -1 | cut -d: -f1)
+recent_line=$(grep -nF 'ℹ️ Recent review info' <<< "$out" | head -1 | cut -d: -f1)
+if [[ -n "$heading_line" && -n "$recent_line" && "$heading_line" -lt "$recent_line" ]] \
+  && ! grep -qF 'vibehawk レビューサマリ' <<< "$out"; then
+  pass "Case 19"
+else
+  fail "Case 19: 英語見出しが最上部に来ていない（heading=${heading_line} recent=${recent_line}）または旧日本語見出しが残存"
+fi
+
+echo "Case 20: Issue #241 — severity 集計が Walkthrough セクションより前に来る（出力順の回帰検知）"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"layer":"L1","files":["a.sh"],"summary":"s1"}]}' run_build)
+severity_line=$(grep -nF '📊 severity 集計' <<< "$out" | head -1 | cut -d: -f1)
+walkthrough_line=$(grep -nF '📝 Walkthrough' <<< "$out" | head -1 | cut -d: -f1)
+if [[ -n "$severity_line" && -n "$walkthrough_line" && "$severity_line" -lt "$walkthrough_line" ]]; then
+  pass "Case 20"
+else
+  fail "Case 20: severity が Walkthrough より後に来ている（severity=${severity_line} walkthrough=${walkthrough_line}）"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"

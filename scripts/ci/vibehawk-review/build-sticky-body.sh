@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 用途: vibehawk PR sticky walkthrough コメントの body markdown 文字列を生成する（Issue #219 / #226）
+# 用途: vibehawk PR sticky walkthrough コメントの body markdown 文字列を生成する（Issue #219 / #226 / #241）
 #
 # 入力（環境変数）:
 #   STRUCTURED_OUTPUT    claude_review の structured_output（JSON 文字列、空可）
@@ -24,6 +24,10 @@
 #   - POST / PATCH / DELETE は post-sticky-comment.sh の責務（本スクリプトでは行わない）。
 #   - STRUCTURED_OUTPUT="" は正常入力として扱う（skip-mark 経路を内部分岐で吸収、別スクリプトを作らない）。
 #   - Recent review info 系 env が全て空なら該当セクション自体を非出力（既存テスト Case 1-6 の後方互換）。
+#
+# Issue #241: 英語タイトル `## 🦅 vibehawk Review Summary` をコメントの一番上（Recent review info より上）に置き、
+#   後続の全セクション（Recent review info / severity 集計 / 主要指摘 / Walkthrough / Pre-merge）を配下に束ねる。
+#   タイトル行だけ英語、配下の本文・各セクションは日本語のまま。
 
 set -euo pipefail
 
@@ -51,6 +55,10 @@ printf '%s\n' "<!-- This is an auto-generated comment: sticky-summary by vibehaw
 printf '%s\n' "<!-- vibehawk:sticky -->"
 printf '%s\n' "<!-- vibehawk:sha=${HEAD_SHA} -->"
 printf '\n'
+
+# Issue #241: 英語タイトルをコメントの一番上に置き、後続の全セクションを束ねる容れ物にする。
+# タイトル行だけ英語、配下の本文・各セクションは日本語のまま。
+printf '## 🦅 vibehawk Review Summary\n\n'
 
 # Recent review info セクション（CodeRabbit 模倣、Issue #226）。
 # Recent review info 系 env が全て空なら非出力（既存 Case 1-6 の後方互換）。
@@ -108,8 +116,6 @@ if [ -n "$RUN_ID" ] || [ -n "$COMMITS_JSON" ] || [ -n "$FILES_SELECTED_JSON" ] |
   printf '</details>\n\n'
 fi
 
-printf '## 🦅 vibehawk レビューサマリ\n\n'
-
 # severity 集計（STRUCTURED_OUTPUT 空時も 0/0/0/0/0 を維持）
 if [ -n "$STRUCTURED_OUTPUT" ]; then
   severity_counts=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -c '
@@ -125,6 +131,56 @@ if [ -n "$STRUCTURED_OUTPUT" ]; then
       )')
 else
   severity_counts='{"critical":0,"major":0,"minor":0,"trivial":0,"info":0}'
+fi
+
+# severity 表
+printf '### 📊 severity 集計\n\n'
+printf '| 🔴 Critical | 🟠 Major | 🟡 Minor | 🔵 Trivial | ⚪ Info |\n'
+printf '|---|---|---|---|---|\n'
+printf '%s' "$severity_counts" | jq -r '"| " + (.critical|tostring) + " | " + (.major|tostring) + " | " + (.minor|tostring) + " | " + (.trivial|tostring) + " | " + (.info|tostring) + " |"'
+printf '\n'
+
+# 主要指摘（🔴 / 🟠 を最大 10 件）
+if [ -n "$STRUCTURED_OUTPUT" ]; then
+  findings_count=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '
+    [.comments[]? | select((.body // "") | (startswith("🔴") or startswith("🟠")))] | length')
+  if [ "${findings_count:-0}" -gt 0 ]; then
+    display_count="$findings_count"
+    if [ "$display_count" -gt 10 ]; then
+      display_count=10
+    fi
+    printf '### 🚨 主要指摘（上位 %s 件）\n\n' "${display_count}"
+    printf '%s' "$STRUCTURED_OUTPUT" | jq -r '
+      [.comments[]? | select((.body // "") | (startswith("🔴") or startswith("🟠")))]
+      | .[:10]
+      | .[]
+      | "- `" + (.path) + ":" + ((.line // 0) | tostring) + "` — " + ((.body // "") | gsub("\n"; " ") | .[0:80])'
+    printf '\n'
+  fi
+fi
+
+# Review Status callout（normal 以外で表示）
+case "$REVIEW_STATUS" in
+  normal) ;;
+  skipped)
+    printf '> [!NOTE]\n> ⏭️ レビュー対象なし（paths-ignore 全マッチ）。skip-mark workflow が `vibehawk` を success で post 済み。\n\n'
+    ;;
+  paused)
+    printf '> [!NOTE]\n> ⏸️ レビュー一時停止中。\n\n'
+    ;;
+  draft)
+    printf '> [!NOTE]\n> 📝 draft PR のためレビュー保留中。ready_for_review でレビューが走ります。\n\n'
+    ;;
+  *)
+    printf '> [!NOTE]\n> ℹ️ REVIEW_STATUS=%s\n\n' "$REVIEW_STATUS"
+    ;;
+esac
+
+# Tool failures callout
+if [ -n "$TOOL_FAILURES" ]; then
+  printf '> [!WARNING]\n> 🔧 外部ツール起動失敗\n'
+  printf '%s' "$TOOL_FAILURES" | awk '{ printf "> %s\n", $0 }'
+  printf '\n'
 fi
 
 # 📝 Walkthrough セクション（CodeRabbit 互換、Issue #227 / #228）
@@ -219,56 +275,6 @@ if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED
 
     printf '</details>\n\n'
   fi
-fi
-
-# severity 表
-printf '### 📊 severity 集計\n\n'
-printf '| 🔴 Critical | 🟠 Major | 🟡 Minor | 🔵 Trivial | ⚪ Info |\n'
-printf '|---|---|---|---|---|\n'
-printf '%s' "$severity_counts" | jq -r '"| " + (.critical|tostring) + " | " + (.major|tostring) + " | " + (.minor|tostring) + " | " + (.trivial|tostring) + " | " + (.info|tostring) + " |"'
-printf '\n'
-
-# 主要指摘（🔴 / 🟠 を最大 10 件）
-if [ -n "$STRUCTURED_OUTPUT" ]; then
-  findings_count=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '
-    [.comments[]? | select((.body // "") | (startswith("🔴") or startswith("🟠")))] | length')
-  if [ "${findings_count:-0}" -gt 0 ]; then
-    display_count="$findings_count"
-    if [ "$display_count" -gt 10 ]; then
-      display_count=10
-    fi
-    printf '### 🚨 主要指摘（上位 %s 件）\n\n' "${display_count}"
-    printf '%s' "$STRUCTURED_OUTPUT" | jq -r '
-      [.comments[]? | select((.body // "") | (startswith("🔴") or startswith("🟠")))]
-      | .[:10]
-      | .[]
-      | "- `" + (.path) + ":" + ((.line // 0) | tostring) + "` — " + ((.body // "") | gsub("\n"; " ") | .[0:80])'
-    printf '\n'
-  fi
-fi
-
-# Review Status callout（normal 以外で表示）
-case "$REVIEW_STATUS" in
-  normal) ;;
-  skipped)
-    printf '> [!NOTE]\n> ⏭️ レビュー対象なし（paths-ignore 全マッチ）。skip-mark workflow が `vibehawk` を success で post 済み。\n\n'
-    ;;
-  paused)
-    printf '> [!NOTE]\n> ⏸️ レビュー一時停止中。\n\n'
-    ;;
-  draft)
-    printf '> [!NOTE]\n> 📝 draft PR のためレビュー保留中。ready_for_review でレビューが走ります。\n\n'
-    ;;
-  *)
-    printf '> [!NOTE]\n> ℹ️ REVIEW_STATUS=%s\n\n' "$REVIEW_STATUS"
-    ;;
-esac
-
-# Tool failures callout
-if [ -n "$TOOL_FAILURES" ]; then
-  printf '> [!WARNING]\n> 🔧 外部ツール起動失敗\n'
-  printf '%s' "$TOOL_FAILURES" | awk '{ printf "> %s\n", $0 }'
-  printf '\n'
 fi
 
 # 🚥 Pre-merge checks セクション（CodeRabbit 互換、Issue #229）
