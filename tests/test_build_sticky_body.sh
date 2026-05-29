@@ -130,17 +130,18 @@ else
   fail "Case 9: ignored ファイル一覧が期待通りに表示されない"
 fi
 
-echo "Case 10: Issue #227 — walkthrough_narrative + changes_table がある → 📝 Walkthrough セクションが含まれる"
-out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"narrative 本文","changes_table":[{"layer":"L1","files":["a.sh"],"summary":"S1"}]}' run_build)
+echo "Case 10: Issue #227 / #237 — walkthrough_narrative + changes_table（グループ構造）→ 📝 Walkthrough セクションが含まれる"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"narrative 本文","changes_table":[{"group":"G1","changes":[{"files":["a.sh"],"summary":"S1"}]}]}' run_build)
 if grep -qF '📝 Walkthrough' <<< "$out" \
   && grep -qF '## Walkthrough' <<< "$out" \
   && grep -qF 'narrative 本文' <<< "$out" \
   && grep -qF '## Changes' <<< "$out" \
-  && grep -qF '| Layer / File(s) | Summary |' <<< "$out" \
-  && grep -qF 'L1<br>**Files**: a.sh' <<< "$out"; then
+  && grep -qF '**G1**' <<< "$out" \
+  && grep -qF '| File(s) | Summary |' <<< "$out" \
+  && grep -qF '| a.sh | S1 |' <<< "$out"; then
   pass "Case 10"
 else
-  fail "Case 10: Walkthrough セクションまたは Changes テーブルが期待通りに展開されない"
+  fail "Case 10: Walkthrough セクションまたは Changes グループテーブルが期待通りに展開されない"
 fi
 
 echo "Case 11: Issue #227 — walkthrough_narrative が 1000 文字でも切り詰めなしで全文表示される"
@@ -153,10 +154,10 @@ else
   fail "Case 11: 切り詰めなしで 1000 文字が表示されていないか、旧『📝 概要』が撤去されていない"
 fi
 
-echo "Case 12: Issue #227 — changes_table に 3 layer → Markdown テーブルに 3 行表示される"
-out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"layer":"L1","files":["f1"],"summary":"s1"},{"layer":"L2","files":["f2"],"summary":"s2"},{"layer":"L3","files":["f3"],"summary":"s3"}]}' run_build)
-# 3 行のテーブル行が含まれていることを確認
-row_count=$(grep -c '<br>\*\*Files\*\*:' <<< "$out" || true)
+echo "Case 12: Issue #237 — changes_table 2 グループ計 3 変更 → グループ別テーブルに 3 行表示される"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"group":"G1","changes":[{"files":["f1"],"summary":"s1"},{"files":["f2"],"summary":"s2"}]},{"group":"G2","changes":[{"files":["f3"],"summary":"s3"}]}]}' run_build)
+# 3 行のデータ行が含まれていることを確認（| f1 | s1 | 形式）
+row_count=$(grep -cE '^\| f[123] \| s[123] \|$' <<< "$out" || true)
 if [[ "$row_count" -eq 3 ]]; then
   pass "Case 12"
 else
@@ -261,7 +262,7 @@ else
 fi
 
 echo "Case 20: Issue #241 — severity 集計が Walkthrough セクションより前に来る（出力順の回帰検知）"
-out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"layer":"L1","files":["a.sh"],"summary":"s1"}]}' run_build)
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"group":"G1","changes":[{"files":["a.sh"],"summary":"s1"}]}]}' run_build)
 severity_line=$(grep -nF '📊 severity 集計' <<< "$out" | head -1 | cut -d: -f1)
 walkthrough_line=$(grep -nF '📝 Walkthrough' <<< "$out" | head -1 | cut -d: -f1)
 if [[ -n "$severity_line" && -n "$walkthrough_line" && "$severity_line" -lt "$walkthrough_line" ]]; then
@@ -278,6 +279,23 @@ if grep -qF '<summary>📊 severity 集計</summary>' <<< "$out" \
   pass "Case 21"
 else
   fail "Case 21: severity 集計が <details> に折り畳まれていない、または旧 h3 ベタ置きが残存"
+fi
+
+echo "Case 22: Issue #237 — changes_table 複数グループ → グループごとの太字見出しが出る"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"group":"Pre-merge 実装","changes":[{"files":["a.sh"],"summary":"s1"}]},{"group":"テスト追加","changes":[{"files":["t.sh"],"summary":"s2"}]}]}' run_build)
+if grep -qF '**Pre-merge 実装**' <<< "$out" \
+  && grep -qF '**テスト追加**' <<< "$out"; then
+  pass "Case 22"
+else
+  fail "Case 22: changes_table のグループ別太字見出しが出ない"
+fi
+
+echo "Case 23: Issue #237 — Changes セルの | と改行がエスケープされ表崩れしない（CodeRabbit 指摘）"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"group":"G","changes":[{"files":["a.sh"],"summary":"foo | bar\nbaz"}]}]}' run_build)
+if grep -qF 'foo \| bar<br>baz' <<< "$out"; then
+  pass "Case 23"
+else
+  fail "Case 23: セルの | / 改行がエスケープされていない"
 fi
 
 echo "==="

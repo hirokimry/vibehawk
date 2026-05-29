@@ -223,15 +223,21 @@ if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED
       printf '## Walkthrough\n\n%s\n\n' "$walkthrough_narrative"
     fi
 
+    # Issue #237: Changes を意味グループごとに「太字見出し + 小テーブル」へ分割する。
+    # 各グループ = {group, changes:[{files, summary}]}。大型 PR でも領域別に 30 秒でスキャンできる。
     if [ "${changes_count:-0}" -gt 0 ]; then
       printf '## Changes\n\n'
-      printf '| Layer / File(s) | Summary |\n'
-      printf '|---|---|\n'
-      # 各 layer 行: "| <layer><br>**Files**: file1, file2 | <summary> |"
-      printf '%s' "$changes_table_json" | jq -r '
-        .[] | "| " + .layer + "<br>**Files**: " + (.files | join(", ")) + " | " + .summary + " |"
-      '
-      printf '\n'
+      # セル内の `|` / 改行は Markdown テーブルを壊すためエスケープする（Issue #237 / CodeRabbit 指摘）。
+      printf '%s\n\n' "$(printf '%s' "$changes_table_json" | jq -r '
+        def esc_cell:
+          tostring
+          | gsub("\\|"; "\\|")
+          | gsub("\\r?\\n"; "<br>");
+        [ .[]
+          | "**" + (.group | tostring | gsub("\\r?\\n"; " ")) + "**\n\n| File(s) | Summary |\n|---|---|\n"
+            + ([.changes[] | "| " + (.files | map(esc_cell) | join(", ")) + " | " + (.summary | esc_cell) + " |"] | join("\n"))
+        ] | join("\n\n")
+      ')"
     fi
 
     # 🎯 推定レビュー労力（Issue #228、CodeRabbit 互換 difficulty 5 段階）

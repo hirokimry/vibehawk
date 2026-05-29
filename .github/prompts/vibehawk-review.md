@@ -62,9 +62,10 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
   "walkthrough_narrative": "変更全体の物語的サマリ（1〜2 段落、200〜800 文字、CodeRabbit 互換、Issue #227）",
   "changes_table": [
     {
-      "layer": "ワークフロー仕様更新",
-      "files": ["scripts/ci/foo.sh"],
-      "summary": "POST 前ペイロードの上書きロジックを追加した"
+      "group": "ワークフロー仕様更新",
+      "changes": [
+        {"files": ["scripts/ci/foo.sh"], "summary": "POST 前ペイロードの上書きロジックを追加した"}
+      ]
     }
   ],
   "review_effort": {"difficulty": 3, "minutes": 20},
@@ -112,12 +113,12 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 - クラス名・メソッド名・ファイルパスの羅列を避ける（実装語彙は最小限）
 - sticky walkthrough コメントの `## Walkthrough` セクションに切り詰めなしで全文展開される
 
-## changes_table の必須要件（Issue #227、CodeRabbit 互換）
+## changes_table の必須要件（Issue #227 / #237、CodeRabbit 互換）
 
-- 変更を **意味的な layer** でグルーピング（例: 「ワークフロー仕様更新」「POST 前ペイロード上書き実装」「テストケース追加」）
-- 各 layer に該当ファイル一覧（`files[]`）と 1〜2 文の `summary` を付ける
-- **最大 10 layer まで**。それ以上は意味的に統合する（細粒度の `path:line` 単位の羅列にしない）
-- sticky walkthrough コメントの `## Changes` セクションに Markdown テーブル `|Layer / File(s)|Summary|` 形式で展開される
+- 変更を **意味グループ（`group`）** に分割する（例: 「ワークフロー仕様更新」「POST 前ペイロード上書き実装」「テストケース追加」）
+- 各グループは `changes[]` を持ち、各 change に該当ファイル一覧（`files[]`）と 1〜2 文の `summary` を付ける
+- **最大 10 グループまで**。それ以上は意味的に統合する（細粒度の `path:line` 単位の羅列にしない）
+- sticky walkthrough コメントの `## Changes` セクションに、グループごとの **太字見出し + 小テーブル `|File(s)|Summary|`** で展開される（Issue #237: CodeRabbit 同様のグループ分割で大型 PR でも領域別にスキャンできる）
 
 ## pre_merge_checks の必須要件（Issue #229、CodeRabbit 互換）
 
