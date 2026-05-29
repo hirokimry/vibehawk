@@ -270,6 +270,16 @@ else
   fail "Case 20: severity が Walkthrough より後に来ている（severity=${severity_line} walkthrough=${walkthrough_line}）"
 fi
 
+echo "Case 21: Issue #236 — severity 集計が <details> 折り畳みに格納され、ベタ置き h3 が消える"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[]}' run_build)
+if grep -qF '<summary>📊 severity 集計</summary>' <<< "$out" \
+  && grep -qF '</details>' <<< "$out" \
+  && ! grep -qF '### 📊 severity 集計' <<< "$out"; then
+  pass "Case 21"
+else
+  fail "Case 21: severity 集計が <details> に折り畳まれていない、または旧 h3 ベタ置きが残存"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"

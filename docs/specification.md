@@ -260,7 +260,7 @@ vibehawk は **2 つの sticky 経路** を独立に並走する。
    - 📥 Commits（base..HEAD SHA range）
    - 📒 Files selected for processing (N)
    - 💤 Files with no reviewable changes (N)
-6. severity 集計表（🔴 / 🟠 / 🟡 / 🔵 / ⚪ の件数）
+6. `<details><summary>📊 severity 集計</summary>` セクション（🔴 / 🟠 / 🟡 / 🔵 / ⚪ の件数、Issue #236 で `<details>` 折り畳みに統一し他セクションと質感を揃える）
 7. 主要指摘リスト（🔴 / 🟠 を上位 10 件、`path:line` + body 冒頭 80 字）
 8. Review Status callout（`normal` 以外で表示: `skipped` / `paused` / `draft`）
 9. Tool failures callout（外部ツール起動失敗）

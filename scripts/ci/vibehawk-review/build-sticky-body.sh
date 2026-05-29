@@ -133,12 +133,12 @@ else
   severity_counts='{"critical":0,"major":0,"minor":0,"trivial":0,"info":0}'
 fi
 
-# severity 表
-printf '### 📊 severity 集計\n\n'
+# 📊 severity 集計（Issue #236: <details> 折り畳みで他セクションと質感を統一、ベタ置きをやめる）
+printf '<details>\n<summary>📊 severity 集計</summary>\n\n'
 printf '| 🔴 Critical | 🟠 Major | 🟡 Minor | 🔵 Trivial | ⚪ Info |\n'
 printf '|---|---|---|---|---|\n'
 printf '%s' "$severity_counts" | jq -r '"| " + (.critical|tostring) + " | " + (.major|tostring) + " | " + (.minor|tostring) + " | " + (.trivial|tostring) + " | " + (.info|tostring) + " |"'
-printf '\n'
+printf '\n</details>\n\n'
 
 # 主要指摘（🔴 / 🟠 を最大 10 件）
 if [ -n "$STRUCTURED_OUTPUT" ]; then
