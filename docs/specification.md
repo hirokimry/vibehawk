@@ -261,20 +261,21 @@ vibehawk は **2 つの sticky 経路** を独立に並走する。
    - 💤 Files with no reviewable changes (N)
 5. `<details><summary>📝 Walkthrough</summary>` セクション（Issue #227 / #228、CodeRabbit 互換）。配下に以下を含む:
    - `## Walkthrough`: Claude が schema 必須化された `walkthrough_narrative` フィールドで返す物語的サマリ（1〜2 段落、200〜800 文字、切り詰めなしで全文展開）
-   - `## Changes`: Claude が schema 必須化された `changes_table[]` フィールドで返す変更一覧を `|Layer / File(s)|Summary|` Markdown テーブルで展開
-   - `## 🎯 N (Label) | ⏱️ ~M minutes`: Claude が schema 必須化された `review_effort: {difficulty, minutes}` フィールドで返す推定レビュー労力（Issue #228、difficulty 1-5 ラベル: Trivial/Easy/Moderate/Complex/Very Complex）
-   - `## Possibly related PRs`: workflow step `.github/scripts/fetch-related-prs.sh` が `gh api search/issues` で取得した類似 closed PR 一覧（最大 5 件、0 件時は「No related PRs found.」、Issue #228）
+   - `## Changes`: Claude が schema 必須化された `changes_table[]`（`{group, changes:[{files, summary}]}`）で返す変更一覧を、**意味グループごとの太字見出し + 小テーブル `|File(s)|Summary|`** で展開（Issue #237、CodeRabbit 同様のグループ分割）
+   - `## Estimated code review effort`: Claude が schema 必須化された `review_effort: {difficulty, minutes}` フィールドで返す推定レビュー労力を、見出し + `🎯 N (Label) | ⏱️ ~M minutes` 行で展開（Issue #228 / #238、difficulty 1-5 ラベル: Trivial/Easy/Moderate/Complex/Very Complex）
+   - `## Possibly related PRs`: workflow step `.github/scripts/fetch-related-prs.sh` が `gh api search/issues` で取得した類似 closed PR 一覧を `[owner/repo#N](フル URL): title` リンク形式で展開（最大 5 件、0 件時は「No related PRs found.」、Issue #228 / #239）
    - `## Suggested reviewers`: workflow step `.github/scripts/fetch-suggested-reviewers.sh` が CODEOWNERS / git log から取得した推奨レビュワー一覧（最大 3 名、0 名時は「No suggested reviewers.」、自己除外、Issue #228）
    - Issue #227 で旧「高レベル概要（200 文字切り詰め）」と旧「Walkthrough（`.body` 残り全体）」を撤去し、本セクションに統合
-6. severity 集計表（🔴 / 🟠 / 🟡 / 🔵 / ⚪ の件数）
+   - Issue #241 で `## 🦅 vibehawk レビューサマリ` 見出しを容れ物にし、severity 集計 / 主要指摘 / Walkthrough / Pre-merge checks をその配下に整理（Recent review info のみプリアンブルとして見出しの外に残す）
+6. `<details><summary>📊 severity 集計</summary>` セクション（🔴 / 🟠 / 🟡 / 🔵 / ⚪ の件数、Issue #236 で `<details>` 折り畳みに統一）
 7. 主要指摘リスト（🔴 / 🟠 を上位 10 件、`path:line` + body 冒頭 80 字）
 8. Review Status callout（`normal` 以外で表示: `skipped` / `paused` / `draft`）
 9. Tool failures callout（外部ツール起動失敗）
-10. `<details><summary>🚥 Pre-merge checks | <summary>...</summary>` セクション（Issue #229、CodeRabbit 互換）。5 項目を Markdown テーブルで表示。failed 1 件以上で summary 表記が `⚠️ N failed`、全 passed で `✅ N passed`:
-    - Title check（workflow step `check-pr-title.sh` で grep 機械判定）
-    - Description check（workflow step `check-pr-description.sh` で grep 機械判定）
-    - Linked Issues check（Claude `pre_merge_checks.linked_issues_check` で意味判定）
-    - Out of Scope Changes check（Claude `pre_merge_checks.out_of_scope_check` で意味判定）
+10. `<details><summary>🚥 Pre-merge checks | ✅ N | ❌ M</summary>` セクション（Issue #229 / #240、CodeRabbit 互換）。summary は `✅ N | ❌ M` の両件数併記。`failed` は `### ❌ Failed checks (M)` の Resolution 列付きテーブルで先頭に分離表示し、`failed` 以外は入れ子 `<details><summary>✅ Passed checks (N)</summary>`（Resolution 列なし）に格納する。5 項目:
+    - Title check（workflow step `check-pr-title.sh` で grep 機械判定、Resolution は静的文言）
+    - Description check（workflow step `check-pr-description.sh` で grep 機械判定、Resolution は静的文言）
+    - Linked Issues check（Claude `pre_merge_checks.linked_issues_check` で意味判定、`failed` 時の Resolution は schema `resolution` 由来）
+    - Out of Scope Changes check（Claude `pre_merge_checks.out_of_scope_check` で意味判定、`failed` 時の Resolution は schema `resolution` 由来）
     - Docstring Coverage（workflow step `check-docstring-coverage.sh`、v1 は言語不問で `skipped` 固定、言語別ツール統合は別 Issue）
 11. Internal state JSON（`<!-- vibehawk:state {"last_sha":"...","decided_event":"...","severity":{...},"timestamp":"..."} -->`、次回 incremental 判定の根拠）
 

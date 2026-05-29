@@ -62,9 +62,10 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
   "walkthrough_narrative": "変更全体の物語的サマリ（1〜2 段落、200〜800 文字、CodeRabbit 互換、Issue #227）",
   "changes_table": [
     {
-      "layer": "ワークフロー仕様更新",
-      "files": ["scripts/ci/foo.sh"],
-      "summary": "POST 前ペイロードの上書きロジックを追加した"
+      "group": "ワークフロー仕様更新",
+      "changes": [
+        {"files": ["scripts/ci/foo.sh"], "summary": "POST 前ペイロードの上書きロジックを追加した"}
+      ]
     }
   ],
   "review_effort": {"difficulty": 3, "minutes": 20},
@@ -112,12 +113,12 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 - クラス名・メソッド名・ファイルパスの羅列を避ける（実装語彙は最小限）
 - sticky walkthrough コメントの `## Walkthrough` セクションに切り詰めなしで全文展開される
 
-## changes_table の必須要件（Issue #227、CodeRabbit 互換）
+## changes_table の必須要件（Issue #227 / #237、CodeRabbit 互換）
 
-- 変更を **意味的な layer** でグルーピング（例: 「ワークフロー仕様更新」「POST 前ペイロード上書き実装」「テストケース追加」）
-- 各 layer に該当ファイル一覧（`files[]`）と 1〜2 文の `summary` を付ける
-- **最大 10 layer まで**。それ以上は意味的に統合する（細粒度の `path:line` 単位の羅列にしない）
-- sticky walkthrough コメントの `## Changes` セクションに Markdown テーブル `|Layer / File(s)|Summary|` 形式で展開される
+- 変更を **意味グループ（`group`）** に分割する（例: 「ワークフロー仕様更新」「POST 前ペイロード上書き実装」「テストケース追加」）
+- 各グループは `changes[]` を持ち、各 change に該当ファイル一覧（`files[]`）と 1〜2 文の `summary` を付ける
+- **最大 10 グループまで**。それ以上は意味的に統合する（細粒度の `path:line` 単位の羅列にしない）
+- sticky walkthrough コメントの `## Changes` セクションに、グループごとの **太字見出し + 小テーブル `|File(s)|Summary|`** で展開される（Issue #237: CodeRabbit 同様のグループ分割で大型 PR でも領域別にスキャンできる）
 
 ## pre_merge_checks の必須要件（Issue #229、CodeRabbit 互換）
 
@@ -126,11 +127,14 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 - `linked_issues_check`:
   - `status`: `"passed"` / `"failed"` / `"skipped"`
   - `explanation`: 判定理由を 1〜2 文で。「Issue #N の完了条件 X を本 PR は実装している」など。Issue が紐づかない PR では `skipped`
+  - `resolution`（任意、Issue #240）: `status` が `failed` のときは **直し方を 1 文で** 添える（例: 「未実装の完了条件 Y を実装してください」）。`passed` / `skipped` では省略可
 - `out_of_scope_check`:
   - `status`: `"passed"` / `"failed"` / `"skipped"`
   - `explanation`: Issue 本文の「📝 提案」「📍 関連ファイル」と PR diff が一致するかを判定。範囲外変更があれば `failed`、Issue が紐づかなければ `skipped`
-- 例: `{"linked_issues_check": {"status": "passed", "explanation": "完了条件 5 件全て実装済み"}, "out_of_scope_check": {"status": "passed", "explanation": "全変更が Issue 提案範囲内"}}`
-- sticky walkthrough コメントに `<details><summary>🚥 Pre-merge checks</summary>` セクションで 5 行表示される
+  - `resolution`（任意、Issue #240）: `status` が `failed` のときは **直し方を 1 文で** 添える（例: 「無関係な変更を別 PR に分離してください」）。`passed` / `skipped` では省略可
+- 例（passed）: `{"linked_issues_check": {"status": "passed", "explanation": "完了条件 5 件全て実装済み"}, "out_of_scope_check": {"status": "passed", "explanation": "全変更が Issue 提案範囲内"}}`
+- 例（failed + resolution）: `{"out_of_scope_check": {"status": "failed", "explanation": "認証ロジックの変更が Issue 範囲外", "resolution": "認証変更を別 PR に分離してください"}}`
+- sticky walkthrough コメントに `<details><summary>🚥 Pre-merge checks</summary>` セクションで表示される（Issue #240: `failed` は Resolution 列付きの専用テーブルで先頭に分離、`passed` は入れ子の `<details>` に格納、summary は `✅ N | ❌ M` の両件数併記）
 
 ## review_effort の必須要件（Issue #228、CodeRabbit 互換）
 
@@ -142,7 +146,7 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
   - 5 = Very Complex（依存メジャー更新 / 大規模リファクタ）
 - `minutes`: レビュアーが PR 全体を確認するのに要する見積もり時間（分単位の整数、最低 1）
 - 例: `{"difficulty": 3, "minutes": 20}`
-- sticky walkthrough コメントに `## 🎯 N (Label) | ⏱️ ~M minutes` 形式で展開される
+- sticky walkthrough コメントに `## Estimated code review effort` 見出し + `🎯 N (Label) | ⏱️ ~M minutes` 行で展開される（Issue #238: 値を見出しにせず CodeRabbit 互換の名詞見出し配下に置く）
 
 ## inline 指摘の severity 5 段階分類（CodeRabbit 公式仕様、`.claude/rules/severity/coderabbit.md` 準拠）
 

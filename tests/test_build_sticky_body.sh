@@ -130,17 +130,18 @@ else
   fail "Case 9: ignored ファイル一覧が期待通りに表示されない"
 fi
 
-echo "Case 10: Issue #227 — walkthrough_narrative + changes_table がある → 📝 Walkthrough セクションが含まれる"
-out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"narrative 本文","changes_table":[{"layer":"L1","files":["a.sh"],"summary":"S1"}]}' run_build)
+echo "Case 10: Issue #227 / #237 — walkthrough_narrative + changes_table（グループ構造）→ 📝 Walkthrough セクションが含まれる"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"narrative 本文","changes_table":[{"group":"G1","changes":[{"files":["a.sh"],"summary":"S1"}]}]}' run_build)
 if grep -qF '📝 Walkthrough' <<< "$out" \
   && grep -qF '## Walkthrough' <<< "$out" \
   && grep -qF 'narrative 本文' <<< "$out" \
   && grep -qF '## Changes' <<< "$out" \
-  && grep -qF '| Layer / File(s) | Summary |' <<< "$out" \
-  && grep -qF 'L1<br>**Files**: a.sh' <<< "$out"; then
+  && grep -qF '**G1**' <<< "$out" \
+  && grep -qF '| File(s) | Summary |' <<< "$out" \
+  && grep -qF '| a.sh | S1 |' <<< "$out"; then
   pass "Case 10"
 else
-  fail "Case 10: Walkthrough セクションまたは Changes テーブルが期待通りに展開されない"
+  fail "Case 10: Walkthrough セクションまたは Changes グループテーブルが期待通りに展開されない"
 fi
 
 echo "Case 11: Issue #227 — walkthrough_narrative が 1000 文字でも切り詰めなしで全文表示される"
@@ -153,10 +154,10 @@ else
   fail "Case 11: 切り詰めなしで 1000 文字が表示されていないか、旧『📝 概要』が撤去されていない"
 fi
 
-echo "Case 12: Issue #227 — changes_table に 3 layer → Markdown テーブルに 3 行表示される"
-out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"layer":"L1","files":["f1"],"summary":"s1"},{"layer":"L2","files":["f2"],"summary":"s2"},{"layer":"L3","files":["f3"],"summary":"s3"}]}' run_build)
-# 3 行のテーブル行が含まれていることを確認
-row_count=$(grep -c '<br>\*\*Files\*\*:' <<< "$out" || true)
+echo "Case 12: Issue #237 — changes_table 2 グループ計 3 変更 → グループ別テーブルに 3 行表示される"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"group":"G1","changes":[{"files":["f1"],"summary":"s1"},{"files":["f2"],"summary":"s2"}]},{"group":"G2","changes":[{"files":["f3"],"summary":"s3"}]}]}' run_build)
+# 3 行のデータ行が含まれていることを確認（| f1 | s1 | 形式）
+row_count=$(grep -cE '^\| f[123] \| s[123] \|$' <<< "$out" || true)
 if [[ "$row_count" -eq 3 ]]; then
   pass "Case 12"
 else
@@ -171,12 +172,14 @@ else
   fail "Case 13: walkthrough_narrative 欠落でも Walkthrough セクションが出ている（後方互換破壊）"
 fi
 
-echo "Case 14: Issue #228 — review_effort difficulty 3 → 🎯 3 (Moderate) | ⏱️ ~M minutes 表示"
+echo "Case 14: Issue #238 — review_effort が ## Estimated code review effort 見出し + 🎯 行で表示される"
 out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":3,"minutes":25}}' run_build)
-if grep -qF '## 🎯 3 (Moderate) | ⏱️ ~25 minutes' <<< "$out"; then
+if grep -qF '## Estimated code review effort' <<< "$out" \
+  && grep -qF '🎯 3 (Moderate) | ⏱️ ~25 minutes' <<< "$out" \
+  && ! grep -qF '## 🎯' <<< "$out"; then
   pass "Case 14"
 else
-  fail "Case 14: review_effort 行が期待形式で表示されない"
+  fail "Case 14: review_effort が見出し + 🎯 行の形式で表示されない（旧 ## 🎯 見出しが残存）"
 fi
 
 echo "Case 15: Issue #228 — RELATED_PRS_JSON に 2 件 → ## Possibly related PRs に列挙、0 件は『No related PRs found.』"
@@ -184,8 +187,8 @@ out=$(RELATED_PRS_JSON='[{"number":150,"title":"sticky 機能拡張"},{"number":
   STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10}}' \
   run_build)
 if grep -qF '## Possibly related PRs' <<< "$out" \
-  && grep -qF -e '- #150: sticky 機能拡張' <<< "$out" \
-  && grep -qF -e '- #160: レビュー仕様変更' <<< "$out"; then
+  && grep -qF -e '- [hirokimry/vibehawk#150](https://github.com/hirokimry/vibehawk/pull/150): sticky 機能拡張' <<< "$out" \
+  && grep -qF -e '- [hirokimry/vibehawk#160](https://github.com/hirokimry/vibehawk/pull/160): レビュー仕様変更' <<< "$out"; then
   pass "Case 15a (列挙)"
 else
   fail "Case 15a: Possibly related PRs の列挙が期待通りでない"
@@ -219,32 +222,59 @@ else
   fail "Case 16b: 0 名時の『No suggested reviewers.』が出ない"
 fi
 
-echo "Case 17: Issue #229 — Pre-merge checks 5 項目すべて passed → ✅ 4 passed (skipped 1 件) summary"
+echo "Case 17: Issue #229 / #240 — Pre-merge 5 項目すべて非 failed → ✅ 4 | ❌ 0 summary + Passed checks details"
 out=$(PRE_MERGE_TITLE_STATUS="passed" PRE_MERGE_TITLE_EXPLANATION="OK" \
       PRE_MERGE_DESCRIPTION_STATUS="passed" PRE_MERGE_DESCRIPTION_EXPLANATION="OK" \
       PRE_MERGE_DOCSTRING_STATUS="skipped" PRE_MERGE_DOCSTRING_EXPLANATION="N/A" \
       STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10},"pre_merge_checks":{"linked_issues_check":{"status":"passed","explanation":"A"},"out_of_scope_check":{"status":"passed","explanation":"B"}}}' \
       run_build)
-if grep -qF '🚥 Pre-merge checks | ✅ 4 passed' <<< "$out" \
+if grep -qF '🚥 Pre-merge checks | ✅ 4 | ❌ 0' <<< "$out" \
+  && grep -qF '✅ Passed checks (5)' <<< "$out" \
   && grep -qF '| Title check | ✅ passed' <<< "$out" \
   && grep -qF '| Linked Issues check | ✅ passed' <<< "$out" \
-  && grep -qF '| Docstring Coverage | ⏭️ skipped' <<< "$out"; then
+  && grep -qF '| Docstring Coverage | ⏭️ skipped' <<< "$out" \
+  && ! grep -qF '### ❌ Failed checks' <<< "$out"; then
   pass "Case 17"
 else
-  fail "Case 17: Pre-merge checks の summary または 5 項目表示が期待通りでない"
+  fail "Case 17: failed 0 件時の summary / Passed checks details / 5 項目表示が期待通りでない"
 fi
 
-echo "Case 18: Issue #229 — Pre-merge checks に failed 1 件あり → ⚠️ 1 failed summary"
+echo "Case 18: Issue #240 — Pre-merge に failed 1 件 → ✅ 3 | ❌ 1 + Failed checks (Resolution 列付き) 分離"
 out=$(PRE_MERGE_TITLE_STATUS="failed" PRE_MERGE_TITLE_EXPLANATION="形式違反" \
       PRE_MERGE_DESCRIPTION_STATUS="passed" PRE_MERGE_DESCRIPTION_EXPLANATION="OK" \
       PRE_MERGE_DOCSTRING_STATUS="skipped" PRE_MERGE_DOCSTRING_EXPLANATION="N/A" \
       STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10},"pre_merge_checks":{"linked_issues_check":{"status":"passed","explanation":"A"},"out_of_scope_check":{"status":"passed","explanation":"B"}}}' \
       run_build)
-if grep -qF '🚥 Pre-merge checks | ⚠️ 1 failed' <<< "$out" \
-  && grep -qF '| Title check | ❌ failed' <<< "$out"; then
+if grep -qF '🚥 Pre-merge checks | ✅ 3 | ❌ 1' <<< "$out" \
+  && grep -qF '### ❌ Failed checks (1)' <<< "$out" \
+  && grep -qF '| Check | Status | Explanation | Resolution |' <<< "$out" \
+  && grep -qF '| Title check | ❌ failed | 形式違反 | Conventional Commits' <<< "$out" \
+  && grep -qF '✅ Passed checks (4)' <<< "$out"; then
   pass "Case 18"
 else
-  fail "Case 18: failed 1 件時の summary 切替が期待通りでない"
+  fail "Case 18: failed 分離 / Resolution 列 / summary 両件数併記が期待通りでない"
+fi
+
+echo "Case 19: Issue #237 — changes_table 複数グループ → グループごとの太字見出しが出る"
+out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[{"group":"Pre-merge 実装","changes":[{"files":["a.sh"],"summary":"s1"}]},{"group":"テスト追加","changes":[{"files":["t.sh"],"summary":"s2"}]}]}' run_build)
+if grep -qF '**Pre-merge 実装**' <<< "$out" \
+  && grep -qF '**テスト追加**' <<< "$out"; then
+  pass "Case 19"
+else
+  fail "Case 19: changes_table のグループ別太字見出しが出ない"
+fi
+
+echo "Case 20: Issue #240 — Claude 判定 check が failed で resolution → Failed checks に Claude resolution が出る"
+out=$(PRE_MERGE_TITLE_STATUS="passed" PRE_MERGE_TITLE_EXPLANATION="OK" \
+      PRE_MERGE_DESCRIPTION_STATUS="passed" PRE_MERGE_DESCRIPTION_EXPLANATION="OK" \
+      PRE_MERGE_DOCSTRING_STATUS="skipped" PRE_MERGE_DOCSTRING_EXPLANATION="N/A" \
+      STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10},"pre_merge_checks":{"linked_issues_check":{"status":"passed","explanation":"A"},"out_of_scope_check":{"status":"failed","explanation":"範囲外変更あり","resolution":"無関係な変更を別 PR に分離してください"}}}' \
+      run_build)
+if grep -qF '🚥 Pre-merge checks | ✅ 3 | ❌ 1' <<< "$out" \
+  && grep -qF '| Out of Scope Changes check | ❌ failed | 範囲外変更あり | 無関係な変更を別 PR に分離してください |' <<< "$out"; then
+  pass "Case 20"
+else
+  fail "Case 20: Claude 判定 failed の resolution が Failed checks テーブルに出ない"
 fi
 
 echo "==="

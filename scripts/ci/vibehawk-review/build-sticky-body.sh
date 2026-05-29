@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 用途: vibehawk PR sticky walkthrough コメントの body markdown 文字列を生成する（Issue #219 / #226）
+# 用途: vibehawk PR sticky walkthrough コメントの body markdown 文字列を生成する（Issue #219 / #226 / #236-241）
 #
 # 入力（環境変数）:
 #   STRUCTURED_OUTPUT    claude_review の structured_output（JSON 文字列、空可）
@@ -13,7 +13,7 @@
 #   COMMITS_JSON              PR commits 配列の 1 行 JSON（空可、Recent review info / Commits 用、Issue #226）
 #   FILES_SELECTED_JSON       処理対象ファイル一覧の 1 行 JSON 配列（空可、Recent review info / Files selected 用、Issue #226）
 #   FILES_IGNORED_JSON        除外ファイル一覧の 1 行 JSON 配列（空可、Recent review info / Files with no reviewable changes 用、Issue #226）
-#   RELATED_PRS_JSON          関連 PR の 1 行 JSON 配列（空可、Possibly related PRs 用、Issue #228）
+#   RELATED_PRS_JSON          関連 PR の 1 行 JSON 配列（空可、Possibly related PRs 用、Issue #228 / #239）
 #   SUGGESTED_REVIEWERS_JSON  推奨レビュワーの 1 行 JSON 配列（空可、Suggested reviewers 用、Issue #228）
 #
 # 出力: 標準出力に sticky 本文 markdown 全体。
@@ -24,6 +24,15 @@
 #   - POST / PATCH / DELETE は post-sticky-comment.sh の責務（本スクリプトでは行わない）。
 #   - STRUCTURED_OUTPUT="" は正常入力として扱う（skip-mark 経路を内部分岐で吸収、別スクリプトを作らない）。
 #   - Recent review info 系 env が全て空なら該当セクション自体を非出力（既存テスト Case 1-6 の後方互換）。
+#
+# セクション構造（Issue #241: 🦅 見出しを容れ物にして配下を整理）:
+#   ℹ️ Recent review info（プリアンブル、見出しの外）
+#   ## 🦅 vibehawk レビューサマリ（容れ物の見出し）
+#     <details> 📊 severity 集計（Issue #236: 折り畳み）
+#     🚨 主要指摘
+#     Review Status / Tool failures callout
+#     <details> 📝 Walkthrough（Changes グループ分割 #237 / Estimated effort 見出し #238 / related PRs リンク #239）
+#     <details> 🚥 Pre-merge checks（failed/passed 分離 + Resolution 列 #240）
 
 set -euo pipefail
 
@@ -108,6 +117,8 @@ if [ -n "$RUN_ID" ] || [ -n "$COMMITS_JSON" ] || [ -n "$FILES_SELECTED_JSON" ] |
   printf '</details>\n\n'
 fi
 
+# Issue #241: 🦅 見出しは後続の各セクション（severity 集計 / 主要指摘 / Walkthrough / Pre-merge）を
+# 配下に束ねる容れ物として機能する。Recent review info はプリアンブルとして見出しの外（上）に残す。
 printf '## 🦅 vibehawk レビューサマリ\n\n'
 
 # severity 集計（STRUCTURED_OUTPUT 空時も 0/0/0/0/0 を維持）
@@ -127,106 +138,12 @@ else
   severity_counts='{"critical":0,"major":0,"minor":0,"trivial":0,"info":0}'
 fi
 
-# 📝 Walkthrough セクション（CodeRabbit 互換、Issue #227 / #228）
-# Claude が schema で必須化された walkthrough_narrative + changes_table + review_effort を返すため、
-# それらと workflow step 取得の related_prs / suggested_reviewers を
-# <details><summary>📝 Walkthrough</summary> で折り畳んで展開する。
-# 後方互換: 全フィールド欠落時はセクション非出力。
-if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
-  walkthrough_narrative=""
-  changes_table_json="[]"
-  changes_count=0
-  review_effort_difficulty=""
-  review_effort_minutes=""
-
-  if [ -n "$STRUCTURED_OUTPUT" ]; then
-    walkthrough_narrative=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.walkthrough_narrative // ""')
-    changes_table_json=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -c '.changes_table // []')
-    changes_count=$(printf '%s' "$changes_table_json" | jq -r 'length // 0')
-    review_effort_difficulty=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.review_effort.difficulty // empty')
-    review_effort_minutes=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.review_effort.minutes // empty')
-  fi
-
-  related_prs_count=0
-  if [ -n "$RELATED_PRS_JSON" ]; then
-    related_prs_count=$(printf '%s' "$RELATED_PRS_JSON" | jq -r 'length // 0' 2>/dev/null || printf '0')
-  fi
-
-  suggested_reviewers_count=0
-  if [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
-    suggested_reviewers_count=$(printf '%s' "$SUGGESTED_REVIEWERS_JSON" | jq -r 'length // 0' 2>/dev/null || printf '0')
-  fi
-
-  # いずれかの要素があれば Walkthrough セクションを開く
-  if [ -n "$walkthrough_narrative" ] || [ "${changes_count:-0}" -gt 0 ] \
-    || [ -n "$review_effort_difficulty" ] \
-    || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
-    printf '<details>\n<summary>📝 Walkthrough</summary>\n\n'
-
-    if [ -n "$walkthrough_narrative" ]; then
-      printf '## Walkthrough\n\n%s\n\n' "$walkthrough_narrative"
-    fi
-
-    if [ "${changes_count:-0}" -gt 0 ]; then
-      printf '## Changes\n\n'
-      printf '| Layer / File(s) | Summary |\n'
-      printf '|---|---|\n'
-      # 各 layer 行: "| <layer><br>**Files**: file1, file2 | <summary> |"
-      printf '%s' "$changes_table_json" | jq -r '
-        .[] | "| " + .layer + "<br>**Files**: " + (.files | join(", ")) + " | " + .summary + " |"
-      '
-      printf '\n'
-    fi
-
-    # 🎯 推定レビュー労力（Issue #228、CodeRabbit 互換 difficulty 5 段階）
-    if [ -n "$review_effort_difficulty" ] && [ -n "$review_effort_minutes" ]; then
-      case "$review_effort_difficulty" in
-        1) effort_label="Trivial" ;;
-        2) effort_label="Easy" ;;
-        3) effort_label="Moderate" ;;
-        4) effort_label="Complex" ;;
-        5) effort_label="Very Complex" ;;
-        *) effort_label="Unknown" ;;
-      esac
-      printf '## 🎯 %s (%s) | ⏱️ ~%s minutes\n\n' "$review_effort_difficulty" "$effort_label" "$review_effort_minutes"
-    fi
-
-    # 🔗 Possibly related PRs（Issue #228、workflow step 取得）
-    if [ -n "$RELATED_PRS_JSON" ]; then
-      printf '## Possibly related PRs\n\n'
-      if [ "${related_prs_count:-0}" -gt 0 ]; then
-        printf '%s' "$RELATED_PRS_JSON" | jq -r '
-          .[] | "- #" + (.number | tostring) + ": " + .title
-        '
-        printf '\n'
-      else
-        printf 'No related PRs found.\n\n'
-      fi
-    fi
-
-    # 👥 Suggested reviewers（Issue #228、workflow step 取得）
-    if [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
-      printf '## Suggested reviewers\n\n'
-      if [ "${suggested_reviewers_count:-0}" -gt 0 ]; then
-        printf '%s' "$SUGGESTED_REVIEWERS_JSON" | jq -r '
-          .[] | "- @" + .
-        '
-        printf '\n'
-      else
-        printf 'No suggested reviewers.\n\n'
-      fi
-    fi
-
-    printf '</details>\n\n'
-  fi
-fi
-
-# severity 表
-printf '### 📊 severity 集計\n\n'
+# 📊 severity 集計（Issue #236: <details> 折り畳みで他セクションと質感を統一、ベタ置きをやめる）
+printf '<details>\n<summary>📊 severity 集計</summary>\n\n'
 printf '| 🔴 Critical | 🟠 Major | 🟡 Minor | 🔵 Trivial | ⚪ Info |\n'
 printf '|---|---|---|---|---|\n'
 printf '%s' "$severity_counts" | jq -r '"| " + (.critical|tostring) + " | " + (.major|tostring) + " | " + (.minor|tostring) + " | " + (.trivial|tostring) + " | " + (.info|tostring) + " |"'
-printf '\n'
+printf '\n</details>\n\n'
 
 # 主要指摘（🔴 / 🟠 を最大 10 件）
 if [ -n "$STRUCTURED_OUTPUT" ]; then
@@ -271,43 +188,125 @@ if [ -n "$TOOL_FAILURES" ]; then
   printf '\n'
 fi
 
-# 🚥 Pre-merge checks セクション（CodeRabbit 互換、Issue #229）
+# 📝 Walkthrough セクション（CodeRabbit 互換、Issue #227 / #228 / #237 / #238 / #239）
+# Claude が schema で必須化された walkthrough_narrative + changes_table + review_effort を返すため、
+# それらと workflow step 取得の related_prs / suggested_reviewers を
+# <details><summary>📝 Walkthrough</summary> で折り畳んで展開する。
+# 後方互換: 全フィールド欠落時はセクション非出力。
+if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
+  walkthrough_narrative=""
+  changes_table_json="[]"
+  changes_count=0
+  review_effort_difficulty=""
+  review_effort_minutes=""
+
+  if [ -n "$STRUCTURED_OUTPUT" ]; then
+    walkthrough_narrative=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.walkthrough_narrative // ""')
+    changes_table_json=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -c '.changes_table // []')
+    changes_count=$(printf '%s' "$changes_table_json" | jq -r 'length // 0')
+    review_effort_difficulty=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.review_effort.difficulty // empty')
+    review_effort_minutes=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.review_effort.minutes // empty')
+  fi
+
+  related_prs_count=0
+  if [ -n "$RELATED_PRS_JSON" ]; then
+    related_prs_count=$(printf '%s' "$RELATED_PRS_JSON" | jq -r 'length // 0' 2>/dev/null || printf '0')
+  fi
+
+  suggested_reviewers_count=0
+  if [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
+    suggested_reviewers_count=$(printf '%s' "$SUGGESTED_REVIEWERS_JSON" | jq -r 'length // 0' 2>/dev/null || printf '0')
+  fi
+
+  # いずれかの要素があれば Walkthrough セクションを開く
+  if [ -n "$walkthrough_narrative" ] || [ "${changes_count:-0}" -gt 0 ] \
+    || [ -n "$review_effort_difficulty" ] \
+    || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
+    printf '<details>\n<summary>📝 Walkthrough</summary>\n\n'
+
+    if [ -n "$walkthrough_narrative" ]; then
+      printf '## Walkthrough\n\n%s\n\n' "$walkthrough_narrative"
+    fi
+
+    # Issue #237: Changes を意味グループごとに「太字見出し + 小テーブル」へ分割する。
+    # 各グループ = {group, changes:[{files, summary}]}。大型 PR でも領域別に 30 秒でスキャンできる。
+    if [ "${changes_count:-0}" -gt 0 ]; then
+      printf '## Changes\n\n'
+      printf '%s\n\n' "$(printf '%s' "$changes_table_json" | jq -r '
+        [ .[]
+          | "**" + .group + "**\n\n| File(s) | Summary |\n|---|---|\n"
+            + ([.changes[] | "| " + (.files | join(", ")) + " | " + .summary + " |"] | join("\n"))
+        ] | join("\n\n")
+      ')"
+    fi
+
+    # Issue #238: 推定レビュー労力を CodeRabbit 互換の「見出し + 改行 + 🎯 行」で出す。
+    # 値そのものを見出し（##）にしていた不揃いを解消し、他の名詞見出しと並びを揃える。
+    if [ -n "$review_effort_difficulty" ] && [ -n "$review_effort_minutes" ]; then
+      case "$review_effort_difficulty" in
+        1) effort_label="Trivial" ;;
+        2) effort_label="Easy" ;;
+        3) effort_label="Moderate" ;;
+        4) effort_label="Complex" ;;
+        5) effort_label="Very Complex" ;;
+        *) effort_label="Unknown" ;;
+      esac
+      printf '## Estimated code review effort\n\n'
+      printf '🎯 %s (%s) | ⏱️ ~%s minutes\n\n' "$review_effort_difficulty" "$effort_label" "$review_effort_minutes"
+    fi
+
+    # Issue #239: Possibly related PRs を CodeRabbit 互換の [owner/repo#N](フル URL): title リンク形式で列挙。
+    if [ -n "$RELATED_PRS_JSON" ]; then
+      printf '## Possibly related PRs\n\n'
+      if [ "${related_prs_count:-0}" -gt 0 ]; then
+        printf '%s' "$RELATED_PRS_JSON" | jq -r --arg repo "$REPO" '
+          .[] | "- [" + $repo + "#" + (.number | tostring) + "](https://github.com/" + $repo + "/pull/" + (.number | tostring) + "): " + .title
+        '
+        printf '\n'
+      else
+        printf 'No related PRs found.\n\n'
+      fi
+    fi
+
+    # 👥 Suggested reviewers（Issue #228、workflow step 取得）
+    if [ -n "$SUGGESTED_REVIEWERS_JSON" ]; then
+      printf '## Suggested reviewers\n\n'
+      if [ "${suggested_reviewers_count:-0}" -gt 0 ]; then
+        printf '%s' "$SUGGESTED_REVIEWERS_JSON" | jq -r '
+          .[] | "- @" + .
+        '
+        printf '\n'
+      else
+        printf 'No suggested reviewers.\n\n'
+      fi
+    fi
+
+    printf '</details>\n\n'
+  fi
+fi
+
+# 🚥 Pre-merge checks セクション（CodeRabbit 互換、Issue #229 / #240）
 # 5 項目: Title check / Description check / Linked Issues check / Out of Scope Changes check / Docstring Coverage
-# - Title / Description / Docstring: workflow step 機械判定（env で渡される）
-# - Linked Issues / Out of Scope: Claude prompt 判定（STRUCTURED_OUTPUT の pre_merge_checks）
-# - 全 5 項目の status を集計して summary に passed/failed 件数を表示
+# - Title / Description / Docstring: workflow step 機械判定（env で渡される、Resolution は静的文言）
+# - Linked Issues / Out of Scope: Claude prompt 判定（STRUCTURED_OUTPUT の pre_merge_checks、Resolution は schema 由来）
+# - Issue #240: failed は Resolution 列付きの専用テーブルで先頭に分離表示し、passed は入れ子 details に格納する。
+#   summary は ✅ N | ❌ M の両件数併記にする。
 if [ -n "$PRE_MERGE_TITLE_STATUS" ] || [ -n "$PRE_MERGE_DESCRIPTION_STATUS" ] || [ -n "$STRUCTURED_OUTPUT" ]; then
   linked_status=""
   linked_explanation=""
+  linked_resolution=""
   out_of_scope_status=""
   out_of_scope_explanation=""
+  out_of_scope_resolution=""
   if [ -n "$STRUCTURED_OUTPUT" ]; then
     linked_status=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.linked_issues_check.status // ""')
     linked_explanation=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.linked_issues_check.explanation // ""')
+    linked_resolution=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.linked_issues_check.resolution // ""')
     out_of_scope_status=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.out_of_scope_check.status // ""')
     out_of_scope_explanation=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.out_of_scope_check.explanation // ""')
+    out_of_scope_resolution=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -r '.pre_merge_checks.out_of_scope_check.resolution // ""')
   fi
 
-  # 5 項目の status を集計
-  passed_count=0
-  failed_count=0
-  for s in "$PRE_MERGE_TITLE_STATUS" "$PRE_MERGE_DESCRIPTION_STATUS" "$linked_status" "$out_of_scope_status" "$PRE_MERGE_DOCSTRING_STATUS"; do
-    case "$s" in
-      passed) passed_count=$((passed_count + 1)) ;;
-      failed) failed_count=$((failed_count + 1)) ;;
-    esac
-  done
-
-  # summary 表記: failed が 1 件以上なら ⚠️ N failed、それ以外は ✅ N passed
-  if [ "$failed_count" -gt 0 ]; then
-    summary_label="⚠️ ${failed_count} failed"
-  else
-    summary_label="✅ ${passed_count} passed"
-  fi
-
-  printf '<details>\n<summary>🚥 Pre-merge checks | %s</summary>\n\n' "$summary_label"
-  printf '| Check | Status | Explanation |\n'
-  printf '|---|---|---|\n'
   # 各 status を絵文字に変換
   status_icon() {
     case "$1" in
@@ -317,12 +316,64 @@ if [ -n "$PRE_MERGE_TITLE_STATUS" ] || [ -n "$PRE_MERGE_DESCRIPTION_STATUS" ] ||
       *) printf '— unknown' ;;
     esac
   }
-  printf '| Title check | %s | %s |\n' "$(status_icon "$PRE_MERGE_TITLE_STATUS")" "${PRE_MERGE_TITLE_EXPLANATION:-—}"
-  printf '| Description check | %s | %s |\n' "$(status_icon "$PRE_MERGE_DESCRIPTION_STATUS")" "${PRE_MERGE_DESCRIPTION_EXPLANATION:-—}"
-  printf '| Linked Issues check | %s | %s |\n' "$(status_icon "$linked_status")" "${linked_explanation:-—}"
-  printf '| Out of Scope Changes check | %s | %s |\n' "$(status_icon "$out_of_scope_status")" "${out_of_scope_explanation:-—}"
-  printf '| Docstring Coverage | %s | %s |\n' "$(status_icon "$PRE_MERGE_DOCSTRING_STATUS")" "${PRE_MERGE_DOCSTRING_EXPLANATION:-—}"
+
+  # 機械判定 3 項目（Title / Description / Docstring）の Resolution は静的文言。
+  # Claude 判定 2 項目（Linked / Out of Scope）の Resolution は schema 由来（未設定なら —）。
+  title_resolution='Conventional Commits 形式（`type: 説明`）にタイトルを修正してください'
+  description_resolution='本文に Issue 参照（`#N`）と `##` 見出しを追加してください'
+  docstring_resolution='対象言語の docstring を追加してください'
+
+  # 5 項目を「名前 \t status \t explanation \t resolution」の TSV に正規化（current shell で集計するため here-string で読む）
+  checks_tsv=$(
+    printf '%s\t%s\t%s\t%s\n' "Title check" "$PRE_MERGE_TITLE_STATUS" "${PRE_MERGE_TITLE_EXPLANATION:-—}" "$title_resolution"
+    printf '%s\t%s\t%s\t%s\n' "Description check" "$PRE_MERGE_DESCRIPTION_STATUS" "${PRE_MERGE_DESCRIPTION_EXPLANATION:-—}" "$description_resolution"
+    printf '%s\t%s\t%s\t%s\n' "Linked Issues check" "$linked_status" "${linked_explanation:-—}" "${linked_resolution:-—}"
+    printf '%s\t%s\t%s\t%s\n' "Out of Scope Changes check" "$out_of_scope_status" "${out_of_scope_explanation:-—}" "${out_of_scope_resolution:-—}"
+    printf '%s\t%s\t%s\t%s\n' "Docstring Coverage" "$PRE_MERGE_DOCSTRING_STATUS" "${PRE_MERGE_DOCSTRING_EXPLANATION:-—}" "$docstring_resolution"
+  )
+
+  # passed / failed / 非 failed を集計（passed_count は passed のみ、non_failed_count は failed 以外の全行）
+  passed_count=0
+  failed_count=0
+  non_failed_count=0
+  while IFS=$'\t' read -r name st _expl _reso; do
+    [ -z "$name" ] && continue
+    if [ "$st" = "failed" ]; then
+      failed_count=$((failed_count + 1))
+    else
+      non_failed_count=$((non_failed_count + 1))
+      [ "$st" = "passed" ] && passed_count=$((passed_count + 1))
+    fi
+  done <<< "$checks_tsv"
+
+  # summary 表記: ✅ N | ❌ M の両件数併記（Issue #240）
+  printf '<details>\n<summary>🚥 Pre-merge checks | ✅ %s | ❌ %s</summary>\n\n' "$passed_count" "$failed_count"
+
+  # ❌ Failed checks（failed が 1 件以上のときだけ Resolution 列付きで先頭に分離表示）
+  if [ "$failed_count" -gt 0 ]; then
+    printf '### ❌ Failed checks (%s)\n\n' "$failed_count"
+    printf '| Check | Status | Explanation | Resolution |\n'
+    printf '|---|---|---|---|\n'
+    while IFS=$'\t' read -r name st expl reso; do
+      [ -z "$name" ] && continue
+      [ "$st" = "failed" ] || continue
+      printf '| %s | %s | %s | %s |\n' "$name" "$(status_icon "$st")" "$expl" "$reso"
+    done <<< "$checks_tsv"
+    printf '\n'
+  fi
+
+  # ✅ Passed checks（failed 以外を入れ子 details に格納、Resolution 列なし）
+  printf '<details>\n<summary>✅ Passed checks (%s)</summary>\n\n' "$non_failed_count"
+  printf '| Check | Status | Explanation |\n'
+  printf '|---|---|---|\n'
+  while IFS=$'\t' read -r name st expl _reso; do
+    [ -z "$name" ] && continue
+    [ "$st" = "failed" ] && continue
+    printf '| %s | %s | %s |\n' "$name" "$(status_icon "$st")" "$expl"
+  done <<< "$checks_tsv"
   printf '\n</details>\n\n'
+
+  printf '</details>\n\n'
 fi
 
 # Issue #227: 旧「📖 詳細レビュー」（body_full 残り全体の折り畳み）は撤去。

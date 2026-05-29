@@ -137,9 +137,19 @@ Issue #227 で Claude prompt の schema に `walkthrough_narrative` + `changes_t
 | 経路 | 推定追加トークン / PR | 備考 |
 |---|---|---|
 | 出力側: `walkthrough_narrative` | 約 100〜400 トークン | 200〜800 文字、日本語 0.5 文字 = 1 トークン換算 |
-| 出力側: `changes_table[]`（5〜10 layer 想定） | 約 250〜500 トークン | layer あたり約 50 トークン |
+| 出力側: `changes_table[]`（5〜10 グループ想定） | 約 250〜500 トークン | グループ + 変更あたり約 50 トークン |
 | 入力側: prompt 内の指示文追加 | 約 100 トークン | walkthrough_narrative / changes_table の生成指示 2 ブロック |
 | **合計** | **約 450〜1000 トークン / PR** | 平均 700 トークン想定 |
+
+### PR ごとの追加トークン消費（Issue #236-241: format parity 詰め）
+
+Epic #225 Phase 2（Issue #236 / #237 / #238 / #239 / #240 / #241）の format parity 改善は、大半が `build-sticky-body.sh` の出力整形のみで **Claude API への影響はゼロ**。
+
+| Issue | 変更 | トークン影響 |
+|---|---|---|
+| #236 / #238 / #239 / #241 | severity 折り畳み / effort 見出し / related PR リンク / 見出し容れ物化 | ゼロ（シェル整形のみ） |
+| #237 | `changes_table[]` を `{group, changes[]}` に入れ子化 | 軽微（group ラッパー分のみ、内容量は同等） |
+| #240 | `pre_merge_checks` に任意 `resolution` 追加 | 軽微（`failed` 時のみ約 30〜60 トークン、通常 PR は failed なしでゼロ） |
 
 ### 月間試算（上限ケース）
 
