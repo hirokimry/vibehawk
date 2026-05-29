@@ -143,7 +143,7 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
   - 5 = Very Complex（依存メジャー更新 / 大規模リファクタ）
 - `minutes`: レビュアーが PR 全体を確認するのに要する見積もり時間（分単位の整数、最低 1）
 - 例: `{"difficulty": 3, "minutes": 20}`
-- sticky walkthrough コメントに `## 🎯 N (Label) | ⏱️ ~M minutes` 形式で展開される
+- sticky walkthrough コメントに `## Estimated code review effort` 見出し + `🎯 N (Label) | ⏱️ ~M minutes` 行で展開される（Issue #238: 値を見出しにせず CodeRabbit 互換の名詞見出し配下に置く）
 
 ## inline 指摘の severity 5 段階分類（CodeRabbit 公式仕様、`.claude/rules/severity/coderabbit.md` 準拠）
 

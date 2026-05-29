@@ -172,12 +172,14 @@ else
   fail "Case 13: walkthrough_narrative 欠落でも Walkthrough セクションが出ている（後方互換破壊）"
 fi
 
-echo "Case 14: Issue #228 — review_effort difficulty 3 → 🎯 3 (Moderate) | ⏱️ ~M minutes 表示"
+echo "Case 14: Issue #238 — review_effort が ## Estimated code review effort 見出し + 🎯 行で表示される"
 out=$(STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":3,"minutes":25}}' run_build)
-if grep -qF '## 🎯 3 (Moderate) | ⏱️ ~25 minutes' <<< "$out"; then
+if grep -qF '## Estimated code review effort' <<< "$out" \
+  && grep -qF '🎯 3 (Moderate) | ⏱️ ~25 minutes' <<< "$out" \
+  && ! grep -qF '## 🎯' <<< "$out"; then
   pass "Case 14"
 else
-  fail "Case 14: review_effort 行が期待形式で表示されない"
+  fail "Case 14: review_effort が見出し + 🎯 行の形式で表示されない（旧 ## 🎯 見出しが残存）"
 fi
 
 echo "Case 15: Issue #228 — RELATED_PRS_JSON に 2 件 → ## Possibly related PRs に列挙、0 件は『No related PRs found.』"
