@@ -254,12 +254,13 @@ if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED
       printf '🎯 %s (%s) | ⏱️ ~%s minutes\n\n' "$review_effort_difficulty" "$effort_label" "$review_effort_minutes"
     fi
 
-    # 🔗 Possibly related PRs（Issue #228、workflow step 取得）
+    # 🔗 Possibly related PRs（Issue #228 / #239、workflow step 取得）
+    # Issue #239: CodeRabbit 互換の [owner/repo#N](フル URL): title リンク形式で列挙する。
     if [ -n "$RELATED_PRS_JSON" ]; then
       printf '## Possibly related PRs\n\n'
       if [ "${related_prs_count:-0}" -gt 0 ]; then
-        printf '%s' "$RELATED_PRS_JSON" | jq -r '
-          .[] | "- #" + (.number | tostring) + ": " + .title
+        printf '%s' "$RELATED_PRS_JSON" | jq -r --arg repo "$REPO" '
+          .[] | "- [" + $repo + "#" + (.number | tostring) + "](https://github.com/" + $repo + "/pull/" + (.number | tostring) + "): " + .title
         '
         printf '\n'
       else

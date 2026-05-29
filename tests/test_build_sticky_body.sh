@@ -187,8 +187,8 @@ out=$(RELATED_PRS_JSON='[{"number":150,"title":"sticky 機能拡張"},{"number":
   STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10}}' \
   run_build)
 if grep -qF '## Possibly related PRs' <<< "$out" \
-  && grep -qF -e '- #150: sticky 機能拡張' <<< "$out" \
-  && grep -qF -e '- #160: レビュー仕様変更' <<< "$out"; then
+  && grep -qF -e '- [hirokimry/vibehawk#150](https://github.com/hirokimry/vibehawk/pull/150): sticky 機能拡張' <<< "$out" \
+  && grep -qF -e '- [hirokimry/vibehawk#160](https://github.com/hirokimry/vibehawk/pull/160): レビュー仕様変更' <<< "$out"; then
   pass "Case 15a (列挙)"
 else
   fail "Case 15a: Possibly related PRs の列挙が期待通りでない"
