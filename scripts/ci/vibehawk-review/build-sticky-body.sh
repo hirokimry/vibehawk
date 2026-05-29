@@ -240,7 +240,7 @@ if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED
       ')"
     fi
 
-    # 🎯 推定レビュー労力（Issue #228、CodeRabbit 互換 difficulty 5 段階）
+    # 推定レビュー労力（Issue #228 / #238）。値を見出しにせず名詞見出し + 🎯 行で並びを揃える。
     if [ -n "$review_effort_difficulty" ] && [ -n "$review_effort_minutes" ]; then
       case "$review_effort_difficulty" in
         1) effort_label="Trivial" ;;
@@ -250,7 +250,8 @@ if [ -n "$STRUCTURED_OUTPUT" ] || [ -n "$RELATED_PRS_JSON" ] || [ -n "$SUGGESTED
         5) effort_label="Very Complex" ;;
         *) effort_label="Unknown" ;;
       esac
-      printf '## 🎯 %s (%s) | ⏱️ ~%s minutes\n\n' "$review_effort_difficulty" "$effort_label" "$review_effort_minutes"
+      printf '## Estimated code review effort\n\n'
+      printf '🎯 %s (%s) | ⏱️ ~%s minutes\n\n' "$review_effort_difficulty" "$effort_label" "$review_effort_minutes"
     fi
 
     # 🔗 Possibly related PRs（Issue #228、workflow step 取得）
