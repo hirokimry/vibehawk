@@ -230,13 +230,13 @@ else
   fail "Case 16b: 0 名時の『No suggested reviewers.』が出ない"
 fi
 
-echo "Case 17: Issue #229 / #240 — Pre-merge 5 項目すべて非 failed → ✅ 4 | ❌ 0 summary + Passed checks details"
+echo "Case 17: Issue #229 / #240 — Pre-merge 5 項目すべて非 failed → ✅ 5 | ❌ 0 summary + Passed checks details"
 out=$(PRE_MERGE_TITLE_STATUS="passed" PRE_MERGE_TITLE_EXPLANATION="OK" \
       PRE_MERGE_DESCRIPTION_STATUS="passed" PRE_MERGE_DESCRIPTION_EXPLANATION="OK" \
       PRE_MERGE_DOCSTRING_STATUS="skipped" PRE_MERGE_DOCSTRING_EXPLANATION="N/A" \
       STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10},"pre_merge_checks":{"linked_issues_check":{"status":"passed","explanation":"A"},"out_of_scope_check":{"status":"passed","explanation":"B"}}}' \
       run_build)
-if grep -qF '🚥 Pre-merge checks | ✅ 4 | ❌ 0' <<< "$out" \
+if grep -qF '🚥 Pre-merge checks | ✅ 5 | ❌ 0' <<< "$out" \
   && grep -qF '✅ Passed checks (5)' <<< "$out" \
   && grep -qF '| Title check | ✅ passed' <<< "$out" \
   && grep -qF '| Linked Issues check | ✅ passed' <<< "$out" \
@@ -247,13 +247,13 @@ else
   fail "Case 17: failed 0 件時の summary / Passed checks details / 5 項目表示が期待通りでない"
 fi
 
-echo "Case 18: Issue #240 — Pre-merge に failed 1 件 → ✅ 3 | ❌ 1 + Failed checks (Resolution 列付き) 分離"
+echo "Case 18: Issue #240 — Pre-merge に failed 1 件 → ✅ 4 | ❌ 1 + Failed checks (Resolution 列付き) 分離"
 out=$(PRE_MERGE_TITLE_STATUS="failed" PRE_MERGE_TITLE_EXPLANATION="形式違反" \
       PRE_MERGE_DESCRIPTION_STATUS="passed" PRE_MERGE_DESCRIPTION_EXPLANATION="OK" \
       PRE_MERGE_DOCSTRING_STATUS="skipped" PRE_MERGE_DOCSTRING_EXPLANATION="N/A" \
       STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10},"pre_merge_checks":{"linked_issues_check":{"status":"passed","explanation":"A"},"out_of_scope_check":{"status":"passed","explanation":"B"}}}' \
       run_build)
-if grep -qF '🚥 Pre-merge checks | ✅ 3 | ❌ 1' <<< "$out" \
+if grep -qF '🚥 Pre-merge checks | ✅ 4 | ❌ 1' <<< "$out" \
   && grep -qF '### ❌ Failed checks (1)' <<< "$out" \
   && grep -qF '| Check | Status | Explanation | Resolution |' <<< "$out" \
   && grep -qF '| Title check | ❌ failed | 形式違反 | Conventional Commits' <<< "$out" \
@@ -263,13 +263,13 @@ else
   fail "Case 18: failed 分離 / Resolution 列 / summary 両件数併記が期待通りでない"
 fi
 
-echo "Case 18b: Issue #240 — Claude 判定 check が failed + resolution → Failed checks に Claude resolution が出る"
+echo "Case 18b: Issue #240 — Claude 判定 check が failed + resolution → ✅ 4 | ❌ 1 + Failed checks に Claude resolution"
 out=$(PRE_MERGE_TITLE_STATUS="passed" PRE_MERGE_TITLE_EXPLANATION="OK" \
       PRE_MERGE_DESCRIPTION_STATUS="passed" PRE_MERGE_DESCRIPTION_EXPLANATION="OK" \
       PRE_MERGE_DOCSTRING_STATUS="skipped" PRE_MERGE_DOCSTRING_EXPLANATION="N/A" \
       STRUCTURED_OUTPUT='{"event":"COMMENT","body":"x","commit_id":"abc","comments":[],"walkthrough_narrative":"n","changes_table":[],"review_effort":{"difficulty":2,"minutes":10},"pre_merge_checks":{"linked_issues_check":{"status":"passed","explanation":"A"},"out_of_scope_check":{"status":"failed","explanation":"範囲外変更あり","resolution":"無関係な変更を別 PR に分離してください"}}}' \
       run_build)
-if grep -qF '🚥 Pre-merge checks | ✅ 3 | ❌ 1' <<< "$out" \
+if grep -qF '🚥 Pre-merge checks | ✅ 4 | ❌ 1' <<< "$out" \
   && grep -qF '| Out of Scope Changes check | ❌ failed | 範囲外変更あり | 無関係な変更を別 PR に分離してください |' <<< "$out"; then
   pass "Case 18b"
 else

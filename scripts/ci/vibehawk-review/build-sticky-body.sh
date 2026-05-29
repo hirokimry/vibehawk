@@ -321,6 +321,7 @@ if [ -n "$PRE_MERGE_TITLE_STATUS" ] || [ -n "$PRE_MERGE_DESCRIPTION_STATUS" ] ||
   # Claude 判定 2 項目（Linked / Out of Scope）の Resolution は schema 由来（未設定なら —）。
   title_resolution='Conventional Commits 形式（`type: 説明`）にタイトルを修正してください'
   description_resolution='本文に Issue 参照（`#N`）と `##` 見出しを追加してください'
+  # Docstring Coverage は v1 で常に skipped のため Failed checks には出ない。将来の言語別ツール統合で failed を出す時に使う。
   docstring_resolution='対象言語の docstring を追加してください'
 
   # 5 項目を「名前 \t status \t explanation \t resolution」の TSV に正規化（current shell で集計するため here-string で読む）
@@ -332,8 +333,8 @@ if [ -n "$PRE_MERGE_TITLE_STATUS" ] || [ -n "$PRE_MERGE_DESCRIPTION_STATUS" ] ||
     printf '%s\t%s\t%s\t%s\n' "Docstring Coverage" "$PRE_MERGE_DOCSTRING_STATUS" "${PRE_MERGE_DOCSTRING_EXPLANATION:-—}" "$docstring_resolution"
   )
 
-  # passed / failed / 非 failed を集計（passed_count は passed のみ、non_failed_count は failed 以外の全行）
-  passed_count=0
+  # failed / 非 failed を集計。summary の ✅ と内側「Passed checks」の集計軸を揃えるため、
+  # ✅ は failed 以外（passed + skipped）= non_failed_count を使う（行ごとの絵文字で passed/skipped は区別表示される）。
   failed_count=0
   non_failed_count=0
   while IFS=$'\t' read -r name st _expl _reso; do
@@ -342,12 +343,11 @@ if [ -n "$PRE_MERGE_TITLE_STATUS" ] || [ -n "$PRE_MERGE_DESCRIPTION_STATUS" ] ||
       failed_count=$((failed_count + 1))
     else
       non_failed_count=$((non_failed_count + 1))
-      [ "$st" = "passed" ] && passed_count=$((passed_count + 1))
     fi
   done <<< "$checks_tsv"
 
-  # summary 表記: ✅ N | ❌ M の両件数併記（Issue #240）
-  printf '<details>\n<summary>🚥 Pre-merge checks | ✅ %s | ❌ %s</summary>\n\n' "$passed_count" "$failed_count"
+  # summary 表記: ✅ N | ❌ M の両件数併記（Issue #240、N は failed 以外＝内側 Passed checks と一致）
+  printf '<details>\n<summary>🚥 Pre-merge checks | ✅ %s | ❌ %s</summary>\n\n' "$non_failed_count" "$failed_count"
 
   # ❌ Failed checks（failed が 1 件以上のときだけ Resolution 列付きで先頭に分離表示）
   if [ "$failed_count" -gt 0 ]; then
