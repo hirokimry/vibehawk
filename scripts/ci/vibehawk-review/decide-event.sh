@@ -4,10 +4,10 @@
 # Claude の event フィールドは placeholder であり、本スクリプトが決定論的に算出した
 # decided_event で post-bundled-review.sh が上書きしてから POST する（Issue #166）。
 #
-# 判定ルール（Issue #171: severity 不問・件数主軸）:
+# 判定ルール（Issue #171: severity 不問・件数主軸 / Issue #270: 🧹 Nitpick 除外）:
 #   1. unresolved >= 1 → REQUEST_CHANGES（最優先）
-#   2. 新規 inline 指摘の総件数 >= 1 → REQUEST_CHANGES（severity 不問）
-#   3. それ以外 → APPROVE
+#   2. 新規 actionable inline 指摘（🧹 Nitpick 除外）の件数 >= 1 → REQUEST_CHANGES（severity 不問）
+#   3. それ以外（actionable 0 件 = 🧹 Nitpick のみ含む） → APPROVE
 #
 # Issue #166 時点の旧ルールでは Critical/Major のみ REQUEST_CHANGES だったが、
 # Issue #171 で「指摘する責務」と「修正対象判定の責務」を分離した
@@ -49,10 +49,10 @@ if [[ "$unresolved_count" -ge 1 ]]; then
   reason="unresolved >= 1"
 elif [[ "$new_comments_count" -ge 1 ]]; then
   decided_event="REQUEST_CHANGES"
-  reason="新規 inline 指摘 >= 1（severity 不問、Issue #171）"
+  reason="新規 actionable inline 指摘 >= 1（severity 不問・🧹 Nitpick 除外、Issue #171/#270）"
 else
   decided_event="APPROVE"
-  reason="unresolved == 0 かつ 新規 inline 指摘 0 件"
+  reason="unresolved == 0 かつ 新規 actionable inline 指摘 0 件（🧹 Nitpick のみは APPROVE）"
 fi
 
 echo "vibehawk: decided_event=${decided_event}（${reason}）"
