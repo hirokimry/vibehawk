@@ -56,7 +56,7 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
       "path": "src/foo.ts",
       "line": 42,
       "side": "RIGHT",
-      "body": "_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_\n\n指摘内容..."
+      "body": "_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_\n\n**太字タイトル（指摘の要約）**\n\n説明段落（なぜ問題か・どう直すか）..."
     }
   ],
   "walkthrough_narrative": "変更全体の物語的サマリ（1〜2 段落、200〜800 文字、CodeRabbit 互換、Issue #227）",
@@ -166,7 +166,25 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 
 例: `_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_`
 
-先頭行（3 軸ラベル）の次に空行を挟み、指摘本文を続ける。severity 絵文字は 3 軸ラベル内に必ず含まれるため、後続の event 判定（severity 分布カウント）も従来通り機能する。
+先頭行（3 軸ラベル）の次は **太字タイトル + 説明段落の 2 部構成** にする（Issue #253、実測 157 件で 100% 固定の形式）。
+
+1. 3 軸ラベル行
+2. 空行
+3. **太字 1 行タイトル**（`**...**`、指摘の要約を 1 文で）
+4. 空行
+5. 説明段落（なぜ問題か・どう直すかを日本語で）
+
+例:
+
+````text
+_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_
+
+**`set -euo pipefail` 下で `grep` 無マッチ時に即死する**
+
+`grep` がマッチしないと exit code 1 になり、`set -e` でスクリプトが落ちる。`|| true` でガードする。
+````
+
+severity 絵文字は 3 軸ラベル内に必ず含まれるため、後続の event 判定（severity 分布カウント）も従来通り機能する。
 
 ### GitHub Suggestions 構文（修正案、利用者が 1 クリックで適用可）
 
@@ -175,7 +193,9 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 ````text
 _🛠️ Refactor suggestion_ | _🟡 Minor_ | _⚡ Quick win_
 
-変数名を意図がわかる名前に
+**変数名を意図がわかる名前にする**
+
+`users.length` の用途が伝わる名前に変えると可読性が上がる。
 ```suggestion
 const userCount = users.length;
 ```
