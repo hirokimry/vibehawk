@@ -170,15 +170,28 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 
 | フィールド | 必須 | 値 |
 |---|---|---|
-| `category` | ✅ | `⚠️ Potential issue`（潜在バグ・不具合）または `🛠️ Refactor suggestion`（構造改善提案） |
-| `severity` | ✅ | `🔴 Critical` / `🟠 Major` / `🟡 Minor` / `🔵 Trivial` / `⚪ Info`（上の 5 段階定義に厳格に従う） |
+| `category` | ✅ | `⚠️ Potential issue`（潜在バグ・不具合）/ `🛠️ Refactor suggestion`（構造改善提案）/ `🧹 Nitpick`（軽微な磨き込み提案、ブロッカーではない） |
+| `severity` | actionable のみ | `🔴 Critical` / `🟠 Major` / `🟡 Minor` / `🔵 Trivial` / `⚪ Info`（上の 5 段階定義に厳格に従う）。**`🧹 Nitpick` には付けない**（severity は actionable 専用の直交ラベル、Issue #270） |
 | `effort` | ✅ | `⚡ Quick win`（短時間で直せる）または `🏗️ Heavy lift`（大きめの対応が必要） |
 | `title` | ✅ | 太字 1 行タイトル（指摘の要約を 1 文で。`**` は付けない、組み立て側が太字化する） |
 | `description` | ✅ | 説明段落（なぜ問題か・どう直すかを日本語で） |
 | `suggestion` | 任意 | 修正提案コードのみ。フェンスや `suggestion` ラベルは付けない（組み立て側が ` ```suggestion ` でラップする）。修正提案が無ければ省略する |
 | `ai_prompt` | ✅ | AI エージェントが修正に着手できる指示（対象ファイル + 行範囲 + 日本語の具体手順） |
 
-category / severity / effort の 3 軸は必ず付与する（実測 157 件で全件固定、severity 無しは存在しない）。
+`category` / `effort` は全指摘に必ず付与する。`severity` は **actionable（`⚠️ Potential issue` / `🛠️ Refactor suggestion`）にのみ付与**し、`🧹 Nitpick` には付けない。
+
+### actionable / nitpick の判定基準（Issue #270、CodeRabbit 互換）
+
+各指摘を、severity を付ける前に **まず actionable か nitpick かで分類** する（severity を先に決めてから振り分けるのではない）。
+
+| 分類 | category | severity | 判断軸 |
+|------|----------|----------|--------|
+| **actionable** | `⚠️ Potential issue` / `🛠️ Refactor suggestion` | 付ける（5 段階） | バグ・不具合・設計上の問題など、レビュアーが対応を検討すべき指摘 |
+| **nitpick** | `🧹 Nitpick` | 付けない | 動作に影響しない軽微な磨き込み（命名の好み・軽微な体裁・任意の代替案など）。直さなくても支障がない |
+
+- 判断は **内容で行う**（「Minor だから nitpick」のような severity 起点の機械振り分けはしない）。actionable なら軽微でも severity を付けて actionable のまま残す。
+- 迷ったら actionable に倒す（nitpick は「直さなくても支障がない」と断言できるものに限る）。
+- 本数を増やしすぎない。`🧹 Nitpick` は本当に軽微なものだけにする。
 
 ### 組み立て後のレンダリング（組み立て側が生成。Claude は書式を書かない）
 
@@ -206,6 +219,21 @@ severity は `severity` フィールドに保持されるため、後続の even
   "description": "grep がマッチしないと exit code 1 になり、set -e でスクリプトが落ちる。|| true でガードする。",
   "suggestion": "if grep -q foo bar || true; then",
   "ai_prompt": "src/foo.ts の 42 行目付近で grep の呼び出しを || true でガードし、無マッチ時の即死を防ぐ"
+}
+```
+
+`🧹 Nitpick` の例（`severity` を付けない、Issue #270）:
+
+```json
+{
+  "path": "src/foo.ts",
+  "line": 88,
+  "side": "RIGHT",
+  "category": "🧹 Nitpick",
+  "effort": "⚡ Quick win",
+  "title": "変数名 tmp はより意図が伝わる名前にできる",
+  "description": "動作には影響しないが、tmp より parsed_config 等の方が読み手に意図が伝わる。任意。",
+  "ai_prompt": "src/foo.ts の 88 行目の変数 tmp を、用途が伝わる名前（例: parsed_config）に変えることを検討する"
 }
 ```
 
