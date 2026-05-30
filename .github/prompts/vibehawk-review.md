@@ -190,15 +190,30 @@ severity 絵文字は 3 軸ラベル内に必ず含まれるため、後続の e
 
 必要に応じて `comments[].body` に GitHub Suggestions 構文を埋め込んでください。**Bot 自身は commit しない**（5 大方針 2 の例外として「Suggestions 構文の生成」は明示的に許可、Bot 自身が PR に commit を作る行為は禁止）:
 
+suggestion を付ける場合は **CodeRabbit 互換の Committable suggestion 折り畳みで囲む**（Issue #255、実測でも suggestion は必ずこの形式でラップされる）。`<!-- suggestion_start -->` と `<!-- suggestion_end -->` で挟み、`<details><summary>📝 Committable suggestion</summary>` 内に注意書き（日本語可）と ` ```suggestion ` ブロックを置く。suggestion が無い指摘では折り畳みを出さない。
+
 ````text
 _🛠️ Refactor suggestion_ | _🟡 Minor_ | _⚡ Quick win_
 
 **変数名を意図がわかる名前にする**
 
 `users.length` の用途が伝わる名前に変えると可読性が上がる。
+
+<!-- suggestion_start -->
+
+<details>
+<summary>📝 Committable suggestion</summary>
+
+> [!IMPORTANT]
+> コミット前に内容を確認してください。ハイライト箇所を正確に置き換え、欠落やインデント崩れが無いことを確かめてからコミットできます。
+
 ```suggestion
 const userCount = users.length;
 ```
+
+</details>
+
+<!-- suggestion_end -->
 ````
 
 ### 🤖 AI 向け修正指示（`<details>` 折り畳み、Issue #254）
