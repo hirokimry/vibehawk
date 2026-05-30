@@ -130,6 +130,44 @@ else
   fail "末尾マーカーが欠落（incremental レビューが破綻する）"
 fi
 
+echo "=== Case 2b: env なしで ℹ️ Review info を出さない（後方互換、Issue #273） ==="
+if grep -qF 'ℹ️ Review info' <<< "$out"; then
+  fail "env 未設定でも ℹ️ Review info が出ている（後方互換破壊）"
+else
+  pass "env 未設定では ℹ️ Review info を出さない（後方互換）"
+fi
+
+echo "=== Case 2c: env ありで ℹ️ Review info を出す（Issue #273） ==="
+export RUN_ID="run-9"
+export COMMITS_JSON='[{"sha":"aaaaaaa1234567"},{"sha":"bbbbbbb8901234"}]'
+export FILES_SELECTED_JSON='["x.sh","y.sh"]'
+out_ri="$(run_build "$PAYLOAD")"
+unset RUN_ID COMMITS_JSON FILES_SELECTED_JSON
+
+if grep -qF '<summary>ℹ️ Review info</summary>' <<< "$out_ri" \
+   && grep -qF '<summary>⚙️ Run configuration</summary>' <<< "$out_ri" \
+   && grep -qF '| Run ID | run-9 |' <<< "$out_ri"; then
+  pass "ℹ️ Review info + ⚙️ Run configuration（Run ID）が出る"
+else
+  fail "ℹ️ Review info / Run configuration が期待通りでない"
+fi
+
+if grep -qF 'between aaaaaaa and bbbbbbb' <<< "$out_ri" \
+   && grep -qF '<summary>📒 Files selected for processing (2)</summary>' <<< "$out_ri"; then
+  pass "📥 Commits（base〜head 短縮 SHA）+ 📒 Files selected (2) が出る"
+else
+  fail "Commits / Files selected が期待通りでない"
+fi
+
+# Review info はマーカーより前（CodeRabbit の並び順）
+ri_line=$(grep -nF 'ℹ️ Review info' <<< "$out_ri" | head -1 | cut -d: -f1)
+marker_line=$(grep -nF '<!-- vibehawk:summary -->' <<< "$out_ri" | head -1 | cut -d: -f1)
+if [ -n "$ri_line" ] && [ -n "$marker_line" ] && [ "$ri_line" -lt "$marker_line" ]; then
+  pass "ℹ️ Review info が末尾マーカーより前に出る"
+else
+  fail "ℹ️ Review info とマーカーの並び順が不正（ri=${ri_line} marker=${marker_line}）"
+fi
+
 echo "=== Case 3: nitpick なし（actionable のみ） ==="
 out2="$(run_build '{"commit_id":"sha1","comments":[{"path":"a.sh","line":1,"category":"⚠️ Potential issue","severity":"🔴 Critical","effort":"⚡ Quick win","title":"t","description":"d","ai_prompt":"p"}]}')"
 if grep -qF '**Actionable comments posted: 1**' <<< "$out2" && ! grep -qF '🧹 Nitpick comments' <<< "$out2"; then

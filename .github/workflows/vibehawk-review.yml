@@ -323,6 +323,10 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           STRUCTURED_OUTPUT: ${{ steps.claude_review.outputs.structured_output }}
           DECIDED_EVENT: ${{ steps.decide_event.outputs.decided_event }}
+          # Issue #273: レビュー本文の ℹ️ Review info（回毎 snapshot）用。recent_info step の出力を流用。
+          RUN_ID: ${{ github.run_id }}
+          COMMITS_JSON: ${{ steps.recent_info.outputs.commits_json }}
+          FILES_SELECTED_JSON: ${{ steps.recent_info.outputs.files_selected_json }}
         # 詳細: scripts/ci/vibehawk-review/post-bundled-review.sh（エピック #174 / Issue #176）
         run: bash scripts/ci/vibehawk-review/post-bundled-review.sh
 

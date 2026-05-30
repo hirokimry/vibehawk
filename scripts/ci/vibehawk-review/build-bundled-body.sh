@@ -27,6 +27,51 @@ if [[ ! -f "$PAYLOAD" ]]; then
   exit 1
 fi
 
+# Issue #273: ℹ️ Review info（その回が見た差分の snapshot、回ごとの監査記録）。
+# sticky walkthrough の Recent review info（最新回・可変）とは別物で、レビュー本文側は
+# POST 時に凍結されるため過去回が履歴として残る。env が全て空なら非出力（後方互換）。
+RUN_ID="${RUN_ID:-}"
+COMMITS_JSON="${COMMITS_JSON:-}"
+FILES_SELECTED_JSON="${FILES_SELECTED_JSON:-}"
+
+review_info=""
+if [ -n "$RUN_ID" ] || [ -n "$COMMITS_JSON" ] || [ -n "$FILES_SELECTED_JSON" ]; then
+  review_info+=$'<details>\n<summary>ℹ️ Review info</summary>\n\n'
+
+  if [ -n "$RUN_ID" ]; then
+    review_info+=$'<details>\n<summary>⚙️ Run configuration</summary>\n\n'
+    review_info+=$'| 項目 | 値 |\n|---|---|\n'
+    review_info+=$'| Config path | `.vibehawk.yaml` |\n'
+    review_info+=$'| Review profile | vibehawk fixed |\n'
+    review_info+=$'| Plan | OSS |\n'
+    review_info+="| Run ID | ${RUN_ID} |"$'\n'
+    review_info+=$'\n</details>\n\n'
+  fi
+
+  if [ -n "$COMMITS_JSON" ]; then
+    commits_count=$(printf '%s' "$COMMITS_JSON" | jq -r 'length // 0')
+    if [ "${commits_count:-0}" -gt 0 ]; then
+      first_short=$(printf '%s' "$COMMITS_JSON" | jq -r '.[0].sha // ""' | cut -c1-7)
+      last_short=$(printf '%s' "$COMMITS_JSON" | jq -r '.[-1].sha // ""' | cut -c1-7)
+      review_info+=$'<details>\n<summary>📥 Commits</summary>\n\n'
+      review_info+="Reviewing files that changed from the base of the PR and between ${first_short} and ${last_short}."$'\n'
+      review_info+=$'\n</details>\n\n'
+    fi
+  fi
+
+  if [ -n "$FILES_SELECTED_JSON" ]; then
+    selected_count=$(printf '%s' "$FILES_SELECTED_JSON" | jq -r 'length // 0')
+    review_info+="<details>"$'\n'"<summary>📒 Files selected for processing (${selected_count:-0})</summary>"$'\n\n'
+    if [ "${selected_count:-0}" -gt 0 ]; then
+      files_list=$(printf '%s' "$FILES_SELECTED_JSON" | jq -r '.[] | "- `" + . + "`"')
+      review_info+="${files_list}"$'\n'
+    fi
+    review_info+=$'\n</details>\n\n'
+  fi
+
+  review_info+=$'</details>\n\n'
+fi
+
 # jq で本文を組み立てる。string interpolation \(...) は使わず + で連結する（shell.md）。
 # nitpick はファイル別に group_by し、各指摘を「行参照 + effort ラベル + 太字タイトル + 説明
 # + 🔧 提案差分(任意) + 🤖 AI 向け修正指示」で描画する（severity は付けない、Issue #270）。
@@ -81,8 +126,9 @@ def render_prompt_group:
       + (if ($nits | length) > 0 then "nitpick:\n" + ($nits | render_prompt_group) + "\n" else "" end)
       + "```\n\n</details>\n\n"
     else "" end)
+  + $review_info
   + "<!-- vibehawk:summary -->\n"
   + "<!-- vibehawk:sha=" + $sha + " -->"
 '
 
-jq -r "$JQ_PROGRAM" "$PAYLOAD"
+jq -r --arg review_info "$review_info" "$JQ_PROGRAM" "$PAYLOAD"
