@@ -31,7 +31,7 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
 
 ### 投稿フロー（INCREMENTAL_MODE 共通）
 
-1. inline 指摘は **その場で POST せず**、JSON 配列 `comments[]` に貯める（path / line / side / body / 必要に応じ start_line+start_side）
+1. inline 指摘は **その場で POST せず**、JSON 配列 `comments[]` に貯める（path / line / side / 構造化フィールド category・severity・effort・title・description・suggestion?・ai_prompt / 必要に応じ start_line+start_side、Issue #263）
 2. レビュー本文（severity 別件数を含む長文サマリ）を変数として組み立てる。**末尾に必ず以下 2 行を含める**（インクリメンタルレビューの一意特定に必須、Issue #57）:
 
 ```text
@@ -41,7 +41,7 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
 
 この 2 行が欠落すると、次回 push で前回 SHA が抽出できず、incremental が破綻し完全再レビュー扱いになります。
 
-3. **event 判定は行わない**（Issue #166）。Claude は `event` フィールドに placeholder として `COMMENT` を返すこと。最終的な `event` (APPROVE / REQUEST_CHANGES) は後続の workflow step `vibehawk event を決定` が `comments[]` の severity 分布（`body` 冒頭の絵文字を集計）と `gh api graphql reviewThreads` から取得する unresolved 数を組み合わせて決定論的に計算し、`vibehawk bundled review を post` step が JSON の `event` フィールドを上書きしてから GitHub に POST する。Claude が `event` 判定を試みても workflow step の計算値が最終値となるため、本 prompt 内では severity 分布カウント / unresolved 取得 / event 判定ルールを記述しない（Issue #166 で構造的に廃止）。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
+3. **event 判定は行わない**（Issue #166）。Claude は `event` フィールドに placeholder として `COMMENT` を返すこと。最終的な `event` (APPROVE / REQUEST_CHANGES) は後続の workflow step `vibehawk event を決定` が `comments[]` の総件数（severity 不問、Issue #171）と `gh api graphql reviewThreads` から取得する unresolved 数を組み合わせて決定論的に計算し、`vibehawk bundled review を post` step が JSON の `event` フィールドを上書きしてから GitHub に POST する。Claude が `event` 判定を試みても workflow step の計算値が最終値となるため、本 prompt 内では件数カウント / unresolved 取得 / event 判定ルールを記述しない（Issue #166 で構造的に廃止）。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
 4. **最終 assistant message として下記 schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`gh api` POST なし）。claude-code-action が `--json-schema` で schema validation し、`outputs.structured_output` に流す。応答以外のテキスト（説明文・進捗ログ等）は最終応答に含めない（schema validation が失敗する）。
 
 ### 最終応答の JSON shape（`--json-schema` で機械検証される）
@@ -56,7 +56,13 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
       "path": "src/foo.ts",
       "line": 42,
       "side": "RIGHT",
-      "body": "_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_\n\n**太字タイトル（指摘の要約）**\n\n説明段落（なぜ問題か・どう直すか）..."
+      "category": "⚠️ Potential issue",
+      "severity": "🟠 Major",
+      "effort": "⚡ Quick win",
+      "title": "太字タイトル（指摘の要約を 1 文で、`**` は付けない）",
+      "description": "説明段落（なぜ問題か・どう直すかを日本語で）",
+      "suggestion": "（任意）修正提案コードのみ。フェンスや suggestion ラベルは付けない",
+      "ai_prompt": "src/foo.ts の 42 行目付近で、〜を〜に修正する（日本語の具体手順）"
     }
   ],
   "walkthrough_narrative": "変更全体の物語的サマリ（1〜2 段落、200〜800 文字、CodeRabbit 互換、Issue #227）",
@@ -76,7 +82,7 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
 }
 ```
 
-**`event` フィールドの placeholder 規約（Issue #166）**: Claude は **必ず `COMMENT` を返すこと**。schema の enum (`APPROVE` / `REQUEST_CHANGES` / `COMMENT`) は GitHub Reviews API 契約のため維持しているが、最終的な `event` 値は workflow step `vibehawk event を決定` が `comments[]` の severity 分布 + reviewThreads の unresolved 数から決定論的に計算し、`vibehawk bundled review を post` step が POST 前に上書きする。Claude が `APPROVE` / `REQUEST_CHANGES` を直接返しても workflow 計算値で上書きされるため、placeholder としての `COMMENT` 固定が運用上最も安全（混乱を避ける）。
+**`event` フィールドの placeholder 規約（Issue #166）**: Claude は **必ず `COMMENT` を返すこと**。schema の enum (`APPROVE` / `REQUEST_CHANGES` / `COMMENT`) は GitHub Reviews API 契約のため維持しているが、最終的な `event` 値は workflow step `vibehawk event を決定` が `comments[]` の総件数（severity 不問、Issue #171）+ reviewThreads の unresolved 数から決定論的に計算し、`vibehawk bundled review を post` step が POST 前に上書きする。Claude が `APPROVE` / `REQUEST_CHANGES` を直接返しても workflow 計算値で上書きされるため、placeholder としての `COMMENT` 固定が運用上最も安全（混乱を避ける）。
 
 複数行範囲指摘なら `comments[]` 要素に `start_line` / `start_side` を追加。指摘 0 件でも `comments: []` で **必ず最終 JSON を返す**（応答が空になると `outputs.structured_output` が空となり後続 skip → status neutral になる）。
 
@@ -158,95 +164,52 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 | 🔵 | Trivial | コード品質を高めるための軽微な提案 |
 | ⚪ | Info | 情報提供のみ、対応不要 |
 
-`comments[].body` の **先頭行を CodeRabbit 互換の 3 軸ラベル** にする（Issue #252、実測 157 件で全件固定の形式）。フォーマットは `_<カテゴリ>_ | _<severity>_ | _<労力>_`（イタリック・パイプ区切り）。3 軸とも必ず付与する。
+`comments[]` の各要素は **構造化フィールド** で出力する（Issue #263）。本文（`body`）の組み立ては workflow 側の `scripts/ci/vibehawk-review/assemble-inline-bodies.sh` が決定論的に行うため、Claude は以下のフィールドに値を入れるだけでよい。3 軸ラベル・折り畳み・フッタ等の **固定書式は組み立て側が付与する**（Claude が書式を二重に書かないこと）。
 
-- **カテゴリ**: `⚠️ Potential issue`（潜在バグ・不具合）または `🛠️ Refactor suggestion`（構造改善提案）
-- **severity**: `🔴 Critical` / `🟠 Major` / `🟡 Minor` / `🔵 Trivial` / `⚪ Info`（重大度判定は本仕様 CodeRabbit 公式定義に厳格に従う）
-- **労力**: `⚡ Quick win`（短時間で直せる）または `🏗️ Heavy lift`（大きめの対応が必要）
+### フィールド定義
 
-例: `_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_`
+| フィールド | 必須 | 値 |
+|---|---|---|
+| `category` | ✅ | `⚠️ Potential issue`（潜在バグ・不具合）または `🛠️ Refactor suggestion`（構造改善提案） |
+| `severity` | ✅ | `🔴 Critical` / `🟠 Major` / `🟡 Minor` / `🔵 Trivial` / `⚪ Info`（上の 5 段階定義に厳格に従う） |
+| `effort` | ✅ | `⚡ Quick win`（短時間で直せる）または `🏗️ Heavy lift`（大きめの対応が必要） |
+| `title` | ✅ | 太字 1 行タイトル（指摘の要約を 1 文で。`**` は付けない、組み立て側が太字化する） |
+| `description` | ✅ | 説明段落（なぜ問題か・どう直すかを日本語で） |
+| `suggestion` | 任意 | 修正提案コードのみ。フェンスや `suggestion` ラベルは付けない（組み立て側が ` ```suggestion ` でラップする）。修正提案が無ければ省略する |
+| `ai_prompt` | ✅ | AI エージェントが修正に着手できる指示（対象ファイル + 行範囲 + 日本語の具体手順） |
 
-先頭行（3 軸ラベル）の次は **太字タイトル + 説明段落の 2 部構成** にする（Issue #253、実測 157 件で 100% 固定の形式）。
+category / severity / effort の 3 軸は必ず付与する（実測 157 件で全件固定、severity 無しは存在しない）。
 
-1. 3 軸ラベル行
-2. 空行
-3. **太字 1 行タイトル**（`**...**`、指摘の要約を 1 文で）
-4. 空行
-5. 説明段落（なぜ問題か・どう直すかを日本語で）
+### 組み立て後のレンダリング（組み立て側が生成。Claude は書式を書かない）
 
-例:
+`assemble-inline-bodies.sh` が各フィールドから以下の `body` を決定論的に生成する。Claude はこの書式を出力しないこと（フィールド値のみ出力する）。
 
-````text
-_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_
+1. **先頭行を CodeRabbit 互換の 3 軸ラベル** にする（Issue #252）。フォーマットは `_<category>_ | _<severity>_ | _<effort>_`（イタリック・パイプ区切り）。例: `_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_`
+2. **太字タイトル + 説明段落の 2 部構成**（Issue #253）: `**<title>**` → 空行 → `<description>`。太字 1 行タイトルの後に説明段落が続く。
+3. `suggestion` がある場合のみ **CodeRabbit 互換の Committable suggestion 折り畳み**（Issue #255）でラップする。`<!-- suggestion_start -->` と `<!-- suggestion_end -->` で挟み、`<details><summary>📝 Committable suggestion</summary>` 内に `> [!IMPORTANT]` 注意書きと ` ```suggestion ` ブロックを置く。`suggestion` が無い指摘では折り畳みを出さない。
+4. **🤖 AI 向け修正指示** の `<details>` 折り畳み（Issue #254）: `<details><summary>🤖 AI 向け修正指示</summary>` 内に `ai_prompt`（AI エージェントが修正に着手できる指示）を畳む。CodeRabbit の英語定型文（"Prompt for AI Agents"）の literal コピーはしない。枠は再現・中身は日本語の vibehawk 文面にする。
+5. **vibehawk 識別フッタ**（Issue #256）: `body` の最終行に `<!-- vibehawk:inline -->` を付ける。CodeRabbit の文言（"This is an auto-generated comment by CodeRabbit"）の literal コピーは出所を偽るため禁止。既存の sticky マーカー（`<!-- vibehawk:summary -->` / `<!-- vibehawk:sha=... -->`）と同じ `vibehawk:` 名前空間に揃える。
 
-**`set -euo pipefail` 下で `grep` 無マッチ時に即死する**
+severity は `severity` フィールドに保持されるため、後続の event 判定（件数主軸、Issue #171）も従来どおり機能する。
 
-`grep` がマッチしないと exit code 1 になり、`set -e` でスクリプトが落ちる。`|| true` でガードする。
-````
+### 例（Claude が返す構造化フィールド）
 
-severity 絵文字は 3 軸ラベル内に必ず含まれるため、後続の event 判定（severity 分布カウント）も従来通り機能する。
-
-### GitHub Suggestions 構文（修正案、利用者が 1 クリックで適用可）
-
-必要に応じて `comments[].body` に GitHub Suggestions 構文を埋め込んでください。**Bot 自身は commit しない**（5 大方針 2 の例外として「Suggestions 構文の生成」は明示的に許可、Bot 自身が PR に commit を作る行為は禁止）:
-
-suggestion を付ける場合は **CodeRabbit 互換の Committable suggestion 折り畳みで囲む**（Issue #255、実測でも suggestion は必ずこの形式でラップされる）。`<!-- suggestion_start -->` と `<!-- suggestion_end -->` で挟み、`<details><summary>📝 Committable suggestion</summary>` 内に注意書き（日本語可）と ` ```suggestion ` ブロックを置く。suggestion が無い指摘では折り畳みを出さない。
-
-````text
-_🛠️ Refactor suggestion_ | _🟡 Minor_ | _⚡ Quick win_
-
-**変数名を意図がわかる名前にする**
-
-`users.length` の用途が伝わる名前に変えると可読性が上がる。
-
-<!-- suggestion_start -->
-
-<details>
-<summary>📝 Committable suggestion</summary>
-
-> [!IMPORTANT]
-> コミット前に内容を確認してください。ハイライト箇所を正確に置き換え、欠落やインデント崩れが無いことを確かめてからコミットできます。
-
-```suggestion
-const userCount = users.length;
+```json
+{
+  "path": "src/foo.ts",
+  "line": 42,
+  "side": "RIGHT",
+  "category": "⚠️ Potential issue",
+  "severity": "🟠 Major",
+  "effort": "⚡ Quick win",
+  "title": "set -euo pipefail 下で grep 無マッチ時に即死する",
+  "description": "grep がマッチしないと exit code 1 になり、set -e でスクリプトが落ちる。|| true でガードする。",
+  "suggestion": "if grep -q foo bar || true; then",
+  "ai_prompt": "src/foo.ts の 42 行目付近で grep の呼び出しを || true でガードし、無マッチ時の即死を防ぐ"
+}
 ```
 
-</details>
-
-<!-- suggestion_end -->
-````
-
-### 🤖 AI 向け修正指示（`<details>` 折り畳み、Issue #254）
-
-各 inline 指摘の **末尾に必ず**、AI エージェントが修正に着手できる指示を `<details>` 折り畳みで添える（実測 157 件で 99.4% 同梱の中核要素）。CodeRabbit の英語定型文（"Prompt for AI Agents"）の literal コピーはしない。**枠は再現・中身は日本語の vibehawk 文面**にする。
-
-`comments[].body` の末尾に以下を `\n` 区切りで含める:
-
-````text
-<details>
-<summary>🤖 AI 向け修正指示</summary>
-
-```
-<対象ファイル> の <行範囲> 付近で、<日本語で具体的な修正手順>。
-```
-
-</details>
-````
-
-- summary は `🤖 AI 向け修正指示`（日本語・vibehawk 製と分かる表現）にする。
-- 中身は **対象ファイル + 行範囲 + 日本語の修正手順**。検証可能な具体性を持たせる。
-- suggestion ブロックがある場合は suggestion の後ろ、この折り畳みを最後に置く。
-
-### 🦅 vibehawk 識別フッタ（Issue #256）
-
-各 inline 指摘の `comments[].body` の **最終行に必ず vibehawk 識別フッタ**を付ける（CodeRabbit が自分のコメントを識別するのと同じ仕組み）。CodeRabbit の文言（"This is an auto-generated comment by CodeRabbit"）の literal コピーは出所を偽るため禁止。vibehawk 製であることを示す HTML コメントにする。
-
-````text
-<!-- vibehawk:inline -->
-````
-
-- 既存の sticky マーカー（`<!-- vibehawk:summary -->` / `<!-- vibehawk:sha=... -->`）と同じ `vibehawk:` 名前空間に揃える。
-- body の **最終行**（🤖 AI 向け修正指示の折り畳みの後ろ）に置く。
+複数行範囲指摘なら `start_line` / `start_side` を追加する。**Bot 自身は commit しない**（5 大方針 2 の例外として「`suggestion` フィールドの生成」は明示的に許可、Bot 自身が PR に commit を作る行為は禁止）。
 
 ## auto_resolve（push で直った旧指摘を resolved 化、Issue #9 / Issue #167）
 
@@ -275,14 +238,14 @@ gh api graphql -f query='query($owner: String!, $name: String!, $pr: Int!) { rep
 **本 prompt 内では event 判定を行わない**。auto_resolve 完了後、bundled review POST の前段にある独立 workflow step `vibehawk event を決定`（`id: decide_event`）が以下を決定論的に実行する:
 
 1. `gh api graphql` で `reviewThreads(first: 100)` を取得し、`isResolved == false` の数を jq でカウント
-2. Claude が返した `comments[]` の `body` 冒頭絵文字（🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info）から severity 分布を jq でカウント
-3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、旧 prompt 内ロジックの 1:1 移植）:
+2. Claude が返した `comments[]` の **総件数** を jq でカウント（`[.comments[]?] | length`、severity 不問、Issue #171）
+3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、Issue #171: severity 不問・件数主軸）:
    - unresolved >= 1 件 → `decided_event=REQUEST_CHANGES`
-   - 新規 inline に Critical/Major (🔴/🟠) が 1 件でもある → `decided_event=REQUEST_CHANGES`
+   - 新規 inline 指摘 >= 1 件 → `decided_event=REQUEST_CHANGES`（severity 不問）
    - それ以外 → `decided_event=APPROVE`
 4. `decided_event` を GITHUB_OUTPUT に出力 → `vibehawk bundled review を post` step が JSON の `.event` を jq で上書きしてから POST
 
-Claude の責務は `body`（severity 別件数を含むサマリ）と `comments[]`（severity 絵文字を冒頭に付与した inline 指摘）の生成のみ。`event` フィールドは placeholder として `COMMENT` を返すこと（schema enum で validation 通過）。最終的な review event は workflow step `vibehawk bundled review を post` が POST 時に上書きする値が真値となる。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
+Claude の責務は `body`（severity 別件数を含むサマリ）と `comments[]`（構造化フィールドの inline 指摘。最終 `body` は workflow 側 `assemble-inline-bodies.sh` が組み立てる、Issue #263）の生成のみ。`event` フィールドは placeholder として `COMMENT` を返すこと（schema enum で validation 通過）。最終的な review event は workflow step `vibehawk bundled review を post` が POST 時に上書きする値が真値となる。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
 
 **body 冒頭の status 行は引き続き Claude が出力する**（利用者向け要約として）。判定根拠の二重表現になっても問題ない（最終 event は workflow 計算値だが、body 内のテキストは Claude の認識を表すもの）。目安:
 - 未解決指摘あり想定 → `⚠️ vibehawk: 未解決指摘 N 件 / 新規指摘 M 件`
