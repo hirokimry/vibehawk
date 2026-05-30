@@ -22,14 +22,31 @@ PAYLOAD="${RUNNER_TEMP}/vibehawk-review.json"
 # `echo` は -n の解釈や末尾改行の差異があるため `printf '%s'` を使う（JSON のエスケープを破壊しない）
 printf '%s' "$STRUCTURED_OUTPUT" > "$PAYLOAD"
 
-# Issue #263: Claude は comments[] に構造化フィールド（category / severity / effort / title /
-# description / suggestion? / ai_prompt）を出力する。検証の前段で最終 body へ組み立て、
-# GitHub Reviews API 有効フィールド（path/line/side/start_line/start_side/body）のみへ絞り込む。
-# 以降の jq 契約検証は組み立て後の body（length > 0）を検査する。
+# Issue #271: レビュー本文（インラインをまとめるコメント）を build-bundled-body.sh で
+# 構造化フィールドから決定論的に組み立てる（CodeRabbit 互換: Actionable 件数 + 🧹 Nitpick comments）。
+# nitpick を含む raw comments を読むため、nitpick の routing より前に実行する。
+# 失敗時は graceful skip（exit 0 + ::warning::、次の status check が neutral に倒れる）。
+if ! BUNDLED_BODY="$(bash "$(dirname "$0")/build-bundled-body.sh" "$PAYLOAD")"; then
+  echo "::warning::vibehawk: build-bundled-body に失敗したため bundled review POST を skip します（次の status check post が neutral に倒れます）"
+  exit 0
+fi
+
+# Issue #271: nitpick（category=🧹 Nitpick）はインラインスレッドに出さず本文に集約する。
+# inline 投稿対象から除外し（routing）、actionable のみ comments[] に残す。
+ROUTED="${RUNNER_TEMP}/vibehawk-review.routed.json"
+jq '.comments |= ([.[]? | select(.category != "🧹 Nitpick")])' "$PAYLOAD" > "$ROUTED" && mv "$ROUTED" "$PAYLOAD"
+
+# Issue #263: actionable の comments[] を最終 body へ組み立て、GitHub Reviews API 有効フィールド
+# （path/line/side/start_line/start_side/body）のみへ絞り込む。以降の jq 契約検証は組み立て後の body を検査する。
 if ! bash "$(dirname "$0")/assemble-inline-bodies.sh" "$PAYLOAD"; then
   echo "::warning::vibehawk: assemble-inline-bodies に失敗したため bundled review POST を skip します（次の status check post が neutral に倒れます）"
   exit 0
 fi
+
+# Issue #271: レビュー本文を build-bundled-body.sh の出力で上書きする（Claude の .body は使わない、
+# 物語/Changes/severity 表は sticky walkthrough に一本化されるため、Issue #269）。
+SET_BODY="${RUNNER_TEMP}/vibehawk-review.body.json"
+jq --arg b "$BUNDLED_BODY" '.body = $b' "$PAYLOAD" > "$SET_BODY" && mv "$SET_BODY" "$PAYLOAD"
 
 # トップレベルキーの存在だけでは gh api POST が 422 で落ちて status check step に到達できなくなる（PR #153）。
 # GitHub Reviews API 契約に沿って事前 validation する（二重防御）:

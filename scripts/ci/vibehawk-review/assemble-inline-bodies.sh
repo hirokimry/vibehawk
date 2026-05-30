@@ -32,7 +32,9 @@ JQ_PROGRAM='
 if (.comments | type) != "array" then . else
 .comments |= map(
   (
-    "_" + .category + "_ | _" + .severity + "_ | _" + .effort + "_\n\n"
+    "_" + .category + "_"
+    + (if ((.severity // "") | length) > 0 then " | _" + .severity + "_" else "" end)
+    + " | _" + .effort + "_\n\n"
     + "**" + .title + "**\n\n"
     + .description
     + (if ((.suggestion // "") | length) > 0 then
