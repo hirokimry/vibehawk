@@ -102,6 +102,27 @@ else
   pass "本文に severity マーカーが出ない（nitpick は severity を持たない、Issue #270）"
 fi
 
+echo "=== Case 1b: 統合 AI プロンプト（Issue #272） ==="
+if grep -qF '<summary>🤖 全指摘の AI 向け修正指示（一括）</summary>' <<< "$out"; then
+  pass "🤖 全指摘の AI 向け修正指示（一括）折り畳みが出る"
+else
+  fail "統合 AI プロンプトの折り畳みが出ない"
+fi
+
+if grep -qF 'actionable:' <<< "$out" && grep -qF 'nitpick:' <<< "$out" \
+   && grep -qF '@a.sh:' <<< "$out" && grep -qF '@c.sh:' <<< "$out"; then
+  pass "統合 AI プロンプトが actionable / nitpick をファイル別（@path）に束ねる"
+else
+  fail "統合 AI プロンプトのファイル別グルーピングが期待通りでない"
+fi
+
+# パターンが `-` 始まりのため -- でパターン終端を明示する（shell.md）
+if grep -qF -- '- 直してA' <<< "$out" && grep -qF -- '- 直してC' <<< "$out" && grep -qF -- '- 直してD' <<< "$out"; then
+  pass "統合 AI プロンプトが全指摘（actionable + nitpick）の ai_prompt を含む"
+else
+  fail "統合 AI プロンプトに一部 ai_prompt が欠落"
+fi
+
 echo "=== Case 2: 末尾マーカー保持 ==="
 if grep -qF '<!-- vibehawk:summary -->' <<< "$out" && grep -qF '<!-- vibehawk:sha=abc1234 -->' <<< "$out"; then
   pass "末尾に vibehawk:summary / vibehawk:sha マーカーが付く（incremental 検出に必須、Issue #57）"
@@ -119,8 +140,8 @@ fi
 
 echo "=== Case 4: 0 件 ==="
 out3="$(run_build '{"commit_id":"sha2","comments":[]}')"
-if grep -qF '**Actionable comments posted: 0**' <<< "$out3"; then
-  pass "0 件で Actionable comments posted: 0 を表示する"
+if grep -qF '**Actionable comments posted: 0**' <<< "$out3" && ! grep -qF '全指摘の AI 向け修正指示' <<< "$out3"; then
+  pass "0 件で Actionable comments posted: 0 を表示し、統合 AI プロンプトを出さない"
 else
   fail "0 件時の出力が期待通りでない"
 fi
