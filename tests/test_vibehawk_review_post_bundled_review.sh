@@ -101,6 +101,25 @@ else
   fail ".event の上書きが反映されなかった: gh_log=$(cat "$GH_LOG")"
 fi
 
+# Issue #263: 構造化フィールド入り comment が POST 前に body へ組み立てられ、
+# GitHub Reviews API 有効フィールドのみへ絞り込まれることを検証する。
+STRUCTURED='{"event":"COMMENT","body":"summary text","commit_id":"abc123","comments":[{"path":"src/x.ts","line":5,"side":"RIGHT","category":"⚠️ Potential issue","severity":"🟠 Major","effort":"⚡ Quick win","title":"タイトルX","description":"説明X","ai_prompt":"src/x.ts の 5 行目付近を直す"}]}'
+rc=$(run_script "$STRUCTURED" "REQUEST_CHANGES")
+if [[ "$rc" -eq 0 ]] \
+   && grep -qF "ARG: -X" "$GH_LOG" \
+   && grep -qF '_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_' "$GH_LOG" \
+   && grep -qF 'vibehawk:inline' "$GH_LOG"; then
+  pass "構造化フィールドが POST 前に body へ組み立てられる（Issue #263）"
+else
+  fail "組み立て後 body が POST payload に反映されない: rc=$rc, gh_log=$(cat "$GH_LOG")"
+fi
+
+if grep -qF '"category"' "$GH_LOG"; then
+  fail "構造化フィールド category が POST payload に残存している（GitHub API 有効フィールドのみへ絞り込めていない）"
+else
+  pass "構造化フィールドが除去され GitHub API 有効フィールドのみ POST される（Issue #263）"
+fi
+
 INVALID='{"event":"BOGUS","body":"","commit_id":"","comments":[]}'
 rc=$(run_script "$INVALID" "APPROVE")
 if [[ "$rc" -eq 0 ]] \
