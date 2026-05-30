@@ -26,9 +26,12 @@ CLAUDE_OUT="${RUNNER_TEMP}/vibehawk-claude-output.json"
 printf '%s' "$STRUCTURED_OUTPUT" > "$CLAUDE_OUT"
 
 # `[]?` で null 許容にして comments が空配列でも 0 が返るようにする
-# 旧実装（Issue #166）は severity 別に select() していたが、Issue #171 で全件カウントに変更した
-new_comments_count="$(jq '[.comments[]?] | length' "$CLAUDE_OUT")"
-echo "vibehawk: 新規 inline 指摘の総件数 = ${new_comments_count}（severity 不問、Issue #171）"
+# 旧実装（Issue #166）は severity 別に select() していたが、Issue #171 で全件カウントに変更した。
+# Issue #270/#274: 🧹 Nitpick は非ブロッキング（インラインに出さず本文集約、CodeRabbit 準拠）のため
+# event 判定の件数から除外する。actionable（Potential issue / Refactor）のみを数える。
+# これにより nitpick のみのレビューは REQUEST_CHANGES にならず APPROVE になる。
+new_comments_count="$(jq '[.comments[]? | select(.category != "🧹 Nitpick")] | length' "$CLAUDE_OUT")"
+echo "vibehawk: 新規 actionable inline 指摘の件数 = ${new_comments_count}（🧹 Nitpick 除外、Issue #171/#270）"
 
 # auto_resolve mutation 後の最新状態を GraphQL で取得する（auto_resolve → decide_event の順で実行）
 OWNER="${REPO%%/*}"

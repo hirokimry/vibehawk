@@ -13,7 +13,7 @@
 #
 # nitpick のインライン除外（routing）は呼び出し元 post-bundled-review.sh が行う。
 # 本スクリプトは読み取り専用（payload を書き換えない）。combined AI プロンプト（Issue #272）と
-# Review info（Issue #273）は後続 Issue で本スクリプトに追加される。
+# Review info（Issue #273、env 経由）も本スクリプトが組み立てる。
 #
 # 入力: payload JSON ファイルパス（引数 $1）。.comments[] と .commit_id を読む。
 # 出力: 標準出力に本文 markdown 全体。
