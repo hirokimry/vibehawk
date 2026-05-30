@@ -163,6 +163,15 @@ else
   fail "Case 9: 🤖 AI 向け修正指示の折り畳みガイダンスが prompt に無い"
 fi
 
+echo "Case 10: suggestion が Committable suggestion 折り畳みで囲まれることを要求している（Issue #255）"
+if grep -qF '📝 Committable suggestion' "$DEFAULT_PROMPT" \
+  && grep -qF 'suggestion_start' "$DEFAULT_PROMPT" \
+  && grep -qF 'suggestion_end' "$DEFAULT_PROMPT"; then
+  pass "Case 10"
+else
+  fail "Case 10: Committable suggestion 折り畳みのガイダンスが prompt に無い"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"
