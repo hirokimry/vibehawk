@@ -56,7 +56,7 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
       "path": "src/foo.ts",
       "line": 42,
       "side": "RIGHT",
-      "body": "🟠 **Major**: 指摘内容..."
+      "body": "_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_\n\n指摘内容..."
     }
   ],
   "walkthrough_narrative": "変更全体の物語的サマリ（1〜2 段落、200〜800 文字、CodeRabbit 互換、Issue #227）",
@@ -158,14 +158,24 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 | 🔵 | Trivial | コード品質を高めるための軽微な提案 |
 | ⚪ | Info | 情報提供のみ、対応不要 |
 
-`comments[].body` の冒頭に必ず該当 severity の絵文字を 1 つ付ける（例: `🟠 **Major**: ...`）。重大度判定は本仕様（CodeRabbit 公式定義）に厳格に従う。
+`comments[].body` の **先頭行を CodeRabbit 互換の 3 軸ラベル** にする（Issue #252、実測 157 件で全件固定の形式）。フォーマットは `_<カテゴリ>_ | _<severity>_ | _<労力>_`（イタリック・パイプ区切り）。3 軸とも必ず付与する。
+
+- **カテゴリ**: `⚠️ Potential issue`（潜在バグ・不具合）または `🛠️ Refactor suggestion`（構造改善提案）
+- **severity**: `🔴 Critical` / `🟠 Major` / `🟡 Minor` / `🔵 Trivial` / `⚪ Info`（重大度判定は本仕様 CodeRabbit 公式定義に厳格に従う）
+- **労力**: `⚡ Quick win`（短時間で直せる）または `🏗️ Heavy lift`（大きめの対応が必要）
+
+例: `_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_`
+
+先頭行（3 軸ラベル）の次に空行を挟み、指摘本文を続ける。severity 絵文字は 3 軸ラベル内に必ず含まれるため、後続の event 判定（severity 分布カウント）も従来通り機能する。
 
 ### GitHub Suggestions 構文（修正案、利用者が 1 クリックで適用可）
 
 必要に応じて `comments[].body` に GitHub Suggestions 構文を埋め込んでください。**Bot 自身は commit しない**（5 大方針 2 の例外として「Suggestions 構文の生成」は明示的に許可、Bot 自身が PR に commit を作る行為は禁止）:
 
 ````text
-🟡 **Minor**: 変数名を意図がわかる名前に
+_🛠️ Refactor suggestion_ | _🟡 Minor_ | _⚡ Quick win_
+
+変数名を意図がわかる名前に
 ```suggestion
 const userCount = users.length;
 ```
