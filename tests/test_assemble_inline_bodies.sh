@@ -183,7 +183,7 @@ if [[ "$keys_start" == '["body","line","path","side","start_line","start_side"]'
 else
   fail "start_line / start_side の pass-through が欠けている（${keys_start}）"
 fi
-# キー存在だけでなく値の保持も検証する（PR #265 CodeRabbit 指摘: 値が変わってもキー検証は通るため）
+# キー存在だけでなく値の保持も検証する（値が変わってもキー検証は通るため）
 start_line_val="$(jq '.comments[0].start_line' "$START_FIX")"
 start_side_val="$(jq -r '.comments[0].start_side' "$START_FIX")"
 if [[ "$start_line_val" == "8" && "$start_side_val" == "RIGHT" ]]; then
