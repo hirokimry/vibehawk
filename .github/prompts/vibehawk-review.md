@@ -201,6 +201,27 @@ const userCount = users.length;
 ```
 ````
 
+### 🤖 AI 向け修正指示（`<details>` 折り畳み、Issue #254）
+
+各 inline 指摘の **末尾に必ず**、AI エージェントが修正に着手できる指示を `<details>` 折り畳みで添える（実測 157 件で 99.4% 同梱の中核要素）。CodeRabbit の英語定型文（"Prompt for AI Agents"）の literal コピーはしない。**枠は再現・中身は日本語の vibehawk 文面**にする。
+
+`comments[].body` の末尾に以下を `\n` 区切りで含める:
+
+````text
+<details>
+<summary>🤖 AI 向け修正指示</summary>
+
+```
+<対象ファイル> の <行範囲> 付近で、<日本語で具体的な修正手順>。
+```
+
+</details>
+````
+
+- summary は `🤖 AI 向け修正指示`（日本語・vibehawk 製と分かる表現）にする。
+- 中身は **対象ファイル + 行範囲 + 日本語の修正手順**。検証可能な具体性を持たせる。
+- suggestion ブロックがある場合は suggestion の後ろ、この折り畳みを最後に置く。
+
 ## auto_resolve（push で直った旧指摘を resolved 化、Issue #9 / Issue #167）
 
 **Issue #167 で workflow step に移管**: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql resolveReviewThread` mutation を直接実行していた。Issue #164（structured_output 経路の確立）/ Issue #166（event 判定の workflow 移管）に続く責務分離の完成形として、Claude は「解決対象 thread の node_id を `resolved_thread_ids` 配列に列挙する」だけになり、mutation の実行は workflow step `vibehawk auto_resolve` が担う。
