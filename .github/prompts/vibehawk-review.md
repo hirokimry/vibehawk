@@ -32,14 +32,7 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
 ### 投稿フロー（INCREMENTAL_MODE 共通）
 
 1. inline 指摘は **その場で POST せず**、JSON 配列 `comments[]` に貯める（path / line / side / 構造化フィールド category・severity・effort・title・description・suggestion?・ai_prompt / 必要に応じ start_line+start_side、Issue #263）
-2. レビュー本文（severity 別件数を含む長文サマリ）を変数として組み立てる。**末尾に必ず以下 2 行を含める**（インクリメンタルレビューの一意特定に必須、Issue #57）:
-
-```text
-<!-- vibehawk:summary -->
-<!-- vibehawk:sha=${HEAD_SHA} -->
-```
-
-この 2 行が欠落すると、次回 push で前回 SHA が抽出できず、incremental が破綻し完全再レビュー扱いになります。
+2. **レビュー本文（`body`）は組み立てない**（Issue #271 / #274）。レビュー本文は workflow 側の `scripts/ci/vibehawk-review/build-bundled-body.sh` が `comments[]` から決定論的に組み立てる（`Actionable comments posted: N` + 🧹 Nitpick comments + 統合 AI プロンプト + ℹ️ Review info）。末尾の `<!-- vibehawk:summary -->` / `<!-- vibehawk:sha=... -->` マーカー（incremental レビューの一意特定に必須、Issue #57）も組み立て側が付与する。したがって Claude は `body` フィールドを返さない。物語的サマリ / Changes / severity 集計は sticky walkthrough（別コメント）に一本化される。
 
 3. **event 判定は行わない**（Issue #166）。Claude は `event` フィールドに placeholder として `COMMENT` を返すこと。最終的な `event` (APPROVE / REQUEST_CHANGES) は後続の workflow step `vibehawk event を決定` が `comments[]` の総件数（severity 不問、Issue #171）と `gh api graphql reviewThreads` から取得する unresolved 数を組み合わせて決定論的に計算し、`vibehawk bundled review を post` step が JSON の `event` フィールドを上書きしてから GitHub に POST する。Claude が `event` 判定を試みても workflow step の計算値が最終値となるため、本 prompt 内では件数カウント / unresolved 取得 / event 判定ルールを記述しない（Issue #166 で構造的に廃止）。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
 4. **最終 assistant message として下記 schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`gh api` POST なし）。claude-code-action が `--json-schema` で schema validation し、`outputs.structured_output` に流す。応答以外のテキスト（説明文・進捗ログ等）は最終応答に含めない（schema validation が失敗する）。
@@ -49,7 +42,6 @@ PATH_INSTRUCTIONS_JSON: ${PATH_INSTRUCTIONS_JSON}
 ```json
 {
   "event": "COMMENT",
-  "body": "サマリ本文（末尾の vibehawk:summary / vibehawk:sha 2 行必須）",
   "commit_id": "${HEAD_SHA}",
   "comments": [
     {
@@ -105,11 +97,12 @@ GitHub Reviews API には review body の edit エンドポイントがない（
 
 Claude prompt 内では check-runs API を **絶対に呼ばない**。check-runs POST は claude-code-action の次の次の step（`vibehawk status check を post`）が GitHub Actions の GITHUB_TOKEN を使って実行する。Claude prompt から POST を呼ぶ旧設計は claude-code-action の permission model により deny されるため、本 prompt は JSON 書き出しまででタスク完了とすること。
 
-## サマリ本文（REVIEW_BODY）の必須要件
+## レビュー本文（`body`）は組み立てない（Issue #271 / #274）
 
-- PR 全体の変更内容の要約（簡潔に）
-- 検出した指摘の合計件数を severity 別に表示
-- 末尾に上記 2 行（`<!-- vibehawk:summary -->` / `<!-- vibehawk:sha=... -->`）を含める
+レビュー本文は workflow 側の `scripts/ci/vibehawk-review/build-bundled-body.sh` が `comments[]` から決定論的に組み立てる。Claude は `body` フィールドを返さない。
+
+- 本文の中身（`Actionable comments posted: N` / 🧹 Nitpick comments / 統合 AI プロンプト / ℹ️ Review info）と末尾マーカーは組み立て側が生成する。
+- PR 全体の物語的サマリ・Changes・severity 集計は sticky walkthrough（別コメント）に一本化される。Claude は `walkthrough_narrative` / `changes_table` / `review_effort` を返し、sticky 側がそれらを使う。
 
 ## walkthrough_narrative の必須要件（Issue #227、CodeRabbit 互換）
 
@@ -170,15 +163,28 @@ Claude prompt 内では check-runs API を **絶対に呼ばない**。check-run
 
 | フィールド | 必須 | 値 |
 |---|---|---|
-| `category` | ✅ | `⚠️ Potential issue`（潜在バグ・不具合）または `🛠️ Refactor suggestion`（構造改善提案） |
-| `severity` | ✅ | `🔴 Critical` / `🟠 Major` / `🟡 Minor` / `🔵 Trivial` / `⚪ Info`（上の 5 段階定義に厳格に従う） |
+| `category` | ✅ | `⚠️ Potential issue`（潜在バグ・不具合）/ `🛠️ Refactor suggestion`（構造改善提案）/ `🧹 Nitpick`（軽微な磨き込み提案、ブロッカーではない） |
+| `severity` | actionable のみ | `🔴 Critical` / `🟠 Major` / `🟡 Minor` / `🔵 Trivial` / `⚪ Info`（上の 5 段階定義に厳格に従う）。**`🧹 Nitpick` には付けない**（severity は actionable 専用の直交ラベル、Issue #270） |
 | `effort` | ✅ | `⚡ Quick win`（短時間で直せる）または `🏗️ Heavy lift`（大きめの対応が必要） |
 | `title` | ✅ | 太字 1 行タイトル（指摘の要約を 1 文で。`**` は付けない、組み立て側が太字化する） |
 | `description` | ✅ | 説明段落（なぜ問題か・どう直すかを日本語で） |
 | `suggestion` | 任意 | 修正提案コードのみ。フェンスや `suggestion` ラベルは付けない（組み立て側が ` ```suggestion ` でラップする）。修正提案が無ければ省略する |
 | `ai_prompt` | ✅ | AI エージェントが修正に着手できる指示（対象ファイル + 行範囲 + 日本語の具体手順） |
 
-category / severity / effort の 3 軸は必ず付与する（実測 157 件で全件固定、severity 無しは存在しない）。
+`category` / `effort` は全指摘に必ず付与する。`severity` は **actionable（`⚠️ Potential issue` / `🛠️ Refactor suggestion`）にのみ付与**し、`🧹 Nitpick` には付けない。
+
+### actionable / nitpick の判定基準（Issue #270、CodeRabbit 互換）
+
+各指摘を、severity を付ける前に **まず actionable か nitpick かで分類** する（severity を先に決めてから振り分けるのではない）。
+
+| 分類 | category | severity | 判断軸 |
+|------|----------|----------|--------|
+| **actionable** | `⚠️ Potential issue` / `🛠️ Refactor suggestion` | 付ける（5 段階） | バグ・不具合・設計上の問題など、レビュアーが対応を検討すべき指摘 |
+| **nitpick** | `🧹 Nitpick` | 付けない | 動作に影響しない軽微な磨き込み（命名の好み・軽微な体裁・任意の代替案など）。直さなくても支障がない |
+
+- 判断は **内容で行う**（「Minor だから nitpick」のような severity 起点の機械振り分けはしない）。actionable なら軽微でも severity を付けて actionable のまま残す。
+- 迷ったら actionable に倒す（nitpick は「直さなくても支障がない」と断言できるものに限る）。
+- 本数を増やしすぎない。`🧹 Nitpick` は本当に軽微なものだけにする。
 
 ### 組み立て後のレンダリング（組み立て側が生成。Claude は書式を書かない）
 
@@ -206,6 +212,21 @@ severity は `severity` フィールドに保持されるため、後続の even
   "description": "grep がマッチしないと exit code 1 になり、set -e でスクリプトが落ちる。|| true でガードする。",
   "suggestion": "if grep -q foo bar || true; then",
   "ai_prompt": "src/foo.ts の 42 行目付近で grep の呼び出しを || true でガードし、無マッチ時の即死を防ぐ"
+}
+```
+
+`🧹 Nitpick` の例（`severity` を付けない、Issue #270）:
+
+```json
+{
+  "path": "src/foo.ts",
+  "line": 88,
+  "side": "RIGHT",
+  "category": "🧹 Nitpick",
+  "effort": "⚡ Quick win",
+  "title": "変数名 tmp はより意図が伝わる名前にできる",
+  "description": "動作には影響しないが、tmp より parsed_config 等の方が読み手に意図が伝わる。任意。",
+  "ai_prompt": "src/foo.ts の 88 行目の変数 tmp を、用途が伝わる名前（例: parsed_config）に変えることを検討する"
 }
 ```
 
@@ -238,19 +259,16 @@ gh api graphql -f query='query($owner: String!, $name: String!, $pr: Int!) { rep
 **本 prompt 内では event 判定を行わない**。auto_resolve 完了後、bundled review POST の前段にある独立 workflow step `vibehawk event を決定`（`id: decide_event`）が以下を決定論的に実行する:
 
 1. `gh api graphql` で `reviewThreads(first: 100)` を取得し、`isResolved == false` の数を jq でカウント
-2. Claude が返した `comments[]` の **総件数** を jq でカウント（`[.comments[]?] | length`、severity 不問、Issue #171）
-3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、Issue #171: severity 不問・件数主軸）:
+2. Claude が返した `comments[]` の **actionable 件数** を jq でカウント（`[.comments[]? | select(.category != "🧹 Nitpick")] | length`、severity 不問・🧹 Nitpick 除外、Issue #171/#270）
+3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、Issue #171: severity 不問・件数主軸 / Issue #270: 🧹 Nitpick は非ブロッキングで除外）:
    - unresolved >= 1 件 → `decided_event=REQUEST_CHANGES`
-   - 新規 inline 指摘 >= 1 件 → `decided_event=REQUEST_CHANGES`（severity 不問）
-   - それ以外 → `decided_event=APPROVE`
+   - 新規 actionable inline 指摘 >= 1 件 → `decided_event=REQUEST_CHANGES`（severity 不問、🧹 Nitpick 除外）
+   - それ以外（actionable 0 件 = 🧹 Nitpick のみ含む） → `decided_event=APPROVE`
 4. `decided_event` を GITHUB_OUTPUT に出力 → `vibehawk bundled review を post` step が JSON の `.event` を jq で上書きしてから POST
 
-Claude の責務は `body`（severity 別件数を含むサマリ）と `comments[]`（構造化フィールドの inline 指摘。最終 `body` は workflow 側 `assemble-inline-bodies.sh` が組み立てる、Issue #263）の生成のみ。`event` フィールドは placeholder として `COMMENT` を返すこと（schema enum で validation 通過）。最終的な review event は workflow step `vibehawk bundled review を post` が POST 時に上書きする値が真値となる。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
+Claude の責務は `comments[]`（構造化フィールドの inline 指摘。各 inline の最終 body は workflow 側 `assemble-inline-bodies.sh` が、レビュー本文全体は `build-bundled-body.sh` が組み立てる、Issue #263 / #271 / #274）と sticky 用フィールド（`walkthrough_narrative` / `changes_table` / `review_effort` / `pre_merge_checks`）の生成のみ。レビュー本文（`body`）は返さない。`event` フィールドは placeholder として `COMMENT` を返すこと（schema enum で validation 通過）。最終的な review event は workflow step `vibehawk bundled review を post` が POST 時に上書きする値が真値となる。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
 
-**body 冒頭の status 行は引き続き Claude が出力する**（利用者向け要約として）。判定根拠の二重表現になっても問題ない（最終 event は workflow 計算値だが、body 内のテキストは Claude の認識を表すもの）。目安:
-- 未解決指摘あり想定 → `⚠️ vibehawk: 未解決指摘 N 件 / 新規指摘 M 件`
-- 新規 Critical/Major あり想定 → `⚠️ vibehawk: 新規 Critical/Major M 件`
-- それ以外 → `✅ vibehawk: 未解決指摘なし`（新規 0 件）または `✅ vibehawk: 助言 N 件（要対応指摘なし）`（Minor 以下のみ）
+Claude は `body`（status 行を含むレビュー本文）を **一切出力しない**（Issue #274）。レビュー本文の先頭行（`Actionable comments posted: N`）も含め、本文全体は workflow 側の `build-bundled-body.sh` が `comments[]` から決定論的に組み立てる。Claude が status 行を二重に書くと本文が重複するため出力しない。
 
 状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
 
@@ -297,7 +315,7 @@ Note: PR ブランチは既にチェックアウト済みです（fetch-depth: 0
 本 prompt のタスクは以下で完了する:
 
 1. （INCREMENTAL_MODE=true なら）解決対象 thread の GraphQL node_id を `resolved_thread_ids: [string]` 配列に列挙する（`vibehawk-for-<owner>[bot]` 名義の thread のみ、schema 出力前にフィルタ済み）。実際の `resolveReviewThread` mutation 実行は workflow step `vibehawk auto_resolve` が `resolved_thread_ids` を foreach で実行する（Issue #167 で workflow step に移管）
-2. **最終 assistant message として `{event, body, commit_id, comments, resolved_thread_ids?, walkthrough_narrative, changes_table, review_effort, pre_merge_checks}` の schema 適合 JSON を 1 個 返す**（ファイル書き出しなし、`event` は placeholder `COMMENT` 固定、Issue #166 / #227 / #228 / #229）
+2. **最終 assistant message として `{event, commit_id, comments, resolved_thread_ids?, walkthrough_narrative, changes_table, review_effort, pre_merge_checks}` の schema 適合 JSON を 1 個 返す**（`body` は返さない＝レビュー本文は workflow が組み立てる、ファイル書き出しなし、`event` は placeholder `COMMENT` 固定、Issue #166 / #227 / #228 / #229 / #274）
 
 **指摘が 0 件であっても、必ず schema 適合 JSON を最終 assistant message として返すこと**（`event=COMMENT`・`comments=[]` で OK、Issue #166 で placeholder 固定）。応答が空になると `outputs.structured_output` が空となり後続 bundled POST step が skip → status check neutral に倒れ、required status check が灰色「未投稿」のまま残る（PR #159 で実証された Issue #164 の症状）。
 

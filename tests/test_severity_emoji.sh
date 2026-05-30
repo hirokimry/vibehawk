@@ -125,12 +125,54 @@ fi
 
 # Issue #263: severity は body 冒頭の絵文字直書きではなく structured_output の
 # severity フィールドで保持し、組み立て側が 3 軸ラベルへ描画する。schema に severity
-# enum（🔴 Critical 〜 ⚪ Info）が定義されていることを検証する。
+# enum（🔴 Critical 〜 ⚪ Info）の 5 値全てが定義されていることを検証する。
+# 1 値（🟠 Major）のみの検証では他の enum 欠落を見逃すため 5 値全てを確認する（PR #266 指摘）。
 if grep -F '"severity"' "$WORKFLOW" > /dev/null && \
-   grep -F '🟠 Major' "$WORKFLOW" > /dev/null; then
-  pass "inline comment の severity が schema の severity フィールドで表現される（Issue #263）"
+   grep -F '🔴 Critical' "$WORKFLOW" > /dev/null && \
+   grep -F '🟠 Major' "$WORKFLOW" > /dev/null && \
+   grep -F '🟡 Minor' "$WORKFLOW" > /dev/null && \
+   grep -F '🔵 Trivial' "$WORKFLOW" > /dev/null && \
+   grep -F '⚪ Info' "$WORKFLOW" > /dev/null; then
+  pass "inline comment の severity が schema の severity フィールド（🔴〜⚪ の 5 値）で表現される（Issue #263）"
 else
-  fail "schema に severity フィールド（🔴〜⚪ enum）が定義されていない（Issue #263）"
+  fail "schema に severity フィールド（🔴〜⚪ の 5 値全て）が定義されていない（Issue #263）"
+fi
+
+echo "=== actionable / nitpick 分類（Issue #270、CodeRabbit 互換） ==="
+
+# Issue #270: category enum に 🧹 Nitpick を新設し、actionable / nitpick の独立分類で判定する。
+# schema の category enum に 3 値（Potential issue / Refactor suggestion / Nitpick）が揃うことを検証。
+if grep -F '⚠️ Potential issue' "$WORKFLOW" > /dev/null && \
+   grep -F '🛠️ Refactor suggestion' "$WORKFLOW" > /dev/null && \
+   grep -F '🧹 Nitpick' "$WORKFLOW" > /dev/null; then
+  pass "category enum に actionable 2 種 + 🧹 Nitpick の 3 値が定義される（Issue #270）"
+else
+  fail "category enum に 🧹 Nitpick が定義されていない（Issue #270）"
+fi
+
+# Issue #270: severity は comments[] の required から外れ、🧹 Nitpick には付けない。
+# schema の comments items required に "severity" が含まれないことを検証（Nitpick が severity 不要で通るため）。
+if grep -oE '"comments":\{"type":"array","items":\{"type":"object","required":\[[^]]*\]' "$WORKFLOW" \
+   | grep -F '"severity"' > /dev/null; then
+  fail "comments[] の required から severity が外れていない（Issue #270: Nitpick は severity を持たない）"
+else
+  pass "comments[] の required から severity が外れている（Issue #270: Nitpick は severity 不要）"
+fi
+
+# Issue #270: prompt に actionable / nitpick の判定基準（severity を付ける前にまず分類）が明示される。
+if grep -F 'actionable / nitpick の判定基準' "$WORKFLOW" > /dev/null && \
+   grep -F 'まず actionable か nitpick かで分類' "$WORKFLOW" > /dev/null; then
+  pass "prompt に actionable / nitpick の判定基準が明示される（Issue #270）"
+else
+  fail "prompt に actionable / nitpick の判定基準が不足（Issue #270）"
+fi
+
+# Issue #270/#269: schema が category↔severity 契約を if/then/else で強制する
+# （🧹 Nitpick は severity 禁止 / actionable は severity 必須、CodeRabbit PR #280 指摘）。
+if grep -F '"then":{"not":{"required":["severity"]}},"else":{"required":["severity"]}' "$WORKFLOW" > /dev/null; then
+  pass "schema が if/then/else で 🧹 Nitpick の severity 禁止 + actionable の severity 必須を強制する（Issue #270）"
+else
+  fail "schema の category↔severity 条件強制（if/then/else）が無い（Issue #270、CodeRabbit PR #280 指摘）"
 fi
 
 echo "=== GitHub Suggestions 構文（Issue #9 / 5 大方針 2） ==="

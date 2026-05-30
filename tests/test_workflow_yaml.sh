@@ -981,15 +981,15 @@ else
   fail "decide_event step が GraphQL reviewThreads クエリを呼んでいない（Issue #166、unresolved 数の決定論的取得に必須）"
 fi
 
-# 6. decide_event step が jq で comments[] の総件数を集計（Issue #171: severity 不問・件数主軸）
+# 6. decide_event step が jq で comments[] の actionable 件数を集計（Issue #171: severity 不問・件数主軸 / Issue #270: 🧹 Nitpick 除外）
 # 旧実装（Issue #166）では body 冒頭絵文字（🔴 / 🟠）で Critical/Major のみカウントしていたが、
-# Issue #171 で severity 不問の総件数判定に変更したため、jq 式は `[.comments[]?] | length` 形式
-# になる。startswith() による severity フィルタは含まれない。
+# Issue #171 で severity 不問の件数判定に変更し、Issue #270 で 🧹 Nitpick（非ブロッキング）を除外する
+# `select(.category != "🧹 Nitpick")` 形式になった。startswith() による severity フィルタは含まれない。
 if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
-   | grep -F '[.comments[]?] | length' > /dev/null; then
-  pass "decide_event step が jq で comments[] の総件数を集計（Issue #171、severity 不問）"
+   | grep -F 'select(.category != "🧹 Nitpick")' > /dev/null; then
+  pass "decide_event step が jq で actionable 件数を集計（🧹 Nitpick 除外、Issue #171/#270）"
 else
-  fail "decide_event step が comments[] の総件数集計を行っていない（Issue #171、severity 不問の件数主軸ルールに必須）"
+  fail "decide_event step が actionable 件数集計（🧹 Nitpick 除外）を行っていない（Issue #171/#270 に必須）"
 fi
 
 # 6-bis. Issue #171 で旧 startswith("🔴") / startswith("🟠") の severity フィルタが撤去されている

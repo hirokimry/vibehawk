@@ -156,6 +156,27 @@ else
   fail "混在シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
 fi
 
+# Issue #270/#274: 🧹 Nitpick は非ブロッキング（event 判定の件数から除外）
+NITPICK_ONLY_PAYLOAD='{"event":"COMMENT","commit_id":"sha9","comments":[{"path":"a.sh","category":"🧹 Nitpick","effort":"⚡ Quick win","title":"t","description":"d","ai_prompt":"p"}]}'
+rc=$(run_script "$NITPICK_ONLY_PAYLOAD" "0")
+if [[ "$rc" -eq 0 ]] \
+   && grep -qx "decided_event=APPROVE" "$OUT" \
+   && grep -qx "new_comments_count=0" "$OUT"; then
+  pass "🧹 Nitpick のみ 1 件 + unresolved=0 → APPROVE（nitpick は非ブロッキング、Issue #270/#274）"
+else
+  fail "Nitpick のみシナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+fi
+
+NITPICK_MIXED_PAYLOAD='{"event":"COMMENT","commit_id":"sha10","comments":[{"path":"a.sh","category":"⚠️ Potential issue","severity":"🟡 Minor","effort":"⚡ Quick win","title":"t","description":"d","ai_prompt":"p"},{"path":"b.sh","category":"🧹 Nitpick","effort":"⚡ Quick win","title":"t2","description":"d2","ai_prompt":"p2"}]}'
+rc=$(run_script "$NITPICK_MIXED_PAYLOAD" "0")
+if [[ "$rc" -eq 0 ]] \
+   && grep -qx "decided_event=REQUEST_CHANGES" "$OUT" \
+   && grep -qx "new_comments_count=1" "$OUT"; then
+  pass "actionable 1 + 🧹 Nitpick 1 → REQUEST_CHANGES（actionable のみ計上で count=1、Issue #270/#274）"
+else
+  fail "actionable+nitpick 混在シナリオの出力が想定と異なる: rc=$rc, output=$(cat "$OUT")"
+fi
+
 set +e
 PATH="$STUB_DIR:$PATH" GITHUB_OUTPUT="$OUT" REPO="x/y" PR_NUMBER=1 \
   RUNNER_TEMP="${TMP_DIR}/runner_temp" bash "$SCRIPT" >/dev/null 2>&1
