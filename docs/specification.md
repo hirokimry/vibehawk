@@ -342,6 +342,23 @@ Issue #171 では更に判定ルール 2 段目を変更（`新規 Critical/Majo
 > 修正対象とするかの判断は利用者プロジェクト側（`.claude/rules/review-handling.md` の intent × severity マトリクス）で行う分担とする。
 > resolve されたら次の push で APPROVE に切り替わる（sticky review state は既存通り動く）。
 
+#### APPROVE 時の review body・inline 指摘（Issue #222）
+
+APPROVE 発行時は `review.body = ""`（空文字）かつ `comments = []`（指摘なし）で bundled POST する。
+
+| event | review.body | comments |
+|---|---|---|
+| APPROVE | `""`（空） | `[]`（空） |
+| REQUEST_CHANGES | サマリ本文あり | inline 指摘あり |
+| COMMENT（防御的フォールバック、decide_event step 障害時のみ。正常時は発行されない） | サマリ本文あり | inline 指摘あり |
+
+**設計根拠**:
+
+- CodeRabbit の直近 PR 実測で APPROVE 9/9 件が body 空であり、事実上の業界標準挙動として採用した（Issue #222 実測根拠）。
+- 旧挙動（APPROVE でも 400〜2000 文字 body を投稿）は PR タイムラインのノイズになっており、30 秒スキャン性（Value 2「観察する、書き換えない」）を損ねていた。
+- 「approve = 何も言うことなし」をタイムライン上で体現する。
+- サマリは Issue #219 の sticky walkthrough コメント経路（issue_comment sticky）で別途残るため、利用者は引き続きレビュー結果を確認できる。
+
 ### status check 仕様（Issue #121-C1、required status check による merge gating）
 
 > [!IMPORTANT]
