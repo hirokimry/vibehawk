@@ -163,6 +163,21 @@ else
   fail "Case 9: 🤖 AI 向け修正指示の折り畳みガイダンスが prompt に無い"
 fi
 
+echo "Case 11: inline 指摘の末尾に vibehawk 識別フッタを要求している（Issue #256）"
+if grep -qF 'vibehawk 識別フッタ' "$DEFAULT_PROMPT" \
+  && grep -qF 'vibehawk:inline' "$DEFAULT_PROMPT"; then
+  pass "Case 11"
+else
+  fail "Case 11: vibehawk 識別フッタのガイダンスが prompt に無い"
+fi
+
+echo "Case 12: CodeRabbit フッタ文言の literal コピーを禁止している（Issue #256）"
+if grep -qF 'literal コピーは出所を偽る' "$DEFAULT_PROMPT"; then
+  pass "Case 12"
+else
+  fail "Case 12: CodeRabbit 文言 literal コピー禁止の明記が無い"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"
