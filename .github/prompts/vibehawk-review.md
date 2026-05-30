@@ -259,19 +259,16 @@ gh api graphql -f query='query($owner: String!, $name: String!, $pr: Int!) { rep
 **本 prompt 内では event 判定を行わない**。auto_resolve 完了後、bundled review POST の前段にある独立 workflow step `vibehawk event を決定`（`id: decide_event`）が以下を決定論的に実行する:
 
 1. `gh api graphql` で `reviewThreads(first: 100)` を取得し、`isResolved == false` の数を jq でカウント
-2. Claude が返した `comments[]` の **総件数** を jq でカウント（`[.comments[]?] | length`、severity 不問、Issue #171）
-3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、Issue #171: severity 不問・件数主軸）:
+2. Claude が返した `comments[]` の **actionable 件数** を jq でカウント（`[.comments[]? | select(.category != "🧹 Nitpick")] | length`、severity 不問・🧹 Nitpick 除外、Issue #171/#270）
+3. event 判定ルール（上から順に評価、最初にマッチした条件を採用、Issue #171: severity 不問・件数主軸 / Issue #270: 🧹 Nitpick は非ブロッキングで除外）:
    - unresolved >= 1 件 → `decided_event=REQUEST_CHANGES`
-   - 新規 inline 指摘 >= 1 件 → `decided_event=REQUEST_CHANGES`（severity 不問）
-   - それ以外 → `decided_event=APPROVE`
+   - 新規 actionable inline 指摘 >= 1 件 → `decided_event=REQUEST_CHANGES`（severity 不問、🧹 Nitpick 除外）
+   - それ以外（actionable 0 件 = 🧹 Nitpick のみ含む） → `decided_event=APPROVE`
 4. `decided_event` を GITHUB_OUTPUT に出力 → `vibehawk bundled review を post` step が JSON の `.event` を jq で上書きしてから POST
 
 Claude の責務は `comments[]`（構造化フィールドの inline 指摘。各 inline の最終 body は workflow 側 `assemble-inline-bodies.sh` が、レビュー本文全体は `build-bundled-body.sh` が組み立てる、Issue #263 / #271 / #274）と sticky 用フィールド（`walkthrough_narrative` / `changes_table` / `review_effort` / `pre_merge_checks`）の生成のみ。レビュー本文（`body`）は返さない。`event` フィールドは placeholder として `COMMENT` を返すこと（schema enum で validation 通過）。最終的な review event は workflow step `vibehawk bundled review を post` が POST 時に上書きする値が真値となる。さらに次の `vibehawk status check を post` step が POST 後の review の `state` フィールド（GET レスポンスの過去分詞形 `APPROVED` / `CHANGES_REQUESTED`）を読み取って status check の conclusion (success/failure/neutral) に決定論的にマップする（Issue #121-C1 fix / Issue #152 fix / Issue #164 fix / Issue #166）。
 
-**body 冒頭の status 行は引き続き Claude が出力する**（利用者向け要約として）。判定根拠の二重表現になっても問題ない（最終 event は workflow 計算値だが、body 内のテキストは Claude の認識を表すもの）。目安:
-- 未解決指摘あり想定 → `⚠️ vibehawk: 未解決指摘 N 件 / 新規指摘 M 件`
-- 新規 Critical/Major あり想定 → `⚠️ vibehawk: 新規 Critical/Major M 件`
-- それ以外 → `✅ vibehawk: 未解決指摘なし`（新規 0 件）または `✅ vibehawk: 助言 N 件（要対応指摘なし）`（Minor 以下のみ）
+Claude は `body`（status 行を含むレビュー本文）を **一切出力しない**（Issue #274）。レビュー本文の先頭行（`Actionable comments posted: N`）も含め、本文全体は workflow 側の `build-bundled-body.sh` が `comments[]` から決定論的に組み立てる。Claude が status 行を二重に書くと本文が重複するため出力しない。
 
 状態は GitHub に閉じる（5 大方針 4、専用 DB なし）。毎回都度発行で OK（永続化不要）。bundled 投稿により review badge は colored 表示になる。
 

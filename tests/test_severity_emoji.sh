@@ -167,6 +167,14 @@ else
   fail "prompt に actionable / nitpick の判定基準が不足（Issue #270）"
 fi
 
+# Issue #270/#269: schema が category↔severity 契約を if/then/else で強制する
+# （🧹 Nitpick は severity 禁止 / actionable は severity 必須、CodeRabbit PR #280 指摘）。
+if grep -F '"then":{"not":{"required":["severity"]}},"else":{"required":["severity"]}' "$WORKFLOW" > /dev/null; then
+  pass "schema が if/then/else で 🧹 Nitpick の severity 禁止 + actionable の severity 必須を強制する（Issue #270）"
+else
+  fail "schema の category↔severity 条件強制（if/then/else）が無い（Issue #270、CodeRabbit PR #280 指摘）"
+fi
+
 echo "=== GitHub Suggestions 構文（Issue #9 / 5 大方針 2） ==="
 
 if grep -F 'suggestion' "$WORKFLOW" > /dev/null && \
