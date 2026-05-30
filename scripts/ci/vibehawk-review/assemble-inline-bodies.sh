@@ -27,6 +27,7 @@ fi
 # .comments が配列でない / 欠落する不正入力では変換せず素通しする。本スクリプトは
 # post-bundled-review.sh の jq 契約検証より前段で走るため、ここでクラッシュすると検証の
 # graceful skip（exit 0 + ::warning::）経路を奪う。配列のときだけ組み立てる（二重防御）。
+# shellcheck disable=SC2016  # 単一引用符は意図的。`$body` 等は jq 変数でありシェル展開させない。
 JQ_PROGRAM='
 if (.comments | type) != "array" then . else
 .comments |= map(

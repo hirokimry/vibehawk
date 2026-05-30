@@ -130,7 +130,7 @@ fi
 
 echo "Case 6: inline 指摘ガイダンスが CodeRabbit 互換の 3 軸ラベルを要求している（Issue #252）"
 # 3 軸ラベル（カテゴリ | severity | 労力）の指示と実例が prompt に存在することを検証する。
-# severity 絵文字はラベル内に保持されるため、decide-event.sh の severity 分布カウントは壊れない。
+# severity 絵文字はラベル内に保持されるため、decide-event.sh の件数主軸判定（Issue #171）に影響しない。
 if grep -qF '先頭行を CodeRabbit 互換の 3 軸ラベル' "$DEFAULT_PROMPT" \
   && grep -qF '_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_' "$DEFAULT_PROMPT" \
   && grep -qF '⚡ Quick win' "$DEFAULT_PROMPT" \
