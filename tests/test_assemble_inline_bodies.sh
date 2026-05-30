@@ -152,6 +152,19 @@ else
   fail "comment1: 欠落キーを捏造した（${keys1}）"
 fi
 
+# --- Case: start_line / start_side を持つ comment でキーが pass-through される ---
+START_FIX="${TMP_DIR}/start_payload.json"
+cat > "$START_FIX" <<'JSON'
+{"event":"COMMENT","body":"s","commit_id":"c","comments":[{"path":"src/c.ts","line":10,"side":"RIGHT","start_line":8,"start_side":"RIGHT","category":"⚠️ Potential issue","severity":"🟠 Major","effort":"⚡ Quick win","title":"タイトルC","description":"説明C","ai_prompt":"src/c.ts の 8-10 行目を直す"}]}
+JSON
+bash "$SCRIPT" "$START_FIX" > /dev/null
+keys_start="$(jq -c '.comments[0] | keys' "$START_FIX")"
+if [[ "$keys_start" == '["body","line","path","side","start_line","start_side"]' ]]; then
+  pass "start_line / start_side が存在する場合に pass-through される"
+else
+  fail "start_line / start_side の pass-through が欠けている（${keys_start}）"
+fi
+
 # --- Case: comments が配列でない不正入力は素通し（検証 skip 経路を奪わない） ---
 NONARR="${TMP_DIR}/nonarray.json"
 printf '%s' '{"event":"APPROVE","body":"s","commit_id":"c","comments":"not-an-array"}' > "$NONARR"
