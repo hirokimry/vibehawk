@@ -237,6 +237,17 @@ const userCount = users.length;
 - 中身は **対象ファイル + 行範囲 + 日本語の修正手順**。検証可能な具体性を持たせる。
 - suggestion ブロックがある場合は suggestion の後ろ、この折り畳みを最後に置く。
 
+### 🦅 vibehawk 識別フッタ（Issue #256）
+
+各 inline 指摘の `comments[].body` の **最終行に必ず vibehawk 識別フッタ**を付ける（CodeRabbit が自分のコメントを識別するのと同じ仕組み）。CodeRabbit の文言（"This is an auto-generated comment by CodeRabbit"）の literal コピーは出所を偽るため禁止。vibehawk 製であることを示す HTML コメントにする。
+
+````text
+<!-- vibehawk:inline -->
+````
+
+- 既存の sticky マーカー（`<!-- vibehawk:summary -->` / `<!-- vibehawk:sha=... -->`）と同じ `vibehawk:` 名前空間に揃える。
+- body の **最終行**（🤖 AI 向け修正指示の折り畳みの後ろ）に置く。
+
 ## auto_resolve（push で直った旧指摘を resolved 化、Issue #9 / Issue #167）
 
 **Issue #167 で workflow step に移管**: 旧設計（Issue #9）では Claude prompt 内で `gh api graphql resolveReviewThread` mutation を直接実行していた。Issue #164（structured_output 経路の確立）/ Issue #166（event 判定の workflow 移管）に続く責務分離の完成形として、Claude は「解決対象 thread の node_id を `resolved_thread_ids` 配列に列挙する」だけになり、mutation の実行は workflow step `vibehawk auto_resolve` が担う。
