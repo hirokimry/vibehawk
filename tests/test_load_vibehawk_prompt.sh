@@ -147,6 +147,14 @@ else
   pass "Case 7"
 fi
 
+echo "Case 8: inline 指摘が太字タイトル + 説明段落の 2 部構成を要求している（Issue #253）"
+if grep -qF '太字タイトル + 説明段落の 2 部構成' "$DEFAULT_PROMPT" \
+  && grep -qF '太字 1 行タイトル' "$DEFAULT_PROMPT"; then
+  pass "Case 8"
+else
+  fail "Case 8: 2 部構成（太字タイトル + 説明段落）のガイダンスが prompt に無い"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"
