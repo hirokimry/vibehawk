@@ -146,6 +146,11 @@ chmod +x "${STEP_SCRIPT}"
 cp "${REPO_ROOT}/scripts/ci/vibehawk-review/assemble-inline-bodies.sh" "${TEST_TMP}/assemble-inline-bodies.sh"
 chmod +x "${TEST_TMP}/assemble-inline-bodies.sh"
 
+# Issue #271: post-bundled-review.sh は同階層の build-bundled-body.sh も `$(dirname "$0")` で呼ぶ
+# （レビュー本文を構造化フィールドから組み立てる）。同様に TEST_TMP へ配置して相対解決を成立させる。
+cp "${REPO_ROOT}/scripts/ci/vibehawk-review/build-bundled-body.sh" "${TEST_TMP}/build-bundled-body.sh"
+chmod +x "${TEST_TMP}/build-bundled-body.sh"
+
 run_step() {
   # 共通環境変数: REPO / PR_NUMBER / GH_TOKEN / RUNNER_TEMP / STRUCTURED_OUTPUT / DECIDED_EVENT
   # gh スタブを PATH 先頭に追加して実 gh より優先させる
@@ -198,7 +203,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "正常 JSON + DECIDED_EVENT で gh api -X POST が 1 回だけ呼ばれた（実測: $posts 回）"
 else
-  fail "正常 JSON + DECIDED_EVENT で gh api -X POST 呼び出し回数が想定外（期待: 1, 実測: $posts）"
+  fail "正常 JSON + DECIDED_EVENT で gh api -X POST 呼び出し回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 unset STRUCTURED_OUTPUT DECIDED_EVENT
 
@@ -234,7 +239,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "0" ]]; then
   pass "comments 型不正 JSON で gh api -X POST が呼ばれない（実測: $posts 回）"
 else
-  fail "comments 型不正 JSON で gh api -X POST が呼ばれた（期待: 0, 実測: $posts）"
+  fail "comments 型不正 JSON で gh api -X POST が呼ばれた（期待: 0, 実測: ${posts}）"
 fi
 unset STRUCTURED_OUTPUT
 
@@ -255,7 +260,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "COMMENT placeholder + DECIDED_EVENT=REQUEST_CHANGES で gh api -X POST が 1 回だけ（実測: $posts 回）"
 else
-  fail "COMMENT placeholder + DECIDED_EVENT=REQUEST_CHANGES で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "COMMENT placeholder + DECIDED_EVENT=REQUEST_CHANGES で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 
 # POST 引数の整合性検証（最後のケースの POST が --input でファイルを参照するか）
@@ -309,21 +314,21 @@ fi
 unset STRUCTURED_OUTPUT DECIDED_EVENT
 
 echo ""
-echo "--- ケース 6: body が空文字 → POST 0 回 ---"
+echo "--- ケース 6: Claude の body が空でも build-bundled-body が本文を組み立てて POST する（Issue #271/#274: body は Claude 依存ではなくなった） ---"
 reset_logs
-STRUCTURED_OUTPUT='{"event":"APPROVE","body":"","commit_id":"deadbeef","comments":[]}'
-DECIDED_EVENT='APPROVE'
+STRUCTURED_OUTPUT='{"event":"COMMENT","body":"","commit_id":"deadbeef","comments":[]}'
+DECIDED_EVENT='COMMENT'
 export STRUCTURED_OUTPUT DECIDED_EVENT
 if run_step > "${TEST_TMP}/step-stdout-6.log" 2>&1; then
-  pass "body 空文字 JSON でも step が exit 0"
+  pass "Claude body 空 JSON でも step が exit 0"
 else
-  fail "body 空文字 JSON で step が非ゼロ終了"
+  fail "Claude body 空 JSON で step が非ゼロ終了"
 fi
 posts="$(count_posts)"
-if [[ "$posts" == "0" ]]; then
-  pass "body 空文字 JSON で gh api -X POST が呼ばれない（実測: $posts 回）"
+if [[ "$posts" == "1" ]]; then
+  pass "Claude body 空でも build-bundled-body が本文を組み立てて POST 1 回（Issue #271、body は組み立て側が必ず生成）"
 else
-  fail "body 空文字 JSON で gh api -X POST が呼ばれた（期待: 0, 実測: $posts）"
+  fail "Claude body 空時の POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 unset STRUCTURED_OUTPUT DECIDED_EVENT
 
@@ -342,7 +347,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "0" ]]; then
   pass "comments[].path 空文字 JSON で gh api -X POST が呼ばれない（実測: $posts 回）"
 else
-  fail "comments[].path 空文字 JSON で gh api -X POST が呼ばれた（期待: 0, 実測: $posts）"
+  fail "comments[].path 空文字 JSON で gh api -X POST が呼ばれた（期待: 0, 実測: ${posts}）"
 fi
 unset STRUCTURED_OUTPUT DECIDED_EVENT
 
@@ -361,7 +366,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "COMMENT event の正常 JSON で gh api -X POST が 1 回だけ（実測: $posts 回、APPROVE/REQUEST_CHANGES/COMMENT 全て受理）"
 else
-  fail "COMMENT event の正常 JSON で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "COMMENT event の正常 JSON で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 unset STRUCTURED_OUTPUT DECIDED_EVENT
 
@@ -450,7 +455,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "0" ]]; then
   pass "Issue #166: DECIDED_EVENT 未設定で gh api -X POST が呼ばれない（実測: $posts 回、decide_event 失敗時の防御）"
 else
-  fail "Issue #166: DECIDED_EVENT 未設定で gh api -X POST が呼ばれた（期待: 0, 実測: $posts）"
+  fail "Issue #166: DECIDED_EVENT 未設定で gh api -X POST が呼ばれた（期待: 0, 実測: ${posts}）"
 fi
 unset STRUCTURED_OUTPUT
 
@@ -490,7 +495,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "Issue #166: Claude APPROVE + DECIDED_EVENT REQUEST_CHANGES で POST 1 回（実測: $posts 回）"
 else
-  fail "Issue #166: Claude APPROVE + DECIDED_EVENT REQUEST_CHANGES で POST 回数想定外（期待: 1, 実測: $posts）"
+  fail "Issue #166: Claude APPROVE + DECIDED_EVENT REQUEST_CHANGES で POST 回数想定外（期待: 1, 実測: ${posts}）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
@@ -528,7 +533,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "Issue #222: APPROVE で gh api -X POST が 1 回（実測: $posts 回、抑制後でも POST は維持）"
 else
-  fail "Issue #222: APPROVE で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "Issue #222: APPROVE で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
@@ -572,7 +577,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "Issue #222: APPROVE 冪等性で gh api -X POST が 1 回（実測: $posts 回）"
 else
-  fail "Issue #222: APPROVE 冪等性で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "Issue #222: APPROVE 冪等性で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
@@ -604,7 +609,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "Issue #222: REQUEST_CHANGES で gh api -X POST が 1 回（実測: $posts 回）"
 else
-  fail "Issue #222: REQUEST_CHANGES で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "Issue #222: REQUEST_CHANGES で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
@@ -648,7 +653,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "Issue #222: COMMENT で gh api -X POST が 1 回（実測: $posts 回）"
 else
-  fail "Issue #222: COMMENT で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "Issue #222: COMMENT で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
@@ -768,7 +773,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "Issue #171: Minor 1 件で bundled POST が 1 回実行（実測: $posts 回）"
 else
-  fail "Issue #171: Minor 1 件で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "Issue #171: Minor 1 件で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
@@ -795,7 +800,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "Issue #171: Info 1 件で bundled POST が 1 回実行（実測: $posts 回、chain が end-to-end で完走）"
 else
-  fail "Issue #171: Info 1 件で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "Issue #171: Info 1 件で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
@@ -822,7 +827,7 @@ posts="$(count_posts)"
 if [[ "$posts" == "1" ]]; then
   pass "Issue #171: 0 件で bundled POST が 1 回実行（実測: $posts 回、APPROVE でも 1 回 POST する）"
 else
-  fail "Issue #171: 0 件で POST 回数が想定外（期待: 1, 実測: $posts）"
+  fail "Issue #171: 0 件で POST 回数が想定外（期待: 1, 実測: ${posts}）"
 fi
 if [[ -f "${TEST_TMP}/runner-temp/vibehawk-review.json" ]]; then
   final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
