@@ -47,6 +47,14 @@ def render_nit:
       else "" end)
     + "\n\n<details>\n<summary>🤖 AI 向け修正指示</summary>\n\n```\n" + .ai_prompt + "\n```\n\n</details>";
 
+# Issue #272: 全指摘の ai_prompt をファイル別（@path 見出し）に束ねる。
+# 人が AI エージェントへ一括貼り付けして全指摘を直せるようにする（CodeRabbit の
+# "Prompt for all review comments with AI agents" 相当、文言は vibehawk 独自）。
+def render_prompt_group:
+  group_by(.path)
+  | map("@" + (.[0].path) + ":\n" + (map("- " + .ai_prompt) | join("\n")))
+  | join("\n\n");
+
 (.comments // []) as $all
 | (.commit_id // "") as $sha
 | [$all[] | select(.category != "🧹 Nitpick")] as $actionable
@@ -65,6 +73,13 @@ def render_nit:
           | join("\n\n")
         )
       + "\n\n</blockquote></details>\n\n"
+    else "" end)
+  + (if ($all | length) > 0 then
+      "<details>\n<summary>🤖 全指摘の AI 向け修正指示（一括）</summary>\n\n```\n"
+      + "各指摘を現在のコードと突き合わせて検証し、まだ有効なものだけを最小限の変更で修正してください。無効な指摘は理由を添えてスキップしてください。\n\n"
+      + (if ($actionable | length) > 0 then "actionable:\n" + ($actionable | render_prompt_group) + "\n\n" else "" end)
+      + (if ($nits | length) > 0 then "nitpick:\n" + ($nits | render_prompt_group) + "\n" else "" end)
+      + "```\n\n</details>\n\n"
     else "" end)
   + "<!-- vibehawk:summary -->\n"
   + "<!-- vibehawk:sha=" + $sha + " -->"
