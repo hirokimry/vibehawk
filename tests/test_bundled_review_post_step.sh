@@ -140,6 +140,12 @@ STEP_SCRIPT="${TEST_TMP}/step-body.sh"
 } > "${STEP_SCRIPT}"
 chmod +x "${STEP_SCRIPT}"
 
+# Issue #263: post-bundled-review.sh は同階層の assemble-inline-bodies.sh を
+# `$(dirname "$0")` で呼ぶ。inline 展開した step-body.sh は TEST_TMP に置かれるため、
+# 同階層に assemble スクリプトを配置して実 workflow と同じ相対解決が成立するようにする。
+cp "${REPO_ROOT}/scripts/ci/vibehawk-review/assemble-inline-bodies.sh" "${TEST_TMP}/assemble-inline-bodies.sh"
+chmod +x "${TEST_TMP}/assemble-inline-bodies.sh"
+
 run_step() {
   # 共通環境変数: REPO / PR_NUMBER / GH_TOKEN / RUNNER_TEMP / STRUCTURED_OUTPUT / DECIDED_EVENT
   # gh スタブを PATH 先頭に追加して実 gh より優先させる
@@ -237,7 +243,7 @@ echo "--- ケース 4: COMMENT placeholder + DECIDED_EVENT=REQUEST_CHANGES → e
 reset_logs
 # Issue #166: Claude が placeholder として COMMENT を返しても、DECIDED_EVENT=REQUEST_CHANGES
 # で event が上書きされてから POST されることを検証する。
-STRUCTURED_OUTPUT='{"event":"COMMENT","body":"<!-- vibehawk:summary -->\n<!-- vibehawk:sha=feedbeef -->\nテストサマリ","commit_id":"feedbeef","comments":[{"path":"src/foo.ts","line":42,"side":"RIGHT","body":"🟠 **Major**: test"}]}'
+STRUCTURED_OUTPUT='{"event":"COMMENT","body":"<!-- vibehawk:summary -->\n<!-- vibehawk:sha=feedbeef -->\nテストサマリ","commit_id":"feedbeef","comments":[{"path":"src/foo.ts","line":42,"side":"RIGHT","category":"⚠️ Potential issue","severity":"🟠 Major","effort":"⚡ Quick win","title":"テスト指摘","description":"テスト説明","ai_prompt":"src/foo.ts の 42 行目付近を直す"}]}'
 DECIDED_EVENT='REQUEST_CHANGES'
 export STRUCTURED_OUTPUT DECIDED_EVENT
 if run_step > "${TEST_TMP}/step-stdout-4.log" 2>&1; then

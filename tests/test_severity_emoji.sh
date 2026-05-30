@@ -123,11 +123,14 @@ else
   fail "inline comment 必須フィールド（path / line / side / commit_id）が bundled review JSON 形式で揃っていない（Issue #121）"
 fi
 
-if grep -F 'severity 絵文字を 1 つ付ける' "$WORKFLOW" > /dev/null || \
-   grep -F '冒頭に必ず' "$WORKFLOW" > /dev/null; then
-  pass "inline comment 冒頭への severity 絵文字付与指示が prompt に含まれる"
+# Issue #263: severity は body 冒頭の絵文字直書きではなく structured_output の
+# severity フィールドで保持し、組み立て側が 3 軸ラベルへ描画する。schema に severity
+# enum（🔴 Critical 〜 ⚪ Info）が定義されていることを検証する。
+if grep -F '"severity"' "$WORKFLOW" > /dev/null && \
+   grep -F '🟠 Major' "$WORKFLOW" > /dev/null; then
+  pass "inline comment の severity が schema の severity フィールドで表現される（Issue #263）"
 else
-  fail "inline comment への severity 絵文字付与指示が prompt に含まれない"
+  fail "schema に severity フィールド（🔴〜⚪ enum）が定義されていない（Issue #263）"
 fi
 
 echo "=== GitHub Suggestions 構文（Issue #9 / 5 大方針 2） ==="
