@@ -30,12 +30,12 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-WORKFLOW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
+WORKFLOW_RAW="${REPO_ROOT}/templates/.github/workflows/vibehawk-review.yml"
 
 echo "=== templates/.github/workflows/vibehawk-review.yml 検証 ==="
 
 # ファイル存在（前提: 不在なら全後続テスト無意味）
-if [[ -f "$WORKFLOW" ]]; then
+if [[ -f "$WORKFLOW_RAW" ]]; then
   pass "templates/.github/workflows/vibehawk-review.yml が存在する"
 else
   fail "templates/.github/workflows/vibehawk-review.yml が存在しない"
@@ -43,8 +43,70 @@ else
   exit 1
 fi
 
-# コメント行を除外したワークフロー本文（行頭 # を除外）
+# Issue #176: ラッパー展開
+# `run: bash scripts/ci/vibehawk-review/<name>.sh` のような wrapper-call 行は、
+# 当該 .sh の中身を本来の `run: |` ブロックの位置に inline 展開した「擬似 yaml」を
+# 作って、後続の `awk '/id: .../, /^[[:space:]]+- name:/'` ベースのテストが
+# step 内容を見られるようにする（Issue #176 の挙動不変リファクタの単体テスト維持）。
+# 展開は副作用のない tempfile に書き出し、$WORKFLOW 変数を切り替えるだけで済むため
+# 後続の awk / grep ロジックは無改変で動く。
+WORKFLOW_EXPANDED_TMP="$(mktemp)"
+trap 'rm -f "$WORKFLOW_EXPANDED_TMP"' EXIT
+python3 - "$WORKFLOW_RAW" "$REPO_ROOT" > "$WORKFLOW_EXPANDED_TMP" <<'PYEOF'
+import sys, os, re
+
+# Windows runner ではロケールが CP1252 で、open() / sys.stdout のデフォルト encoding が
+# CP1252 となるため、UTF-8 で書かれた yml / .sh（日本語コメント含む）を読み書きすると
+# UnicodeDecodeError になる。encoding を明示して runner OS 非依存にする。
+sys.stdout.reconfigure(encoding='utf-8')
+
+src_path = sys.argv[1]
+repo_root = sys.argv[2]
+with open(src_path, encoding='utf-8') as f:
+    yaml_text = f.read()
+
+# ラッパー呼び出し行（例: `        run: bash scripts/ci/vibehawk-review/check-secrets.sh`）を
+# 当該 .sh の中身 inline 展開した `run: |` ブロックに置き換える。インデントは run: 行と同じ
+# leading whitespace の +2 スペース（GitHub Actions の標準）に揃える。
+pattern = re.compile(r'^(\s+)run:\s+bash\s+(scripts/ci/\S+\.sh)\s*$', re.MULTILINE)
+
+def replace(match):
+    indent = match.group(1)
+    rel = match.group(2).strip()
+    abs_path = os.path.join(repo_root, rel)
+    # 参照先 .sh が無いケースは「壊れた参照」として即エラー終了する
+    # （未存在時に元の run: 行を返して続行すると、後段テストの fail 原因が
+    # 「シェルが空展開された」のか「ファイルが本当に無い」のか切り分け不能になる）
+    if not os.path.isfile(abs_path):
+        sys.stderr.write(f"::error::ラッパー参照先 .sh が存在しない: {abs_path}\n")
+        sys.exit(1)
+    with open(abs_path, encoding='utf-8') as g:
+        content = g.read()
+    indented = ''.join(f"{indent}  {line}" for line in content.splitlines(keepends=True))
+    if not indented.endswith('\n'):
+        indented += '\n'
+    return f"{indent}run: |\n{indented.rstrip(chr(10))}"
+
+sys.stdout.write(pattern.sub(replace, yaml_text))
+PYEOF
+
+WORKFLOW="$WORKFLOW_EXPANDED_TMP"
+
+# プロンプト本文は .github/prompts/vibehawk-review.md に切り出されたため（PR #235、21000 chars 制限回避）。
+PROMPT_MD="${REPO_ROOT}/.github/prompts/vibehawk-review.md"
+
+# コメント行を除外したワークフロー本文（行頭 # を除外）。
+# 重要: prompt md 連結の **前** に awk 除外する。md は markdown 見出し `## ...` を含み、
+# `!/^[[:space:]]*#/` で除外されてしまうため。md はコメント除外の対象外として後で丸ごと連結する。
 WORKFLOW_BODY="$(awk '!/^[[:space:]]*#/' "$WORKFLOW")"
+
+# WORKFLOW_BODY（コメント除外済み yaml）に prompt md を連結し、prompt 規約検証を切り出し後も維持する。
+if [[ -f "$PROMPT_MD" ]]; then
+  WORKFLOW_BODY="${WORKFLOW_BODY}"$'\n'"$(cat "$PROMPT_MD")"
+  # `$WORKFLOW`（ファイル）を直接 grep する assertion 用に、ファイル自体にも md を連結する。
+  # WORKFLOW_BODY の awk 除外は連結前に済んでいるため二重連結にならない。
+  cat "$PROMPT_MD" >> "$WORKFLOW_EXPANDED_TMP"
+fi
 
 # pull_request トリガー
 if echo "$WORKFLOW_BODY" | grep -E "^[[:space:]]*pull_request:" > /dev/null; then
@@ -363,7 +425,6 @@ fi
 MOCK_DIR="$(mktemp -d)"
 trap 'rm -rf "$MOCK_DIR"' EXIT
 
-# gh スタブを作成: 引数と stdin を記録するだけ
 cat > "$MOCK_DIR/gh" <<MOCK_EOF
 #!/usr/bin/env bash
 # 呼び出しログに引数を 1 行追記
@@ -380,7 +441,6 @@ MOCK_EOF
 chmod +x "$MOCK_DIR/gh"
 touch "$MOCK_DIR/gh_calls.log"
 
-# 環境変数を準備し、prompt のサンプル相当 bash を実行
 (
   export PATH="$MOCK_DIR:$PATH"
   export REPO="hirokimry/vibehawk"
@@ -389,14 +449,12 @@ touch "$MOCK_DIR/gh_calls.log"
   export REVIEW_BODY="test summary body"
   export HEAD_SHA="deadbeef1234567890abcdef1234567890abcdef"
 
-  # inline comments 配列（prompt の comments[] フォーマット）
   cat > "$MOCK_DIR/comments_array.json" <<'JSON'
 [
   {"path": "src/foo.ts", "line": 42, "side": "RIGHT", "body": "🟠 **Major**: test"}
 ]
 JSON
 
-  # prompt 内の bundled POST サンプルを実行（templates/.github/workflows/vibehawk-review.yml 内の指示と同一）
   jq -n \
     --arg event "$EVENT" \
     --arg body "$REVIEW_BODY" \
@@ -406,7 +464,6 @@ JSON
     | gh api -X POST "repos/$REPO/pulls/$PR_NUMBER/reviews" --input -
 )
 
-# 検証 1: POST /pulls/<PR>/reviews が 1 回呼ばれる
 post_count="$(grep -cE -- '-X POST repos/[^ ]+/pulls/[0-9]+/reviews' "$MOCK_DIR/gh_calls.log" || true)"
 if [[ "$post_count" -eq 1 ]]; then
   pass "bundled POST /pulls/N/reviews がランタイムでちょうど 1 回呼ばれる（Issue #121）"
@@ -414,7 +471,6 @@ else
   fail "bundled POST /pulls/N/reviews の呼出回数が想定外: ${post_count} 回（Issue #121、期待: 1）"
 fi
 
-# 検証 2: 旧経路 PATCH issues/comments が呼ばれていない
 patch_count="$(grep -cE -- '-X PATCH .*issues/comments' "$MOCK_DIR/gh_calls.log" || true)"
 if [[ "$patch_count" -eq 0 ]]; then
   pass "旧経路 gh api -X PATCH issues/comments がランタイムで呼ばれない（Issue #121）"
@@ -466,12 +522,34 @@ else
   fail "vibehawk_config ステップが存在しない（Issue #10 未実装）"
 fi
 
-# Issue #10: .vibehawk.yaml 優先 / .coderabbit.yaml fallback
-if grep -F '.vibehawk.yaml' "$WORKFLOW" > /dev/null && \
-   grep -F '.coderabbit.yaml' "$WORKFLOW" > /dev/null; then
-  pass ".vibehawk.yaml / .coderabbit.yaml の両方が参照される（Issue #10）"
+# Issue #10 / #172: .vibehawk.yaml 単独受付（.coderabbit.yaml fallback は #172 で撤廃）
+if grep -F '.vibehawk.yaml' "$WORKFLOW" > /dev/null; then
+  pass ".vibehawk.yaml が参照される（Issue #10）"
 else
-  fail "設定ファイル両形式の参照が不足（Issue #10）"
+  fail ".vibehawk.yaml の参照が不足（Issue #10 未実装）"
+fi
+
+# Issue #172: .coderabbit.yaml の読込経路（ファイル存在 check / config_file 代入）が撤廃されている
+# （Issue 履歴を残す情報コメントとしての文字列言及は許容する）
+if ! grep -F '[[ -f ".coderabbit.yaml" ]]' "$WORKFLOW" > /dev/null && \
+   ! grep -F 'config_file=".coderabbit.yaml"' "$WORKFLOW" > /dev/null; then
+  pass ".coderabbit.yaml の読込経路が存在しない（Issue #172 fallback 撤廃）"
+else
+  fail ".coderabbit.yaml の読込経路が残っている（Issue #172 で撤廃済のはず）"
+fi
+
+# Issue #172: source_label の値域は vibehawk / default の 2 値のみ（coderabbit は撤廃）
+if grep -F 'source_label="vibehawk"' "$WORKFLOW" > /dev/null && \
+   grep -F 'source_label="default"' "$WORKFLOW" > /dev/null; then
+  pass "source_label の vibehawk / default 2 値が定義されている（Issue #172）"
+else
+  fail "source_label の値域定義が不足（Issue #172、vibehawk / default の両方が必須）"
+fi
+
+if ! grep -F 'source_label="coderabbit"' "$WORKFLOW" > /dev/null; then
+  pass "source_label=\"coderabbit\" の出力経路が存在しない（Issue #172）"
+else
+  fail "source_label=\"coderabbit\" の出力経路が残っている（Issue #172 で撤廃済のはず）"
 fi
 
 # Issue #10: PyYAML 可用性確認 + フォールバック pip install
@@ -546,9 +624,14 @@ fi
 # 新設計では claude-code-action ステップの後に独立した GitHub Actions step を追加し、
 # デフォルト GITHUB_TOKEN（checks: write 付き）で check-runs を POST する。
 
-# prompt 部分とそれ以外を分離するため、prompt セクション（`prompt: |` から `claude_args:` 直前まで）を抽出
-# awk で "prompt: |" 〜 "claude_args:" の範囲を取る
-WORKFLOW_PROMPT="$(awk '/prompt:[[:space:]]*\|/{flag=1; next} /^[[:space:]]+claude_args:/{flag=0} flag' "$WORKFLOW")"
+# プロンプト本文は .github/prompts/vibehawk-review.md に切り出されたため（PR #235、21000 chars 制限回避）、
+# prompt セクション検証は md ファイルを直接読む。旧 `prompt: |` block awk 抽出は切り出しで空になる。
+if [[ -f "$PROMPT_MD" ]]; then
+  WORKFLOW_PROMPT="$(cat "$PROMPT_MD")"
+else
+  # 後方互換: md が無ければ旧来の `prompt: |` block 抽出にフォールバック
+  WORKFLOW_PROMPT="$(awk '/prompt:[[:space:]]*\|/{flag=1; next} /^[[:space:]]+claude_args:/{flag=0} flag' "$WORKFLOW")"
+fi
 # prompt より後（claude_args: 以降、後続 step を含む）を抽出
 WORKFLOW_POST_PROMPT="$(awk '/^[[:space:]]+claude_args:/{flag=1} flag' "$WORKFLOW")"
 
@@ -642,25 +725,49 @@ else
   fail "substantive review が無い場合の fallback ロジックが含まれない（Issue #121 追加修正、初回 review 未投稿などの edge case 対応）"
 fi
 
-# Issue #152 fix: bundled review POST を workflow step に移管
-# 旧設計では Claude prompt 内で `gh api -X POST .../pulls/N/reviews` を直接実行していたが、
-# LLM の試し打ち POST が PR #151 で観測された（同一 run 内で本物の前に 4 回のノイズ review が残る）。
-# PR #128 と同じ「workflow step で決定論的に POST」パターンに移管し、Claude には JSON
-# ペイロード組み立てまでさせ、後続 workflow step が App Installation Token で 1 回だけ POST する。
+# Issue #164 fix: ファイル書き出し依存を `--json-schema` + `outputs.structured_output` 経路に置換
+# 旧設計（Issue #152）では Claude が $GITHUB_WORKSPACE/vibehawk-review.json にファイル書き出しし、
+# 本 step が hashFiles で検出して読み込んでいた。指摘 0 件 PR で Claude が書き出しに失敗する事象
+# （PR #159 で実証 = Issue #164）が prompt 強化（Issue #162 / PR #163）では再発したため、ファイル
+# 書き出し経路を構造的に廃止し、claude-code-action の公式 outputs（schema validated）から受け取る。
 
-# 1. 新 step「vibehawk bundled review を post」が存在する
+# 1. 新 step「vibehawk bundled review を post」が存在する（Issue #152 で導入、Issue #164 で入力経路変更）
 if echo "$WORKFLOW_POST_PROMPT" | grep -F 'vibehawk bundled review を post' > /dev/null; then
-  pass "新 step「vibehawk bundled review を post」が存在する（Issue #152 fix）"
+  pass "新 step「vibehawk bundled review を post」が存在する（Issue #152 / #164 fix）"
 else
-  fail "新 step「vibehawk bundled review を post」が存在しない（Issue #152 fix、bundled review POST の workflow step 移管が前提）"
+  fail "新 step「vibehawk bundled review を post」が存在しない（Issue #152 / #164 fix、bundled review POST の workflow step 移管が前提）"
 fi
 
-# 2. 新 step の if 条件に hashFiles('vibehawk-review.json') が含まれる
-# claude-code-action が JSON 書き出しに失敗した場合の skip 経路（次の status check が neutral に倒れる）
+# 2. 新 step の if 条件から hashFiles('vibehawk-review.json') が **撤廃** されている（Issue #164 fix）
+# 旧設計では Claude のファイル書き出し成功を hashFiles で検出していたが、Issue #164 fix で
+# `steps.claude_review.outputs.structured_output != ''` 経路に置換される。
 if echo "$WORKFLOW_POST_PROMPT" | grep -F "hashFiles('vibehawk-review.json')" > /dev/null; then
-  pass "新 step の if 条件に hashFiles('vibehawk-review.json') が含まれる（Issue #152 fix、Claude 書き出し失敗時の安全な skip）"
+  fail "新 step の if 条件に hashFiles('vibehawk-review.json') が残置されている（Issue #164 fix、撤廃すべき。ファイル書き出し依存は構造的廃止）"
 else
-  fail "新 step の if 条件に hashFiles('vibehawk-review.json') が含まれない（Issue #152 fix、JSON 不在時の skip 経路が必須）"
+  pass "新 step の if 条件から hashFiles('vibehawk-review.json') が撤廃されている（Issue #164 fix、ファイル書き出し依存の構造的廃止）"
+fi
+
+# 2-bis. 新 step の if 条件に steps.claude_review.outputs.structured_output != '' が含まれる（Issue #164 fix）
+if echo "$WORKFLOW_POST_PROMPT" | grep -F "steps.claude_review.outputs.structured_output != ''" > /dev/null; then
+  pass "新 step の if 条件に steps.claude_review.outputs.structured_output != '' が含まれる（Issue #164 fix、schema validated 応答経路）"
+else
+  fail "新 step の if 条件に steps.claude_review.outputs.structured_output != '' が含まれない（Issue #164 fix、Claude 応答空時の安全な skip 経路）"
+fi
+
+# 2-ter. 新 step の env に STRUCTURED_OUTPUT が含まれる（Issue #164 fix）
+if echo "$WORKFLOW_POST_PROMPT" | grep -E 'STRUCTURED_OUTPUT:[[:space:]]*\$\{\{[[:space:]]*steps\.claude_review\.outputs\.structured_output[[:space:]]*\}\}' > /dev/null; then
+  pass "新 step の env に STRUCTURED_OUTPUT が steps.claude_review.outputs.structured_output から渡されている（Issue #164 fix）"
+else
+  fail "新 step の env に STRUCTURED_OUTPUT が渡されていない（Issue #164 fix、run ブロックで参照するため env 受け渡しが必須）"
+fi
+
+# 2-quater. 新 step が ${RUNNER_TEMP} 経由でペイロードをファイル化する（Issue #164 fix）
+# $GITHUB_WORKSPACE（actions/checkout 管理領域）から退避するため
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '${RUNNER_TEMP}/vibehawk-review.json' > /dev/null \
+   && echo "$WORKFLOW_POST_PROMPT" | grep -F "printf '%s' \"\$STRUCTURED_OUTPUT\"" > /dev/null; then
+  pass "新 step が \${RUNNER_TEMP} に printf '%s' \"\$STRUCTURED_OUTPUT\" で書き出す（Issue #164 fix、決定論的書き出し + 特殊文字保護）"
+else
+  fail "新 step が \${RUNNER_TEMP} 経由 printf 書き出しを行っていない（Issue #164 fix、echo 系の特殊文字破壊を回避するため printf '%s' が必須）"
 fi
 
 # 3. 新 step が App Installation Token（steps.app-token.outputs.token）を使う
@@ -680,7 +787,7 @@ else
 fi
 
 # 5. 新 step が JSON 必須キー検証（event / body / commit_id / comments(array)）を行う
-# Claude が壊れた JSON を書き出した場合に POST する前に check して step を skip する経路
+# claude-code-action 内 schema validation の二重防御として workflow step 側も jq 契約検証する
 # PR #153 CodeRabbit 追加 Major 指摘対応で検証を強化済み:
 # event 値が APPROVE/REQUEST_CHANGES/COMMENT のいずれかに限定、body/commit_id 非空、
 # comments[] の path/body 非空、line/side/start_line/start_side の型整合を jq で検証する。
@@ -689,9 +796,26 @@ if echo "$WORKFLOW_POST_PROMPT" | grep -F 'jq -e' > /dev/null \
    && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "REQUEST_CHANGES"' > /dev/null \
    && echo "$WORKFLOW_POST_PROMPT" | grep -F '.event == "COMMENT"' > /dev/null \
    && echo "$WORKFLOW_POST_PROMPT" | grep -F '(.comments | type == "array")' > /dev/null; then
-  pass "新 step が GitHub Reviews API 契約に厳格な JSON 検証を行う（event 値限定 + body/commit_id 非空 + comments[] shape、Issue #152 fix + PR #153 強化）"
+  pass "新 step が GitHub Reviews API 契約に厳格な JSON 検証を行う（event 値限定 + body/commit_id 非空 + comments[] shape、Issue #152 fix + PR #153 強化 + Issue #164 fix で schema validation の二重防御）"
 else
   fail "新 step の JSON 検証が GitHub Reviews API 契約に従っていない（event 値の APPROVE/REQUEST_CHANGES/COMMENT 限定 + comments[] shape 検証が必須、PR #153 CodeRabbit Major 指摘）"
+fi
+
+# 5-bis. 新 step の warning メッセージから "vibehawk-review.json" の表記が撤去されている（Issue #164 fix）
+# 旧 warning は "vibehawk-review.json の検証に失敗" と書かれており、ファイル書き出し依存の誤誘導を招く。
+# Issue #164 fix で「outputs.structured_output の jq 契約検証に失敗」に書き換える。
+# 注意: warning メッセージ行（echo "::warning::..."）に限定して検証する（コメント行や run の他行は許容）。
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '::warning::vibehawk' | grep -F 'vibehawk-review.json の検証に失敗' > /dev/null; then
+  fail "新 step の warning メッセージに旧表記 'vibehawk-review.json の検証に失敗' が残っている（Issue #164 fix、利用者が ファイル書き出し失敗 と誤解する誘導を招く）"
+else
+  pass "新 step の warning メッセージから 'vibehawk-review.json の検証に失敗' 表記が撤去されている（Issue #164 fix、誤誘導防止）"
+fi
+
+# 5-ter. 新 step の warning メッセージに新表記 "outputs.structured_output の jq 契約検証に失敗" が含まれる（Issue #164 fix）
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '::warning::vibehawk' | grep -F 'outputs.structured_output の jq 契約検証に失敗' > /dev/null; then
+  pass "新 step の warning メッセージが 'outputs.structured_output の jq 契約検証に失敗' に書き換えられている（Issue #164 fix、正しい根拠表記）"
+else
+  fail "新 step の warning メッセージに新表記 'outputs.structured_output の jq 契約検証に失敗' が含まれない（Issue #164 fix）"
 fi
 
 # 6. prompt から `gh api -X POST repos/.../pulls/.../reviews` の直接実行サンプルが削除されている
@@ -705,20 +829,55 @@ else
   pass "prompt 内に bundled review POST 実行サンプルが残っていない（Issue #152 fix、workflow step に移管済み）"
 fi
 
-# 7. prompt に「vibehawk-review.json を書き出す」指示が含まれる
-# Claude のタスク完了条件が JSON 書き出しまでであることを明示
-if echo "$WORKFLOW_PROMPT" | grep -F 'vibehawk-review.json' > /dev/null; then
-  pass "prompt に vibehawk-review.json 書き出し指示が含まれる（Issue #152 fix、Claude のタスク完了条件）"
+# 7. prompt に「schema 適合 JSON を最終 assistant message として返す」指示が含まれる（Issue #164 fix）
+# 旧テスト（vibehawk-review.json 書き出し指示が含まれる）を **反転**：書き出し指示は撤廃済みで、
+# 新タスク完了条件は「最終 assistant message として schema 適合 JSON を返す」こと。
+if echo "$WORKFLOW_PROMPT" | grep -F 'schema 適合 JSON' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F '最終 assistant message' > /dev/null; then
+  pass "prompt に「schema 適合 JSON を最終 assistant message として返す」指示が含まれる（Issue #164 fix、新タスク完了条件）"
 else
-  fail "prompt に vibehawk-review.json 書き出し指示が含まれない（Issue #152 fix、Claude が POST 直接実行に戻ってしまう）"
+  fail "prompt に schema 適合 JSON / 最終 assistant message の指示が含まれない（Issue #164 fix、Claude が旧経路に戻ってしまう）"
 fi
 
-# 8. prompt の「絶対禁止」リストに Issue #152 の bundled review POST 禁止が明示されている
-# LLM の試し打ちを構造的に防止するため、明示的に禁止を書く必要がある
+# 7-bis. prompt の「絶対禁止」セクションでファイル書き出し全般を禁止していることを検証（Issue #164 fix）
+# 旧設計では vibehawk-review.json の書き出しがタスク完了条件だったが、Issue #164 fix で「絶対禁止」に移行
+if echo "$WORKFLOW_PROMPT" | grep -F 'ファイル書き出し' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'Issue #164 fix' > /dev/null; then
+  pass "prompt の絶対禁止にファイル書き出し全般が含まれ Issue #164 fix の根拠が明示されている（schema 外経路の構造的廃止）"
+else
+  fail "prompt の絶対禁止にファイル書き出し全般 / Issue #164 fix の言及が含まれない（Claude が旧経路に戻ってしまう）"
+fi
+
+# 8. prompt の「絶対禁止」リストに Issue #152 の bundled review POST 禁止と Issue #164 fix の根拠が明示されている
+# LLM の試し打ちを構造的に防止するため、明示的に禁止を書く必要がある（Issue #152 言及は歴史的経緯として維持）
 if echo "$WORKFLOW_PROMPT" | grep -F 'Issue #152' > /dev/null; then
   pass "prompt に Issue #152 fix の言及が含まれる（bundled review POST 禁止の根拠を明示）"
 else
   fail "prompt に Issue #152 fix の言及が含まれない（bundled review POST 禁止の根拠が示されていない）"
+fi
+
+# 8-bis. claude-code-action step に id: claude_review が宣言されている（Issue #164 fix）
+# 後続の bundled POST step が steps.claude_review.outputs.structured_output を参照するために必須
+if grep -E "^[[:space:]]+id:[[:space:]]*claude_review[[:space:]]*\$" "$WORKFLOW" > /dev/null; then
+  pass "claude-code-action step に id: claude_review が宣言されている（Issue #164 fix、outputs 参照用）"
+else
+  fail "claude-code-action step に id: claude_review が宣言されていない（Issue #164 fix、後続 step の outputs 参照に必須）"
+fi
+
+# 8-ter. claude_args に --json-schema が含まれる（Issue #164 fix）
+# Claude の最終応答を JSON schema で validate するための公式機能
+if echo "$WORKFLOW_POST_PROMPT" | grep -F -- '--json-schema' > /dev/null; then
+  pass "claude_args に --json-schema が含まれる（Issue #164 fix、schema validated 応答の公式機能）"
+else
+  fail "claude_args に --json-schema が含まれない（Issue #164 fix、schema 強制が無いと Claude 応答の構造が保証されない）"
+fi
+
+# 8-quater. --json-schema に APPROVE/REQUEST_CHANGES/COMMENT の 3 値 enum が含まれる（Issue #164 fix）
+# event の値域を機械的に強制し、REQUEST_CHANGES / COMMENT ケースの存続を schema レベルで保証する
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '"enum":["APPROVE","REQUEST_CHANGES","COMMENT"]' > /dev/null; then
+  pass "--json-schema に event の enum [APPROVE,REQUEST_CHANGES,COMMENT] が含まれる（Issue #164 fix、event 値域の機械的強制 + 全 3 ケース存続保証）"
+else
+  fail "--json-schema に event の enum [APPROVE,REQUEST_CHANGES,COMMENT] が含まれない（Issue #164 fix、event 値域の機械的強制 + REQUEST_CHANGES/COMMENT 存続保証に必須）"
 fi
 
 # Issue #65: paths-ignore による推奨ノイズ抑制設定
@@ -736,10 +895,8 @@ else
   fail "paths-ignore: ブロックが存在しない（Issue #65、推奨ノイズ抑制設定の前提）"
 fi
 
-# 2. 推奨 7 パターン全てが含まれる
+# 2. 推奨 5 パターン全てが含まれる（Issue #65 → Issue #160 で `**/*.md` / `CHANGELOG*` を撤回）
 declare -a required_path_patterns=(
-  "'**/*.md'"
-  "'CHANGELOG*'"
   "'.github/dependabot.yml'"
   "'package-lock.json'"
   "'yarn.lock'"
@@ -761,6 +918,302 @@ if grep -F "編集" "$WORKFLOW" > /dev/null && \
   pass "paths-ignore に利用者向け編集可能コメントが含まれる（Issue #65 受け入れ条件 #2）"
 else
   fail "paths-ignore に利用者向け編集可能コメントが含まれない（Issue #65 受け入れ条件 #2）"
+fi
+
+# Issue #166: event 判定ロジックを Claude prompt から workflow step に移管
+# 旧設計（Issue #121）では Claude が prompt 内で severity 分布カウント + reviewThreads
+# の unresolved 数取得 + 判定ルールを実行して JSON の event フィールドに書き込んでいた。
+# これは Claude の確率的応答に依存しており、判定ミス・形式破りの余地が残っていた。
+# Issue #166 で同じ判定ロジックを workflow step (decide_event) で決定論的に再実装し、
+# bundled POST step が decide_event の出力で Claude の event フィールドを上書きする。
+
+# 1. 新 step「vibehawk event を決定」が存在する（Issue #166）
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'vibehawk event を決定' > /dev/null; then
+  pass "新 step「vibehawk event を決定」が存在する（Issue #166）"
+else
+  fail "新 step「vibehawk event を決定」が存在しない（Issue #166、event 判定の workflow step 移管が前提）"
+fi
+
+# 2. decide_event step に id: decide_event が宣言されている（後続 bundled POST step が steps.decide_event.outputs.decided_event を参照するために必須）
+if grep -E "^[[:space:]]+id:[[:space:]]*decide_event[[:space:]]*\$" "$WORKFLOW" > /dev/null; then
+  pass "decide_event step に id: decide_event が宣言されている（Issue #166、outputs 参照用）"
+else
+  fail "decide_event step に id: decide_event が宣言されていない（Issue #166、bundled POST step の outputs 参照に必須）"
+fi
+
+# 3. decide_event step が claude-code-action と bundled POST の間に配置されている
+# 順序: claude_review → decide_event → bundled POST
+# step header（`- name: ...`）の行番号で配置順を比較する。
+# 注意: prompt 本文内にも step 名のテキスト言及があるため、`grep -n '- name: vibehawk bundled review を post'`
+# のように step header の YAML 構造を含む完全形で検索する必要がある。
+claude_review_line=$(grep -n 'id: claude_review' "$WORKFLOW" | head -1 | cut -d: -f1)
+decide_event_line=$(grep -n '^[[:space:]]\+id:[[:space:]]*decide_event[[:space:]]*$' "$WORKFLOW" | head -1 | cut -d: -f1)
+bundled_post_line=$(grep -n '^[[:space:]]\+- name: vibehawk bundled review を post' "$WORKFLOW" | head -1 | cut -d: -f1)
+if [[ -n "$claude_review_line" && -n "$decide_event_line" && -n "$bundled_post_line" ]] \
+   && [[ "$claude_review_line" -lt "$decide_event_line" ]] \
+   && [[ "$decide_event_line" -lt "$bundled_post_line" ]]; then
+  pass "decide_event step が claude_review と bundled POST の間に配置されている（Issue #166、Claude 応答 → 判定 → POST の順序）"
+else
+  fail "decide_event step の配置順が想定外（claude_review=${claude_review_line:-N/A} / decide_event=${decide_event_line:-N/A} / bundled_post=${bundled_post_line:-N/A}、Issue #166）"
+fi
+
+# 4. decide_event step が check_secrets ガードと structured_output 非空ガードを継承
+# 後続の bundled POST と同じ if 条件を使うことで、Claude 応答が無い場合に skip する
+if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F "steps.check_secrets.outputs.ready == 'true'" > /dev/null \
+   && awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F "steps.claude_review.outputs.structured_output != ''" > /dev/null; then
+  pass "decide_event step が check_secrets.ready + structured_output 非空の二重ガードを継承（Issue #166、Claude 応答無し時の安全 skip）"
+else
+  fail "decide_event step のガード条件が想定外（Issue #166、check_secrets.ready + structured_output != '' の両方が必須）"
+fi
+
+# 5. decide_event step が GraphQL reviewThreads クエリを呼ぶ
+# auto_resolve mutation 後の最新 unresolved 状態を取得するため必須
+if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'gh api graphql' > /dev/null \
+   && awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'reviewThreads' > /dev/null \
+   && awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'isResolved' > /dev/null; then
+  pass "decide_event step が gh api graphql で reviewThreads.isResolved を取得（Issue #166）"
+else
+  fail "decide_event step が GraphQL reviewThreads クエリを呼んでいない（Issue #166、unresolved 数の決定論的取得に必須）"
+fi
+
+# 6. decide_event step が jq で comments[] の総件数を集計（Issue #171: severity 不問・件数主軸）
+# 旧実装（Issue #166）では body 冒頭絵文字（🔴 / 🟠）で Critical/Major のみカウントしていたが、
+# Issue #171 で severity 不問の総件数判定に変更したため、jq 式は `[.comments[]?] | length` 形式
+# になる。startswith() による severity フィルタは含まれない。
+if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F '[.comments[]?] | length' > /dev/null; then
+  pass "decide_event step が jq で comments[] の総件数を集計（Issue #171、severity 不問）"
+else
+  fail "decide_event step が comments[] の総件数集計を行っていない（Issue #171、severity 不問の件数主軸ルールに必須）"
+fi
+
+# 6-bis. Issue #171 で旧 startswith("🔴") / startswith("🟠") の severity フィルタが撤去されている
+# severity 別カウントは判定に使わない設計に変更（severity 不問・件数主軸）
+if awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'startswith("🔴")' > /dev/null \
+   || awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'startswith("🟠")' > /dev/null; then
+  fail "decide_event step に旧 severity フィルタ（startswith(\"🔴\") / startswith(\"🟠\")）が残っている（Issue #171、severity 不問・件数主軸に変更したため撤去すべき）"
+else
+  pass "decide_event step から旧 severity フィルタが撤去されている（Issue #171）"
+fi
+
+# 7. decide_event step が判定ルール 3 段階を実装（Issue #171: severity 不問・件数主軸）
+# - unresolved >= 1 → REQUEST_CHANGES（最優先）
+# - 新規 inline 指摘の総件数 >= 1 → REQUEST_CHANGES（severity 不問、Issue #171）
+# - それ以外 → APPROVE
+decide_block="$(awk '/id:[[:space:]]*decide_event/,/^[[:space:]]+- name:/' "$WORKFLOW")"
+if echo "$decide_block" | grep -F 'unresolved_count' > /dev/null \
+   && echo "$decide_block" | grep -F 'new_comments_count' > /dev/null \
+   && echo "$decide_block" | grep -F 'decided_event="REQUEST_CHANGES"' > /dev/null \
+   && echo "$decide_block" | grep -F 'decided_event="APPROVE"' > /dev/null; then
+  pass "decide_event step が判定ルール 3 段階（unresolved + 新規総件数 → REQUEST_CHANGES / それ以外 → APPROVE）を実装（Issue #171: severity 不問・件数主軸）"
+else
+  fail "decide_event step の判定ルール実装が想定外（Issue #171、unresolved_count + new_comments_count + 3 段階判定が必須）"
+fi
+
+# 8. decide_event step が decided_event を GITHUB_OUTPUT に出力
+if echo "$decide_block" | grep -E 'echo "decided_event=' > /dev/null; then
+  pass "decide_event step が decided_event を GITHUB_OUTPUT に出力（Issue #166）"
+else
+  fail "decide_event step が decided_event を GITHUB_OUTPUT に出力していない（Issue #166、bundled POST step が参照できない）"
+fi
+
+# 9. bundled POST step の env に DECIDED_EVENT が含まれる
+# steps.decide_event.outputs.decided_event を run ブロックで参照するため env 受け渡しが必須
+# 注意: awk の範囲指定は step header（`- name: vibehawk bundled review を post`）から
+# 次の step header（status check post）まで。prompt 本文内の text 言及を拾わないように
+# `^[[:space:]]+- name:` の YAML 構造で範囲を切る。
+bundled_block="$(awk '/^[[:space:]]+- name: vibehawk bundled review を post/,/^[[:space:]]+- name: vibehawk status check/' "$WORKFLOW")"
+if echo "$bundled_block" | grep -E 'DECIDED_EVENT:[[:space:]]*\$\{\{[[:space:]]*steps\.decide_event\.outputs\.decided_event[[:space:]]*\}\}' > /dev/null; then
+  pass "bundled POST step の env に DECIDED_EVENT が steps.decide_event.outputs.decided_event から渡されている（Issue #166）"
+else
+  fail "bundled POST step の env に DECIDED_EVENT が渡されていない（Issue #166、event 上書きに必須）"
+fi
+
+# 10. bundled POST step が jq で .event を $DECIDED_EVENT に上書きする
+if echo "$bundled_block" | grep -F "jq --arg ev" > /dev/null \
+   && echo "$bundled_block" | grep -F '.event = $ev' > /dev/null; then
+  pass "bundled POST step が jq --arg ev '\$DECIDED_EVENT' '.event = \$ev' で event を上書きする（Issue #166）"
+else
+  fail "bundled POST step が jq による event 上書きを行っていない（Issue #166、決定論的 event 注入が前提）"
+fi
+
+# 11. bundled POST step が DECIDED_EVENT 空時の safe skip を実装
+# `grep -F '-z'` は `-z` を flag と解釈するため `grep -F -- '-z'` で明示的に区切る
+if echo "$bundled_block" | grep -F 'DECIDED_EVENT' | grep -F -- '-z' > /dev/null; then
+  pass "bundled POST step が DECIDED_EVENT 空時の safe skip を実装（Issue #166）"
+else
+  fail "bundled POST step が DECIDED_EVENT 空時の safe skip を実装していない（Issue #166、decide_event 失敗時の防御）"
+fi
+
+# 12. Claude prompt から旧 event 判定セクション「## review event 決定（auto_resolve 後の unresolved 数 + 新規 inline の severity で）」が撤廃されている
+# 旧見出しの正確な文字列が prompt 内に残っていないことを検証（書き換え後の Issue #166 見出しは「Issue #166 で workflow step に移管」を含む）
+if echo "$WORKFLOW_PROMPT" | grep -F '## review event 決定（auto_resolve 後の unresolved 数 + 新規 inline の severity で）' > /dev/null; then
+  fail "Claude prompt に旧 event 判定セクション見出しが残っている（Issue #166、workflow step 移管が前提）"
+else
+  pass "Claude prompt から旧 event 判定セクション見出しが撤廃されている（Issue #166）"
+fi
+
+# 13. Claude prompt に「event 判定は workflow step に移管」と Issue #166 の言及が含まれる
+if echo "$WORKFLOW_PROMPT" | grep -F 'Issue #166' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'workflow step' > /dev/null; then
+  pass "Claude prompt に Issue #166 の言及と workflow step 移管の説明が含まれる（Issue #166）"
+else
+  fail "Claude prompt に Issue #166 / workflow step 移管の言及が含まれない（Issue #166、Claude が旧経路に戻ってしまう）"
+fi
+
+# 14. Claude prompt が event placeholder として COMMENT 固定を指示
+if echo "$WORKFLOW_PROMPT" | grep -F 'placeholder' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'COMMENT' > /dev/null; then
+  pass "Claude prompt が event placeholder として COMMENT 固定を指示（Issue #166）"
+else
+  fail "Claude prompt が event placeholder 規約（COMMENT 固定）を指示していない（Issue #166）"
+fi
+
+# 15. Claude prompt のタスク完了条件から「event を決定」項目が削除されている
+# 旧設計では「2. event を決定（APPROVE / REQUEST_CHANGES / COMMENT）」がタスク完了条件に含まれていたが、
+# Issue #166 で workflow step に移管したため Claude のタスクからは外れる
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]*2\. event を決定' > /dev/null; then
+  fail "Claude prompt のタスク完了条件に旧「event を決定」項目が残っている（Issue #166、workflow step 移管で外すべき）"
+else
+  pass "Claude prompt のタスク完了条件から「event を決定」項目が削除されている（Issue #166）"
+fi
+
+# Issue #167: auto_resolve を Claude prompt から workflow step に移管
+# 旧設計（Issue #9）では Claude が prompt 内で `gh api graphql resolveReviewThread`
+# mutation を直接実行していた。Issue #164（structured_output 経路の確立） /
+# Issue #166（event 判定の workflow 移管）に続く責務分離の完成形として workflow step
+# に移管し、Claude は解決対象 thread の node_id を `resolved_thread_ids: [string]`
+# 配列に列挙するだけになる。
+
+# 1. --json-schema に resolved_thread_ids: array<string> が含まれる
+if echo "$WORKFLOW_POST_PROMPT" | grep -F '"resolved_thread_ids":{"type":"array","items":{"type":"string"}}' > /dev/null; then
+  pass "--json-schema に resolved_thread_ids (array of string) が含まれる（Issue #167、解決対象 thread_id を schema 経路で受け取る）"
+else
+  fail "--json-schema に resolved_thread_ids (array of string) が含まれない（Issue #167、workflow step 移管に必須）"
+fi
+
+# 2. 新 step「vibehawk auto_resolve」が存在する
+if echo "$WORKFLOW_POST_PROMPT" | grep -F 'vibehawk auto_resolve' > /dev/null; then
+  pass "新 step「vibehawk auto_resolve」が存在する（Issue #167）"
+else
+  fail "新 step「vibehawk auto_resolve」が存在しない（Issue #167、auto_resolve の workflow step 移管が前提）"
+fi
+
+# 3. auto_resolve step に id: auto_resolve が宣言されている
+if grep -E "^[[:space:]]+id:[[:space:]]*auto_resolve[[:space:]]*\$" "$WORKFLOW" > /dev/null; then
+  pass "auto_resolve step に id: auto_resolve が宣言されている（Issue #167）"
+else
+  fail "auto_resolve step に id: auto_resolve が宣言されていない（Issue #167）"
+fi
+
+# 4. auto_resolve step が claude_review と decide_event の間に配置されている
+# 順序: claude_review → auto_resolve → decide_event → bundled POST → status check
+# decide_event が GraphQL で unresolved 数を取得するため、auto_resolve mutation を
+# decide_event の前に走らせる必要がある（旧 Claude prompt 内実装と同じ順序）。
+auto_resolve_line=$(grep -n '^[[:space:]]\+id:[[:space:]]*auto_resolve[[:space:]]*$' "$WORKFLOW" | head -1 | cut -d: -f1)
+if [[ -n "$claude_review_line" && -n "$auto_resolve_line" && -n "$decide_event_line" ]] \
+   && [[ "$claude_review_line" -lt "$auto_resolve_line" ]] \
+   && [[ "$auto_resolve_line" -lt "$decide_event_line" ]]; then
+  pass "auto_resolve step が claude_review と decide_event の間に配置されている（Issue #167、Claude 応答 → mutation → event 判定の順序）"
+else
+  fail "auto_resolve step の配置順が想定外（claude_review=${claude_review_line:-N/A} / auto_resolve=${auto_resolve_line:-N/A} / decide_event=${decide_event_line:-N/A}、Issue #167）"
+fi
+
+# 5. auto_resolve step が check_secrets.ready + structured_output 非空の二重ガードを継承
+if awk '/id:[[:space:]]*auto_resolve/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F "steps.check_secrets.outputs.ready == 'true'" > /dev/null \
+   && awk '/id:[[:space:]]*auto_resolve/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F "steps.claude_review.outputs.structured_output != ''" > /dev/null; then
+  pass "auto_resolve step が check_secrets.ready + structured_output 非空の二重ガードを継承（Issue #167）"
+else
+  fail "auto_resolve step のガード条件が想定外（Issue #167、check_secrets.ready + structured_output != '' の両方が必須）"
+fi
+
+# 6. auto_resolve step が gh api graphql + resolveReviewThread mutation を呼ぶ
+# scripts/ci/vibehawk-review/auto-resolve.sh の中身が wrapper-call 展開されて含まれる
+if awk '/id:[[:space:]]*auto_resolve/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'gh api graphql' > /dev/null \
+   && awk '/id:[[:space:]]*auto_resolve/,/^[[:space:]]+- name:/' "$WORKFLOW" \
+   | grep -F 'resolveReviewThread' > /dev/null; then
+  pass "auto_resolve step が gh api graphql で resolveReviewThread mutation を呼ぶ（Issue #167、workflow step 内で副作用実行）"
+else
+  fail "auto_resolve step が gh api graphql resolveReviewThread mutation を呼んでいない（Issue #167、Claude prompt からの移管先）"
+fi
+
+# 7. auto_resolve step の env に STRUCTURED_OUTPUT / OWNER / REPO / PR_NUMBER が含まれる
+auto_resolve_block="$(awk '/^[[:space:]]+- name: vibehawk auto_resolve/,/^[[:space:]]+- name: vibehawk event を決定/' "$WORKFLOW")"
+if echo "$auto_resolve_block" | grep -E 'STRUCTURED_OUTPUT:[[:space:]]*\$\{\{[[:space:]]*steps\.claude_review\.outputs\.structured_output[[:space:]]*\}\}' > /dev/null \
+   && echo "$auto_resolve_block" | grep -E 'OWNER:[[:space:]]*\$\{\{[[:space:]]*github\.repository_owner[[:space:]]*\}\}' > /dev/null \
+   && echo "$auto_resolve_block" | grep -E 'REPO:[[:space:]]*\$\{\{[[:space:]]*github\.repository[[:space:]]*\}\}' > /dev/null \
+   && echo "$auto_resolve_block" | grep -E 'PR_NUMBER:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.number[[:space:]]*\}\}' > /dev/null; then
+  pass "auto_resolve step の env に STRUCTURED_OUTPUT / OWNER / REPO / PR_NUMBER が含まれる（Issue #167、二重防御の author 検証に必須）"
+else
+  fail "auto_resolve step の env が不足（Issue #167、STRUCTURED_OUTPUT / OWNER / REPO / PR_NUMBER の 4 つが必須）"
+fi
+
+# 8. auto_resolve step が App Installation Token (steps.app-token.outputs.token) を使う
+# bot 名義 vibehawk-for-<owner>[bot] による mutation を実行するため必須
+if echo "$auto_resolve_block" | grep -E 'GH_TOKEN:[[:space:]]*\$\{\{[[:space:]]*steps\.app-token\.outputs\.token[[:space:]]*\}\}' > /dev/null; then
+  pass "auto_resolve step が App Installation Token (steps.app-token.outputs.token) を使う（Issue #167、bot 名義 mutation 実行）"
+else
+  fail "auto_resolve step が App Installation Token を使っていない（Issue #167、vibehawk-for-<owner>[bot] 名義 mutation に必須）"
+fi
+
+# 9. Claude prompt から旧 mutation 実行サンプル (gh api graphql -f query='mutation { resolveReviewThread...) が削除されている
+# 旧設計では prompt 内のコードフェンスで mutation 実行例が示されていたが、Issue #167 で削除する。
+# 「絶対禁止」セクション内の「mutation を実行しない」記述は許可（実行コマンド形式ではない）。
+# 検出は「mutation { resolveReviewThread」（コードフェンス内の実行サンプル形式）のパターン。
+if echo "$WORKFLOW_PROMPT" | grep -F 'mutation { resolveReviewThread(input: { threadId' > /dev/null; then
+  fail "Claude prompt に旧 mutation 実行サンプル (mutation { resolveReviewThread(input: { threadId) が残っている（Issue #167、workflow step 移管で削除すべき）"
+else
+  pass "Claude prompt から旧 mutation 実行サンプルが削除されている（Issue #167）"
+fi
+
+# 10. Claude prompt に resolved_thread_ids の言及と Issue #167 の言及が含まれる
+if echo "$WORKFLOW_PROMPT" | grep -F 'resolved_thread_ids' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'Issue #167' > /dev/null; then
+  pass "Claude prompt に resolved_thread_ids / Issue #167 の言及が含まれる（Issue #167、workflow step 移管の根拠を明示）"
+else
+  fail "Claude prompt に resolved_thread_ids / Issue #167 の言及が含まれない（Issue #167、Claude が旧経路に戻ってしまう）"
+fi
+
+# 11. Claude prompt の「絶対禁止」リストに resolveReviewThread mutation の prompt 内実行禁止が含まれる
+# LLM の試し打ちを構造的に防止するため、明示的に禁止を書く必要がある
+if echo "$WORKFLOW_PROMPT" | grep -F '絶対禁止' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'resolveReviewThread' > /dev/null \
+   && echo "$WORKFLOW_PROMPT" | grep -F 'mutation' > /dev/null; then
+  pass "Claude prompt の絶対禁止に resolveReviewThread mutation / gh api graphql mutation 系の prompt 内実行禁止が含まれる（Issue #167）"
+else
+  fail "Claude prompt の絶対禁止に resolveReviewThread mutation 禁止が含まれない（Issue #167、Claude の試し打ち防止に必須）"
+fi
+
+# 12. Claude prompt のタスク完了条件 1 が「resolved_thread_ids に列挙」に書き換えられている
+# 旧: 「（INCREMENTAL_MODE=true なら）auto_resolve で旧指摘を resolved 化」
+# 新: 「（INCREMENTAL_MODE=true なら）解決対象 thread の GraphQL node_id を `resolved_thread_ids` に列挙」
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]*1\.' | grep -F 'auto_resolve で旧指摘を resolved 化' > /dev/null; then
+  fail "Claude prompt のタスク完了条件 1 に旧記述「auto_resolve で旧指摘を resolved 化」が残っている（Issue #167、resolved_thread_ids 列挙に書き換えるべき）"
+else
+  pass "Claude prompt のタスク完了条件 1 から旧記述「auto_resolve で旧指摘を resolved 化」が削除されている（Issue #167）"
+fi
+if echo "$WORKFLOW_PROMPT" | grep -E '^[[:space:]]*1\.' | grep -F 'resolved_thread_ids' > /dev/null; then
+  pass "Claude prompt のタスク完了条件 1 が「resolved_thread_ids に列挙」に書き換えられている（Issue #167）"
+else
+  fail "Claude prompt のタスク完了条件 1 に resolved_thread_ids の言及がない（Issue #167、新タスク完了条件として必須）"
+fi
+
+# 13. 旧「補足: 本 prompt で唯一許可される POST は resolveReviewThread mutation のみ」表記が削除されている
+# Issue #167 で mutation も workflow step に移管したため、この補足記述は不要になる
+if echo "$WORKFLOW_PROMPT" | grep -F '本 prompt で唯一許可される POST' > /dev/null; then
+  fail "Claude prompt に旧記述「本 prompt で唯一許可される POST は resolveReviewThread mutation のみ」が残っている（Issue #167、mutation も移管したため削除すべき）"
+else
+  pass "Claude prompt から旧記述「本 prompt で唯一許可される POST は resolveReviewThread mutation のみ」が削除されている（Issue #167）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

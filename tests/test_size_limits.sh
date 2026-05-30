@@ -20,7 +20,6 @@ fail() {
   FAILED=$((FAILED + 1))
 }
 
-# vibehawk_config ステップの depth 決定ロジックを再現
 calc_depth() {
   local fc="$1"
   local full="${2:-30}"
@@ -40,7 +39,6 @@ calc_depth() {
 
 echo "=== デフォルト閾値 (30 / 80 / 3000) での depth 判定 ==="
 
-# full: < 30 ファイル
 for fc in 0 5 10 29; do
   result="$(calc_depth "$fc")"
   if [[ "$result" == "full" ]]; then
@@ -50,7 +48,6 @@ for fc in 0 5 10 29; do
   fi
 done
 
-# focused: 30 ≤ < 80
 for fc in 30 50 79; do
   result="$(calc_depth "$fc")"
   if [[ "$result" == "focused" ]]; then
@@ -60,7 +57,6 @@ for fc in 30 50 79; do
   fi
 done
 
-# lightweight: 80 ≤ < 3000
 for fc in 80 100 1000 2999; do
   result="$(calc_depth "$fc")"
   if [[ "$result" == "lightweight" ]]; then
@@ -70,7 +66,6 @@ for fc in 80 100 1000 2999; do
   fi
 done
 
-# summary_only: ≥ 3000
 for fc in 3000 5000 100000; do
   result="$(calc_depth "$fc")"
   if [[ "$result" == "summary_only" ]]; then
@@ -82,7 +77,6 @@ done
 
 echo "=== カスタム閾値（.vibehawk.yaml で上書き） ==="
 
-# カスタム閾値: full=10, focused=50, skip=200
 result="$(calc_depth 5 10 50 200)"
 if [[ "$result" == "full" ]]; then
   pass "カスタム閾値: 5 ファイル → full"

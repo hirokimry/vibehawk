@@ -1,6 +1,8 @@
 # claude-code-action SHA 更新履歴
 
-`anthropics/claude-code-action` の SHA pin 更新時の評価結果を記録する。記録ルールは [`docs/sha-update-policy.md`](sha-update-policy.md) を参照。
+> [!NOTE]
+> `anthropics/claude-code-action` の SHA pin 更新時の評価結果を記録する変更履歴。
+> 記録ルールは [`docs/sha-update-policy.md`](sha-update-policy.md) を参照。
 
 ## 記録フォーマット
 
@@ -39,13 +41,14 @@
 | PR URL | `https://github.com/hirokimry/vibehawk/pull/50` |
 | 利用者向け追加アクション | 不要 |
 
-備考: 本エントリは Issue #70 ポリシー策定時点で baseline として遡及記録したもの。今後の更新は本ポリシー（`docs/sha-update-policy.md`）に従って評価・追記する。
+備考: 本エントリは Issue #70 ポリシー策定時点で baseline として遡及記録したもの。
+今後の更新は本ポリシー（`docs/sha-update-policy.md`）に従って評価・追記する。
 
 ### 今後の更新
 
 （次回更新時に追記）
 
-## 関連
+## 🔗 関連
 
 - [`docs/sha-update-policy.md`](sha-update-policy.md): 評価フローの定義
 - [`docs/cost-analysis.md`](cost-analysis.md): Variable Costs（トークン消費影響）

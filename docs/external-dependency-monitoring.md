@@ -1,10 +1,19 @@
 # 外部依存リスク監視運用フロー
 
-vibehawk が依存する外部サービスの規約・利用条件変更を継続監視するための運用フロー。ポリシーの定義は [`docs/POLICY.md`](POLICY.md) の「外部依存リスク監視ポリシー」セクションを参照。
+> [!IMPORTANT]
+> 本フローは外部依存サービスの規約・利用条件変更を継続監視するための運用定義。
+> ポリシーの定義: [`docs/POLICY.md`](POLICY.md) の「外部依存リスク監視ポリシー」セクション参照。
 
 ## 目的
 
-vibehawk の Mission「レビューツールに追加課金が要らない世界をつくる」および Value 1「利用者の契約だけで、完結させる」は、Anthropic が Claude Pro / Max の OAuth ヘッドレス利用経路を維持し続けることを前提としている。当該経路の規約改定・有償化・Token 自動失効化、または Pro / Max の月額値上げが発生した場合、API Key 経路を意図的に切った設計のため、移行コストは利用者全員に波及する。本フローはこのリスクを早期検知して被害を最小化することを目的とする。
+vibehawk の Mission「レビューツールに追加課金が要らない世界をつくる」および Value 1「利用者の契約だけで、完結させる」は、Anthropic が Claude Pro / Max の OAuth ヘッドレス利用経路を維持し続けることを前提としている。
+
+当該経路に以下の変更が発生した場合、API Key 経路を意図的に切った設計のため、移行コストは利用者全員に波及する。
+
+- 規約改定・有償化・Token 自動失効化
+- Pro / Max の月額値上げ
+
+本フローはこのリスクを早期検知して被害を最小化することを目的とする。
 
 ## 監視対象
 
@@ -69,9 +78,13 @@ vibehawk の Mission「レビューツールに追加課金が要らない世界
 
 ## 配置の経緯
 
-本ファイルは Issue #64 の受け入れ条件「監視運用フローを `.claude/rules/` に追加（または既存 SM 役割定義に統合）」に対応するもの。vibehawk リポジトリの `.claude/rules/` には現時点で SM の役割定義ファイルが存在せず、また運用フローは vibehawk リポジトリ運営チーム全体（CEO / SM / CLO / CFO / CISO / CTO）が参照するドキュメントとして `docs/` 配下に置く方が経路として自然である。`docs/POLICY.md` および `docs/external-dependency-audit.md` から本フローを参照する形で運用整合性を担保する。
+本ファイルは Issue #64 の受け入れ条件「監視運用フローを `.claude/rules/` に追加（または既存 SM 役割定義に統合）」に対応するもの。
 
-## 関連
+- `.claude/rules/` には現時点で SM の役割定義ファイルが存在しない。
+- 運用フローは vibehawk リポジトリ運営チーム全体（CEO / SM / CLO / CFO / CISO / CTO）が参照するため `docs/` 配下に置く方が経路として自然。
+- `docs/POLICY.md` および `docs/external-dependency-audit.md` から本フローを参照する形で運用整合性を担保する。
+
+## 🔗 関連
 
 - ポリシー定義: [`docs/POLICY.md`](POLICY.md)（外部依存リスク監視ポリシー）
 - 監査履歴: [`docs/external-dependency-audit.md`](external-dependency-audit.md)

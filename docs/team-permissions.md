@@ -1,10 +1,14 @@
 # チームモードのパーミッション
 
+> [!NOTE]
+> 本ドキュメントは、チームモードでの承認負荷をどう下げるかの実用ガイド。
+> vibecorp は **承認フローに介入しない** 方針を取る。
+> 📍 方針の詳細: `docs/design-philosophy.md` の「承認フローへの非介入」
+
 ## 概要
 
-Agent Teams（`/vibecorp:ship-parallel` 等）でチームメイトを起動すると、Claude Code の既知バグ（[anthropics/claude-code#26479](https://github.com/anthropics/claude-code/issues/26479)）により `settings.local.json` の allow リストがチームメイトに継承されず、パーミッション確認が team lead に大量に飛ぶ。
-
-vibecorp は **承認フローに介入しない** 方針を取る。詳細は `docs/design-philosophy.md` の「承認フローへの非介入」を参照。このドキュメントは、チームモードでの承認負荷をどう下げるかの実用ガイドである。
+Agent Teams（`/vibecorp:ship-parallel` 等）でチームメイトを起動すると、Claude Code の既知バグにより `settings.local.json` の allow リストがチームメイトに継承されず、パーミッション確認が team lead に大量に飛ぶ。
+📍 既知バグ: [anthropics/claude-code#26479](https://github.com/anthropics/claude-code/issues/26479)
 
 ## vibecorp のスタンス
 
@@ -16,7 +20,8 @@ vibecorp は **承認フローに介入しない** 方針を取る。詳細は `
 
 ### 推奨: sandbox + `--dangerously-skip-permissions`
 
-full プリセットで sandbox を有効化した状態で `claude --dangerously-skip-permissions` を使うと承認ダイアログが発生しない。vibecorp の公式サポート範囲はこの組み合わせ。
+full プリセットで sandbox を有効化した状態で `claude --dangerously-skip-permissions` を使うと承認ダイアログが発生しない。
+vibecorp の公式サポート範囲はこの組み合わせ。
 
 ```bash
 # 例: ship-parallel から teammate を起動する場合
@@ -29,7 +34,8 @@ claude -p --permission-mode dontAsk --dangerously-skip-permissions --verbose "/v
 
 ### 自己調整オプション: `.claude/settings.local.json` の allow リスト
 
-sandbox を使わないユーザーは、`.claude/settings.local.json` の `permissions.allow` に使用するコマンドを列挙することで承認ダイアログを減らせる。ただしチームメイトへの継承バグ（#26479）があるため、teammate 側にも同等の設定を配る必要がある。
+sandbox を使わないユーザーは、`.claude/settings.local.json` の `permissions.allow` に使用するコマンドを列挙することで承認ダイアログを減らせる。
+ただしチームメイトへの継承バグ（#26479）があるため、teammate 側にも同等の設定を配る必要がある。
 
 ```json
 {
@@ -79,6 +85,12 @@ Claude Code のパーミッション制御は **3つの独立したレイヤー*
 
 ## 今後の見通し
 
-- `--enable-auto-mode` のチームモード統合が進めば、承認フローの扱いが大きく変わる可能性がある
-- `settings.local.json` の継承バグが修正されれば、並列実行の承認負荷は自然に解消する
-- [Agent Teams Documentation](https://code.claude.com/docs/en/agent-teams) を定期的に確認すること
+- `--enable-auto-mode` のチームモード統合が進めば、承認フローの扱いが大きく変わる可能性がある。
+- `settings.local.json` の継承バグが修正されれば、並列実行の承認負荷は自然に解消する。
+- [Agent Teams Documentation](https://code.claude.com/docs/en/agent-teams) を定期的に確認すること。
+
+## 🔗 関連
+
+- `docs/design-philosophy.md`: 承認フローへの非介入方針
+- [anthropics/claude-code#26479](https://github.com/anthropics/claude-code/issues/26479): settings.local.json 継承バグ（OPEN）
+- [Agent Teams Documentation](https://code.claude.com/docs/en/agent-teams): Agent Teams 公式仕様

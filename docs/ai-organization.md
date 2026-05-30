@@ -1,14 +1,15 @@
 # vibehawk AI 組織運用
 
-> このドキュメントは AI エージェントによる組織運用の方針を定義する Source of Truth です。
+> [!IMPORTANT]
+> このドキュメントは AI エージェントによる組織運用の方針を定義する Source of Truth。
 
 ## 基本思想
 
 AI エージェントチームがプロダクト開発のあらゆる側面を担い、人間はオーナーとして意思決定に集中する。
 
-- プロダクト開発のあらゆる側面を AI エージェントチームが担う
+- AI エージェントチームがプロダクト開発のあらゆる側面を担う
 - 各エージェントは専門領域を持ち、フラットな関係で協働する
-- 全ての判断は MVV.md に基づく
+- 全ての判断は `MVV.md` に基づく
 - エージェント間に上下関係はなく、提案と調整で連携する
 - 管轄外のファイルは role-gate フックにより自動的にブロックされる
 
@@ -37,7 +38,8 @@ C-Level エージェントの下に専門分析員を配置し、詳細な分析
 | 経理チーム | CFO | 経理分析員（accounting） | API コスト計算・予算消化率の算出 | `docs/cost-analysis.md` |
 | セキュリティチーム | CISO | セキュリティ分析員（security） | 脆弱性スキャン・セキュリティポリシー検証 | `docs/SECURITY.md` |
 
-分析員は C-Level エージェントから呼び出され、結果を報告する。分析員が各管轄の docs/ ファイルを直接編集する権限を持つ（role-gate フックで制御）。
+分析員は C-Level エージェントから呼び出され、結果を報告する。
+分析員が各管轄の docs/ ファイルを直接編集する権限を持つ（role-gate フックで制御）。
 
 ## 権限モデル
 
@@ -56,12 +58,14 @@ C-Level エージェントの下に専門分析員を配置し、詳細な分析
 3. **承認または却下**: 管轄エージェントが変更を承認するか、修正を求める
 4. **実行**: 承認された場合、管轄エージェントが自身の手で変更を実施する
 
-**注意**: role-gate フックが有効な場合、管轄外のファイル編集は技術的にもブロックされる。承認フローは管轄エージェント自身が変更を代行する形で運用する。
+> [!NOTE]
+> role-gate フックが有効な場合、管轄外のファイル編集は技術的にもブロックされる。
+> 承認フローは管轄エージェント自身が変更を代行する形で運用する。
 
 ### MVV 編集権限
 
-- MUST: MVV.md の編集はファウンダーのみが行う
-- MUST NOT: エージェントが MVV の改変・改変提案を行わないこと
+- ✅ MUST: `MVV.md` の編集はファウンダーのみが行う
+- ❌ MUST NOT: エージェントが MVV の改変・改変提案を行わないこと
 
 ## 段階的導入計画
 
@@ -110,9 +114,12 @@ C-Level エージェントの下に専門分析員を配置し、詳細な分析
 
 ## プロダクト実行モデル（GitHub Actions 同期実行）
 
-> **注**: 本セクションは vibehawk **プロダクト自体の実行設計** であり、AI 組織運用とは性質が異なる。Issue #6 完了条件に従って本ファイルに配置するが、将来的に `docs/design-philosophy.md` への移動を検討する余地がある。
+> [!NOTE]
+> 本セクションは vibehawk **プロダクト自体の実行設計** であり、AI 組織運用とは性質が異なる。
+> Issue #6 完了条件に従って本ファイルに配置するが、将来的に `docs/design-philosophy.md` への移動を検討する余地がある。
 
-vibehawk のプロダクト本体（PR レビュー実行基盤）は、GitHub Actions の workflow が PR イベントを受けて、その中で同期的に LLM を呼び、コメントを投稿して終了する。専用キューや別 runner は持たない。
+vibehawk のプロダクト本体（PR レビュー実行基盤）は、GitHub Actions の workflow が PR イベントを受けて、その中で同期的に LLM を呼び、コメントを投稿して終了する。
+専用キューや別 runner は持たない。
 
 ### 実行フロー
 
@@ -132,7 +139,8 @@ gh api でコメント投稿・edit・resolve
 
 ### 並列実行制御
 
-利用者の workflow ファイルで `concurrency:` を宣言する。新しい push が来たら古いレビューを中止する設計が推奨。
+利用者の workflow ファイルで `concurrency:` を宣言する。
+新しい push が来たら古いレビューを中止する設計が推奨。
 
 ```yaml
 concurrency:
@@ -148,3 +156,14 @@ concurrency:
 | 「LLM 課金枠以外、追加課金ゼロ」 | GitHub Actions 標準機能だけで完結、追加インフラ費用ゼロ |
 | ジョブタイムアウト | 6 時間（GitHub Actions 標準）→ LLM レビューには十分 |
 | 業界標準 | claude-code-action / GitHub Super Linter / 多くの review bot OSS が同じ構造 |
+
+## 🔗 関連
+
+| ドキュメント | 内容 |
+|---|---|
+| [`MVV.md`](../MVV.md) | プロダクトの根幹方針（全判断の基準） |
+| [`docs/specification.md`](specification.md) | 機能仕様（CPO 管轄） |
+| [`docs/design-philosophy.md`](design-philosophy.md) | 技術設計の根拠（CTO 管轄） |
+| [`docs/SECURITY.md`](SECURITY.md) | セキュリティ設計（CISO 管轄） |
+| [`docs/POLICY.md`](POLICY.md) | 法務・コンプライアンス（CLO / 法務分析員 管轄） |
+| [`docs/cost-analysis.md`](cost-analysis.md) | コスト設計（CFO / 経理分析員 管轄） |

@@ -14,8 +14,6 @@
 const { spawnSync } = require('child_process');
 
 function runGhApi(args) {
-  // gh CLI 経由で GitHub REST API を呼ぶ
-  // status === 0 なら 200 系、それ以外は HTTP エラー（stderr に "404"/"401"/"403" 等を含む）
   const result = spawnSync('gh', ['api', ...args], { encoding: 'utf8' });
   return {
     status: result.status,
@@ -25,8 +23,6 @@ function runGhApi(args) {
 }
 
 function classifyGhError(stderr) {
-  // gh の HTTP エラー stderr から HTTP ステータスコードを抽出して原因分類
-  // 例: stderr に "HTTP 404" / "HTTP 401" / "HTTP 403" が含まれる
   if (/\b404\b/.test(stderr)) return 'not_found';
   if (/\b401\b/.test(stderr)) return 'unauthenticated';
   if (/\b403\b/.test(stderr)) return 'forbidden';
@@ -34,8 +30,6 @@ function classifyGhError(stderr) {
   return 'unknown';
 }
 
-// VIBEHAWK_APP_ID 等の secret が対象リポジトリに登録されているかを 200/404 で判定
-// 引数: repo = "owner/repo"、secretName = "VIBEHAWK_APP_ID" 等
 function verifySecret(repo, secretName) {
   if (!repo || !/^[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-]+$/.test(repo)) {
     return { ok: false, reason: 'invalid_repo', hint: `repo の形式が正しくありません: ${repo}` };
@@ -76,24 +70,18 @@ function verifySecret(repo, secretName) {
   };
 }
 
-// vibehawk App が対象リポジトリにインストールされているかを判定
-// 引数: repo = "owner/repo"、appId = 数値（install.run() が返す credentials.id）
-//
 // /repos/:owner/:repo/installation は GitHub App 認証専用エンドポイントのため利用者 PAT では呼べない。
-// 代替として /user/installations および /orgs/<org>/installations を使い、app_id 一致 +
-// 対象 repo 包含を確認する。
+// 代替として /user/installations および /orgs/<org>/installations を使い app_id 一致 + repo 包含を確認する。
 function verifyAppInstallation(repo, appId) {
   if (!repo || !/^[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-]+$/.test(repo)) {
     return { ok: false, reason: 'invalid_repo', hint: `repo の形式が正しくありません: ${repo}` };
   }
-  // appId は install.run() が返す credentials.id（GitHub Apps Manifest API レスポンス仕様で数値）
   if (!Number.isInteger(appId)) {
     throw new TypeError(`vibehawk: appId は整数である必要があります（受領値: ${typeof appId} ${String(appId)}）`);
   }
   const targetAppIdStr = String(appId);
   const [owner] = repo.split('/');
 
-  // ① /user/installations を試す（個人アカウントのインストール一覧、利用者 PAT で呼べる）
   const userResult = runGhApi(['/user/installations', '--paginate']);
   if (userResult.status === 0) {
     const inst = matchInstallation(userResult.stdout, targetAppIdStr);
@@ -112,7 +100,6 @@ function verifyAppInstallation(repo, appId) {
     }
   }
 
-  // ② /orgs/<owner>/installations を試す（組織アカウント向け）
   const orgResult = runGhApi([`/orgs/${owner}/installations`, '--paginate']);
   if (orgResult.status === 0) {
     const inst = matchInstallation(orgResult.stdout, targetAppIdStr);
@@ -129,7 +116,6 @@ function verifyAppInstallation(repo, appId) {
     }
   }
 
-  // 両方失敗・両方該当なし
   if (userResult.status !== 0 && orgResult.status !== 0) {
     const cls = classifyGhError(userResult.stderr + orgResult.stderr);
     if (cls === 'unauthenticated') {
@@ -145,8 +131,7 @@ function verifyAppInstallation(repo, appId) {
   };
 }
 
-// installations リストから targetAppIdStr に一致する installation オブジェクトを返す
-// （null = 一致なし）。pure 関数で gh api を呼ばない（テスト容易化）
+// テスト容易化のため pure 関数として分離（gh api を呼ばない）
 function matchInstallation(stdout, targetAppIdStr) {
   if (!stdout || !stdout.trim()) return null;
   let parsed;
@@ -168,12 +153,8 @@ function matchInstallation(stdout, targetAppIdStr) {
   return null;
 }
 
-// installation の repository_selection に基づき、対象 repo が含まれるかを実検証する
-// CISO 修正必須 1: 'selected' 時の楽観判定を廃止し、/user/installations/<id>/repositories で実検証
-//
-// 戻り値:
-//   { ok: true, reason: 'all' | 'selected_includes_repo' }
-//   { ok: false, reason: 'repo_not_in_selection' | 'verify_api_failed' | 'invalid_installation' }
+// 'selected' 時の楽観判定は廃止し /user/installations/<id>/repositories で実検証する
+// （CISO 修正必須 1: 楽観判定を抜ける攻撃経路の閉塞）
 function verifyRepoIncluded(installation, repo) {
   if (!installation || typeof installation !== 'object') {
     return { ok: false, reason: 'invalid_installation' };
@@ -185,7 +166,6 @@ function verifyRepoIncluded(installation, repo) {
     // 未知の selection 値はフォールバックで楽観判定（後段の verifySecret で検出）
     return { ok: false, reason: 'verify_api_failed' };
   }
-  // 'selected' は別途 /user/installations/<id>/repositories で実検証
   const installationId = installation.id;
   if (!Number.isInteger(installationId)) {
     return { ok: false, reason: 'invalid_installation' };
@@ -213,8 +193,6 @@ function verifyRepoIncluded(installation, repo) {
   return { ok: false, reason: 'repo_not_in_selection' };
 }
 
-// workflow ファイルが対象リポジトリ（マージ後の main）に配置されているかを 200/404 で判定
-// 引数: repo = "owner/repo"、path = ".github/workflows/vibehawk-review.yml"
 function verifyWorkflow(repo, path) {
   if (!repo || !/^[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-]+$/.test(repo)) {
     return { ok: false, reason: 'invalid_repo', hint: `repo の形式が正しくありません: ${repo}` };

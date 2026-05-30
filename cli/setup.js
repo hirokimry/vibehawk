@@ -90,14 +90,11 @@ function displayWidth(str) {
       }
       continue;
     }
-    if (cp === 0xFE0E) continue; // VS15: text presentation, 幅変えず
-    // Zero-width chars（ZWSP / ZWNJ / ZWJ / Word Joiner / BOM）
+    if (cp === 0xFE0E) continue;
     if (cp === 0x200B || cp === 0x200C || cp === 0x200D || cp === 0x2060 || cp === 0xFEFF) continue;
-    // Combining diacritical marks
     if (cp >= 0x0300 && cp <= 0x036F) continue;
     // Variation Selectors-1..14（U+FE00..U+FE0E）。VS16 は上で個別処理済み
     if (cp >= 0xFE00 && cp <= 0xFE0E) continue;
-    // Control chars
     if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0)) {
       prevWasWide = false;
       continue;
@@ -118,8 +115,6 @@ function normalizeLineForNote(line, targetDisplayWidth) {
   // `' '.repeat(r - line.length)` で右側へ padding する。
   // 各行の `.length` が表示幅と一致していれば、padding 数 = 表示幅の不足分と等しくなり、
   // 右端の `│` が表示列で揃う。
-  // 1. 行の右側に半角スペースで「表示幅」を targetDisplayWidth に揃える
-  // 2. その後 `.length` を targetDisplayWidth に一致させるため Word Joiner で詰める
   const w = displayWidth(line);
   let padded = line + ' '.repeat(Math.max(0, targetDisplayWidth - w));
   const stuff = targetDisplayWidth - padded.length;
@@ -130,8 +125,6 @@ function normalizeLineForNote(line, targetDisplayWidth) {
 }
 
 function normalizeNoteMessage(message) {
-  // 各行の表示幅を揃えてから `.length` を表示幅に一致させ、clack のパディング計算と
-  // 実表示幅の差分を 0 にする。
   const lines = String(message == null ? '' : message).split('\n');
   const widths = lines.map(displayWidth);
   const target = widths.reduce((max, w) => (w > max ? w : max), 0);
@@ -210,7 +203,6 @@ function clearState(state) {
 }
 
 function buildSteps({ owner, repo }) {
-  // STEPS 設定オブジェクト配列（拡張性 + isSensitive で構造的分岐）
   return [
     {
       id: 'app-create',
@@ -281,7 +273,6 @@ function buildSteps({ owner, repo }) {
       id: 'secret-token',
       label: 'CLAUDE_CODE_OAUTH_TOKEN を取得・登録',
       run: async (state) => {
-        // oauth.setupToken は内部で `claude setup-token` 実行案内 → token 入力プロンプト → clipboard コピーを行う
         const result = await oauth.setupToken({
           argv: ['--repo', repo],
           skipPrintInstructions: true,
@@ -368,7 +359,6 @@ function showClipboardFallback(value, isSensitive, reason) {
 }
 
 async function pressEnter(message) {
-  // 「ブラウザ操作してから Enter で次へ」のシンプルな gate
   return clack.text({
     message: message || '完了したら Enter を押してください',
     placeholder: '（Enter で進む）',
@@ -401,7 +391,6 @@ async function executeStep(step, state, summary, dryRun) {
     return;
   }
 
-  // run フェーズ（ある場合）
   // CISO 修正必須 2: 再帰呼び出しを MAX_RETRY 上限の for ループに置換し、無限再帰を防止
   if (step.run) {
     let runOk = false;
@@ -453,7 +442,6 @@ async function executeStep(step, state, summary, dryRun) {
         runEarlyExit = true;
         break;
       }
-      // retry: 次のループで再実行
     }
     if (runEarlyExit) return;
     if (!runOk) {
@@ -471,7 +459,6 @@ async function executeStep(step, state, summary, dryRun) {
     }
   }
 
-  // クリップボードコピー（getValue がある場合）
   if (typeof step.getValue === 'function') {
     const value = step.getValue(state);
     if (value) {
@@ -484,7 +471,6 @@ async function executeStep(step, state, summary, dryRun) {
     }
   }
 
-  // 検証フェーズ（ある場合）
   if (typeof step.verify === 'function') {
     if (step.getUrl) {
       const url = step.getUrl(state);
@@ -532,7 +518,6 @@ async function executeStep(step, state, summary, dryRun) {
         summary.push({ id: step.id, label: step.label, status: 'skipped', hint, durationMs: elapsed() });
         return;
       }
-      // retry: 次のループで再検証
     }
     // Issue #111 / PR #118 CodeRabbit 指摘: verify 最大リトライ到達時の skip でも sentinel を残す
     if (step.id === 'secret-token') {
@@ -542,7 +527,6 @@ async function executeStep(step, state, summary, dryRun) {
     return;
   }
 
-  // run のみで verify なしのステップは success 確定
   summary.push({ id: step.id, label: step.label, status: 'completed', durationMs: elapsed() });
 }
 
@@ -587,7 +571,6 @@ async function run({ argv = process.argv.slice(3) } = {}) {
   const dryRun = parseDryRun(argv);
   const state = buildState();
 
-  // Issue #91 dogfooding 計測: 全体所要時間の開始時刻を記録
   const wizardStartTime = Date.now();
 
   // SIGINT/SIGTERM ハンドラ: メモリ参照を null 化してから終了（CISO Critical）
@@ -600,7 +583,6 @@ async function run({ argv = process.argv.slice(3) } = {}) {
 
   clack.intro('🦅 vibehawk セットアップウィザード');
 
-  // 前提検証: gh CLI 認証
   if (!dryRun && !checkGhAuth()) {
     note(
       'gh CLI が未認証です。別ターミナルで `gh auth login` を実行してから再実行してください。',
@@ -610,7 +592,6 @@ async function run({ argv = process.argv.slice(3) } = {}) {
     process.exit(1);
   }
 
-  // owner / repo を決定
   let owner = parseOwnerArg(argv);
   if (!owner && !dryRun) {
     owner = await promptOwnerInteractive();
@@ -700,18 +681,15 @@ async function run({ argv = process.argv.slice(3) } = {}) {
     process.exit(1);
   }
 
-  // 完了サマリ
   const completed = summary.filter((s) => s.status === 'completed');
   const skipped = summary.filter((s) => s.status === 'skipped');
   const lines = [];
   for (const s of summary) {
     const icon = s.status === 'completed' ? '✅' : s.status === 'skipped' ? '⏭️' : '•';
-    // Issue #91 dogfooding 計測: 各ステップの所要時間を表示
     const durationLabel = typeof s.durationMs === 'number' ? ` (${formatDuration(s.durationMs)})` : '';
     lines.push(`  ${icon} ${s.label}${durationLabel}${s.hint ? ` — ${s.hint}` : ''}`);
   }
 
-  // Issue #91 dogfooding 計測: 全体所要時間と 5 分閾値判定
   const totalElapsedMs = Date.now() - wizardStartTime;
   const totalDurationLabel = formatDuration(totalElapsedMs);
   const targetDurationLabel = formatDuration(DOGFOODING_TARGET_MS);

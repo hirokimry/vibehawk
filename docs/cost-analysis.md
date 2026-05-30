@@ -1,10 +1,12 @@
 # vibehawk コスト分析
 
-> このドキュメントはプロジェクトのコスト構造・予算管理を定義する Source of Truth です。
+> [!IMPORTANT]
+> このドキュメントはプロジェクトのコスト構造・予算管理を定義する Source of Truth。
 
 ## 初期投資（Fixed Costs）
 
-初年度に必要な固定費の一覧。実数値が未決定の項目は「TBD」と明記し、決定次第追記する運用とする。
+初年度に必要な固定費の一覧。
+実数値が未決定の項目は「TBD」と明記し、決定次第追記する。
 
 | 項目 | 金額 | 支払先 | 期限・更新頻度 | 備考 |
 |------|------|------|-------------|------|
@@ -19,7 +21,8 @@
 
 ### API 利用コスト
 
-vibehawk 開発側は LLM API キーを保有・配布しない。利用者の Claude Pro / Max OAuth トークン（`CLAUDE_CODE_OAUTH_TOKEN`）を GitHub Actions Secrets 経由で利用する設計のため、**LLM 呼び出しコストは全て利用者負担** であり vibehawk 開発側の月額見積には計上しない。
+vibehawk 開発側は LLM API キーを保有・配布しない。
+利用者の Claude Pro / Max OAuth トークン（`CLAUDE_CODE_OAUTH_TOKEN`）を GitHub Actions Secrets 経由で利用する設計のため、LLM 呼び出しコストは全て利用者負担となり、vibehawk 開発側の月額見積には計上しない。
 
 | サービス | 単価 | 想定月間量 | 月額見積 | 備考 |
 |----------|------|-----------|----------|------|
@@ -43,6 +46,9 @@ vibehawk 開発側は LLM API キーを保有・配布しない。利用者の C
 
 vibehawk の Mission「レビューツールに追加課金が要らない世界をつくる」および Value 1「利用者の契約だけで、完結させる」は、コスト設計の根幹を規定する。
 
+> [!NOTE]
+> 根拠: `MVV.md` — Mission「レビューツールに追加課金が要らない世界をつくる」、Value 1「利用者の契約だけで、完結させる」（2026-05-08 MVV 制定）
+
 ### 利用者側コスト
 
 | 原則 | 内容 |
@@ -60,14 +66,12 @@ vibehawk の Mission「レビューツールに追加課金が要らない世界
 | MUST NOT | 利用者数増加に伴い vibehawk 運営側の従量コストが線形に増加するアーキテクチャを採用しないこと |
 | MUST | 新規アーキテクチャ採用時は「利用者側コスト増加ゼロ」を維持できるか CFO レビューを通すこと |
 
-> **根拠**: MVV.md — Mission「レビューツールに追加課金が要らない世界をつくる」、Value 1「利用者の契約だけで、完結させる」（2026-05-08 MVV 制定）
-
 ## コスト管理ポリシー
 
 ### 予算アラート
 
-- MUST: 月間予算の80%到達時にアラートを発火すること
-- MUST: 月間予算の100%到達時に自動停止または承認フローを発動すること
+- MUST: 月間予算の 80 % 到達時にアラートを発火すること
+- MUST: 月間予算の 100 % 到達時に自動停止または承認フローを発動すること
 
 ### キャッシュ制御
 
@@ -85,7 +89,9 @@ vibehawk の Mission「レビューツールに追加課金が要らない世界
 
 ## vibehawk コスト制御（PR サイズ段階的劣化）
 
-CodeRabbit と同じ「段階的劣化（graceful degradation）」型を採用する。PR サイズに応じてレビュー深度を自動で下げる。利用者は `.vibehawk.yaml` で閾値をオーバーライドできる。
+CodeRabbit と同じ「段階的劣化（graceful degradation）」型を採用する。
+PR サイズに応じてレビュー深度を自動で下げる。
+利用者は `.vibehawk.yaml` で閾値をオーバーライドできる。
 
 ### デフォルト閾値（CodeRabbit 互換）
 
@@ -114,7 +120,39 @@ reviews:
 | LLM rate limit（429） | claude-code-action のリトライ機構を流用 |
 | GitHub API rate limit | `gh api` のバックオフ機構に任せる |
 
-→ ツール側が持つのは「PR サイズ閾値」のみ。残りは外部委譲。
+ツール側が持つのは「PR サイズ閾値」のみ。残りは外部委譲する。
+
+### PR ごとの追加トークン消費（Issue #229: pre_merge_checks 追加）
+
+Issue #229 で Claude prompt schema に `pre_merge_checks: {linked_issues_check, out_of_scope_check}` を必須フィールドとして追加した。出力側のトークン増分は **約 60〜120 トークン / PR**（2 オブジェクト × explanation 30-60 トークン）で軽微。Title / Description / Docstring の 3 項目は workflow step (grep + 言語ツール) で取得するため Claude API への影響はゼロ。
+
+Issue #240 で各 check に任意 `resolution` を追加したが、`status` が `failed` のときだけ Claude が出力する（通常の passed PR ではゼロ）。failed 時の増分は **約 30〜60 トークン / 該当 check** で軽微。
+
+### PR ごとの追加トークン消費（Issue #228: review_effort 追加）
+
+Issue #228 で Claude prompt schema に `review_effort: {difficulty, minutes}` を必須フィールドとして追加した。出力側のトークン増分は **約 20〜30 トークン / PR**（小規模オブジェクト 1 個）で軽微。Possibly related PRs と Suggested reviewers は workflow step 取得（gh api + git log）のため Claude API への影響はゼロ。
+
+### PR ごとの追加トークン消費（Issue #227）
+
+Issue #227 で Claude prompt の schema に `walkthrough_narrative` + `changes_table[]` を必須フィールドとして追加した。利用者の Claude Max OAuth 個人クォータ（または ANTHROPIC_API_KEY 従量課金）への影響として、PR ごとに以下の追加トークン消費が発生する。
+
+| 経路 | 推定追加トークン / PR | 備考 |
+|---|---|---|
+| 出力側: `walkthrough_narrative` | 約 100〜400 トークン | 200〜800 文字、日本語 0.5 文字 = 1 トークン換算 |
+| 出力側: `changes_table[]`（5〜10 グループ想定） | 約 250〜500 トークン | グループ + 変更あたり約 50 トークン |
+| 入力側: prompt 内の指示文追加 | 約 100 トークン | walkthrough_narrative / changes_table の生成指示 2 ブロック |
+| **合計** | **約 450〜1000 トークン / PR** | 平均 700 トークン想定 |
+
+### 月間試算（上限ケース）
+
+利用者リポジトリで 1 日 10 PR を上限とした場合の月間追加トークン消費:
+
+| シナリオ | 1 日の PR 数 | 月間追加トークン | 影響 |
+|---|---|---|---|
+| 平均ケース | 5 PR / day | 5 × 700 × 30 = 105k トークン / 月 | Claude Max クォータに対して軽微 |
+| 上限ケース | 10 PR / day | 10 × 1000 × 30 = 300k トークン / 月 | Max 5x プランの月間出力 1M-1.5M トークンに対し 20〜30% を占有 |
+
+Claude Pro / Max 個人クォータ枯渇リスクへの影響度は中程度。利用者が大量 PR を出すリポジトリでは Max 20x プランへのアップグレード or `.vibehawk.yaml` の `size_limits` 厳格化（PR サイズ閾値を下げて段階的劣化を早めに発火）で抑制可能。
 
 ### 5 大方針との整合
 
@@ -122,3 +160,26 @@ reviews:
 
 - 大方針 1（カスタムは外から注入）: `.vibehawk.yaml` で利用者がオーバーライド可能 → 整合
 - 大方針 3（severity はツール / 捌き方は利用者）: コスト制御は本来「捌き方」寄りだが、初心者保護のための最低限の安全弁としてツール側に持つ
+
+## 🤖 インライン指摘の CodeRabbit 模倣（エピック #251）
+
+vibehawk のインライン指摘を CodeRabbit 互換フォーマットに揃えるエピック #251 の課金影響。
+
+| 子 Issue | 変更 | 課金影響 |
+|---|---|---|
+| #252 | 3 軸ラベル（カテゴリ/severity/労力） | 軽微（ラベル行のトークン微増） |
+| #253 | 太字タイトル + 説明段落の 2 部構成 | 軽微（構造化による微増） |
+| **#254** | 🤖 AI 向け修正指示の `<details>` 折り畳み | **本エピックの主コスト源** |
+| #255 | Committable suggestion 折り畳み | 軽微（suggestion がある指摘のみ） |
+| #256 | vibehawk 識別フッタ | ほぼ無し（固定文字列） |
+| #263 | schema フィールド駆動への移行（body 焼き込み廃止） | なし（出力トークン構成は不変） |
+
+- #252〜#256 の段階では **schema 変更なし**（`comments[].body` の生成プロンプト文言の追加のみ）。**#263 で構造化フィールド（category/severity/effort/title/description/suggestion/ai_prompt）へ移行**したが、最終レンダリングは同一で出力トークン構成は不変のため課金影響は中立。
+- **#254 が主コスト源**: 各 inline 指摘の末尾に「対象ファイル + 行範囲 + 日本語の修正手順」を生成するため、指摘 1 件あたりの出力トークンが増える。実測 CodeRabbit インライン 157 件では 99.4% がこの要素を同梱しており、模倣のコストはこの増分に集約される。
+- プロンプト本体（`.github/prompts/vibehawk-review.md`）のガイダンス追記による input トークン増は 1 レビュー数百トークン程度で軽微。
+
+## 🔗 関連
+
+- `MVV.md` — コスト設計原則の根拠（Mission / Value 1）
+- `docs/POLICY.md` — プロダクト方針 5 大方針
+- `docs/maintainer-quota-policy.md` — メンテナー枠消費対策ポリシー（起動抑制層）
