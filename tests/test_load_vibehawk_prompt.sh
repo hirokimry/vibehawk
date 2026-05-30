@@ -128,6 +128,25 @@ else
   fail "Case 5: exit=$script_exit, output=$log_output"
 fi
 
+echo "Case 6: inline 指摘ガイダンスが CodeRabbit 互換の 3 軸ラベルを要求している（Issue #252）"
+# 3 軸ラベル（カテゴリ | severity | 労力）の指示と実例が prompt に存在することを検証する。
+# severity 絵文字はラベル内に保持されるため、decide-event.sh の severity 分布カウントは壊れない。
+if grep -qF '先頭行を CodeRabbit 互換の 3 軸ラベル' "$DEFAULT_PROMPT" \
+  && grep -qF '_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_' "$DEFAULT_PROMPT" \
+  && grep -qF '⚡ Quick win' "$DEFAULT_PROMPT" \
+  && grep -qF '🏗️ Heavy lift' "$DEFAULT_PROMPT"; then
+  pass "Case 6"
+else
+  fail "Case 6: 3 軸ラベル（カテゴリ/severity/労力）のガイダンスが prompt に無い"
+fi
+
+echo "Case 7: 旧 1 軸 severity ガイダンス（先頭に severity 絵文字を 1 つ）が残っていない（Issue #252）"
+if grep -qF '冒頭に必ず該当 severity の絵文字を 1 つ付ける' "$DEFAULT_PROMPT"; then
+  fail "Case 7: 旧 1 軸 severity ガイダンスが残存している"
+else
+  pass "Case 7"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"
