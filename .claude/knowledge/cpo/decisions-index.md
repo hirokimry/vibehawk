@@ -5,6 +5,7 @@
 
 ## エントリ
 
+- 2026-05-30 — Issue #230 インライン指摘フォーマット — CodeRabbit 完全模倣（方針 A）に確定。枠は模倣・中身は日本語/vibehawk 化、コールアウトは実測ほぼ 0% で非模倣。実測 157 件根拠。実装は #251/#263 で main マージ済み
 - 2026-05-24 — Issue #222 APPROVE 時 review body 空化 — APPROVE 時に body="" + comments=[] とする仕様変更を承認。CodeRabbit 実測 9/9 件一致・タイムラインノイズ除去・sticky walkthrough で情報損失なし
 - 2026-05-08 — ship #6 specification.md アーキテクチャ章 bash サンプル — spec 内サンプルは「参照的・非規範的」と明示する方針。How（実装詳細）の混在は分離推奨
 - 2026-05-08 — ship #6 README 乖離 3 PR 連続放置 — 認知パターンとして記録。5 PR 連続でエスカレーション検討。起票判断は CEO 管轄
