@@ -155,6 +155,14 @@ else
   fail "Case 8: 2 部構成（太字タイトル + 説明段落）のガイダンスが prompt に無い"
 fi
 
+echo "Case 9: inline 指摘に AI 向け修正指示の <details> 折り畳みを要求している（Issue #254）"
+if grep -qF '🤖 AI 向け修正指示' "$DEFAULT_PROMPT" \
+  && grep -qF 'AI エージェントが修正に着手できる指示' "$DEFAULT_PROMPT"; then
+  pass "Case 9"
+else
+  fail "Case 9: 🤖 AI 向け修正指示の折り畳みガイダンスが prompt に無い"
+fi
+
 echo "==="
 echo "passed: $PASSED, failed: $FAILED"
 exit "$FAILED"
