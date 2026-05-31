@@ -2,10 +2,13 @@
 # 用途: レビュー state 遷移のデモ用ターゲット（#282 検証、マージしない）
 set -euo pipefail
 
-# Round 1: 外部入力を eval（コマンドインジェクション = actionable な脆弱性）
-run_user_command() {
-  local user_input="$1"
-  eval "$user_input"
+# Round 2: 脆弱性なし。受け取った 2 つの整数を加算して出力する正しい実装。
+add_two_numbers() {
+  local a="$1"
+  local b="$2"
+  local tmp
+  tmp=$(( a + b ))
+  echo "${tmp}"
 }
 
-run_user_command "$@"
+add_two_numbers "$@"
