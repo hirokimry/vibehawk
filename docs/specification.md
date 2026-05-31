@@ -49,11 +49,11 @@ vibehawk は以下の利用者層を主要ターゲットとする:
 
 | 機能 | 概要 |
 |---|---|
-| PR auto-review トリガー | PR が立ったら自動でレビューを始める（open / synchronize / ready_for_review） |
+| PR auto-review トリガー | PR が立ったら自動でレビューを始める（open / synchronize / ready_for_review）。また `pull_request_review_thread: [resolved, unresolved]` イベントでも vibehawk-reverdict ジョブが起動し、新規 push なしに review state を再評価する（Issue #287） |
 | PR 全体サマリコメント（walkthrough） | PR 冒頭に「変更概要 + 何を見たか」のサマリを 1 個投稿、push 毎に edit で最新化 |
 | inline comment 投稿 | コードの行を指して指摘を書く。severity 絵文字付き、Suggestions 構文（` ```suggestion `）の生成も可 |
-| approve 発行 | レビューが OK なら approve を発行する（sticky review state により request_changes と自動切替）。**補助情報の発行**であり、merge gate 主軸は下記「status check 投稿（required status check）」を参照（Issue #138 / #121-C1 で確定した位置付け） |
-| request_changes 発行 | 未解決指摘があれば request_changes を発行する（sticky review state により approve と自動切替）。**補助情報の発行**であり、merge gate 主軸は下記「status check 投稿（required status check）」を参照 |
+| approve 発行 | レビューが OK なら approve を発行する（sticky review state により request_changes と自動切替）。切替トリガーは「次の push（vibehawk-review.yml の decide_event 経路）」または「GitHub UI で会話を手動 resolve（vibehawk-reverdict ジョブ経路、Issue #287）」の 2 つ。**補助情報の発行**であり、merge gate 主軸は下記「status check 投稿（required status check）」を参照（Issue #138 / #121-C1 で確定した位置付け） |
+| request_changes 発行 | 未解決指摘があれば request_changes を発行する（sticky review state により approve と自動切替）。切替トリガーは同上（push または手動 resolve、Issue #287）。**補助情報の発行**であり、merge gate 主軸は下記「status check 投稿（required status check）」を参照 |
 | インクリメンタルレビュー | 2 回目以降は前回見た範囲を覚えていて、新しい変更だけ見る |
 | severity 5 段階の判定軸 | Critical / Major / Minor / Trivial / Info の付け方ルール（CodeRabbit 互換） |
 | 日本語レビュー（locale 対応） | 日本語でコメントを書く（設定で切替可） |
@@ -340,7 +340,30 @@ Issue #171 では更に判定ルール 2 段目を変更（`新規 Critical/Majo
 > Issue #171 で「指摘する責務」と「修正対象とする判定の責務」を分離し、severity に依らず指摘が 1 件でもあれば REQUEST_CHANGES で利用者に通知する設計に変更（MVV Value 3「指摘する、強制しない」の純粋実現）。
 > これにより ⚪ Info / 🔵 Trivial / 🟡 Minor の指摘も REQUEST_CHANGES を引き起こすため、利用者が必ず指摘に気付ける。
 > 修正対象とするかの判断は利用者プロジェクト側（`.claude/rules/review-handling.md` の intent × severity マトリクス）で行う分担とする。
-> resolve されたら次の push で APPROVE に切り替わる（sticky review state は既存通り動く）。
+> resolve されたら次の push または手動 resolve（vibehawk-reverdict ジョブ、Issue #287）で APPROVE に切り替わる（sticky review state は既存通り動く）。
+
+#### review state 切替の 2 経路（Issue #287）
+
+review state（APPROVE / REQUEST_CHANGES）の切替は以下 2 経路が独立して動作する。
+
+| 経路 | トリガー | LLM 実行 | 担当ジョブ |
+|------|---------|---------|-----------|
+| **decide_event 経路**（既存） | 新規 push（open / synchronize / ready_for_review） | あり（Claude によるフルレビュー） | `vibehawk-review.yml` の `decide_event` step |
+| **vibehawk-reverdict 経路**（Issue #287） | GitHub UI で「Resolve conversation」を手動操作（`pull_request_review_thread: resolved` または `unresolved`） | なし（LLM 非実行、API コスト 0） | `vibehawk-review.yml` 内の独立ジョブ `vibehawk-reverdict` |
+
+**vibehawk-reverdict ジョブの仕様**:
+
+- Claude LLM レビューを一切再実行しない（`claude_review` ステップを構造的に持たない別ジョブ）。
+- vibehawk **自身**の review thread の未解決件数のみで判定する（人間・他 Bot のスレッドは無視）。
+  - 自 Bot スレッドが 0 件の PR は判定対象外として skip する。
+- 判定ルール: unresolved >= 1 → REQUEST_CHANGES / unresolved == 0 → APPROVE。
+  - bot 名義の review POST（非空 body）で state を反映し、`post-status-check.sh` が `vibehawk` check の conclusion を再導出する。
+- 冪等: 直近の review state と一致する場合は POST を skip する。
+- concurrency をジョブ単位で分離する。
+  - フルレビューは `vibehawk-${PR番号}` グループ。
+  - reverdict は `vibehawk-reverdict-${PR番号}` グループ。
+  - この分離により、resolve 操作が実行中のフルレビューをキャンセルしない。
+- CodeRabbit の `reviews.request_changes_workflow: true` と同等の UX を実現する。
 
 #### APPROVE 時の review body・inline 指摘（Issue #222）
 
@@ -417,6 +440,9 @@ check run の投稿者表示は `vibehawk-for-<owner>[bot]` ではなく `github
 > - `neutral` は「レビュー未実行・bundled POST 失敗（`DECIDED_EVENT` 空 / 不正値で skip された場合を含む）」に限定する。
 
 `check_secrets` 未設定時は step 自体が `if: steps.check_secrets.outputs.ready == 'true'` ガードで skip され、check 自体が post されない（既存ガード継承）。
+
+> **vibehawk-reverdict による再導出（Issue #287）**: `pull_request_review_thread: resolved` / `unresolved` イベントでも、`vibehawk-reverdict` ジョブが `post-status-check.sh` を呼び出して `vibehawk` check を再 post する。
+> 再導出ロジックは上記 conclusion 導出表と同一（直前の vibehawk review state から bash `case` でマップ）であり、新規 push なしに `vibehawk` check の conclusion が REQUEST_CHANGES ⇄ APPROVE に自動更新される。
 
 #### paths-ignore 該当 PR への fallback（Issue #157、Issue #160 で範囲縮小）
 
@@ -563,11 +589,17 @@ CodeRabbit は issue-comment とは **別経路で PR description 本体も stic
 ### パフォーマンス
 
 - **ジョブタイムアウト**: GitHub Actions 標準の 6 時間。LLM レビューには十分な余裕がある（実運用では数分〜数十分のオーダーで完了する想定）。
-- **並列実行制御**: 利用者の workflow ファイルで `concurrency:` を宣言する。新しい push が来たら古いレビューを中止する設計を推奨。
+- **並列実行制御**: 利用者の workflow ファイルで `concurrency:` を宣言する。新しい push が来たら古いレビューを中止する設計を推奨。Issue #287 の vibehawk-reverdict ジョブ追加に伴い、concurrency グループをジョブ単位で分離する（フルレビューと reverdict が互いをキャンセルしない）。
 
 ```yaml
+# フルレビュージョブ（vibehawk-review）
 concurrency:
   group: vibehawk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# reverdict ジョブ（vibehawk-reverdict、Issue #287）
+concurrency:
+  group: vibehawk-reverdict-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 ```
 

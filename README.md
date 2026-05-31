@@ -147,16 +147,19 @@ vibehawk は PR が作成・更新されるたびに以下を実行する:
 
 機能仕様の詳細は [`docs/specification.md`](docs/specification.md)、PR レビュー設計の根拠と vibecorp との関係は [`docs/design-philosophy.md`](docs/design-philosophy.md) を参照。
 
-### 再レビューを依頼する（Issue #135）
+### 再レビューを依頼する（Issue #135 / #287）
 
-vibehawk が一度 `failure` を post すると、利用者が指摘に対応しても再レビュー無しに status check の conclusion を更新できない。
-その結果、merge が永久にブロックされる UX 欠陥がある（Issue #135 / PR #133）。
-これを解消する正規導線として、以下 2 経路で vibehawk を再発火できる:
+vibehawk が一度 `failure` を post すると、利用者が指摘に対応しても再レビュー無しに status check の conclusion を更新できないという UX 上の課題があった（Issue #135 / PR #133）。
 
-- **経路 1: "Re-request review" ボタン**: PR ページの Reviewers セクションから vibehawk-for-<owner> 横の 🔄 ボタンを押す → `pull_request: review_requested` トリガーで `vibehawk-review.yml` が再発火し、最新差分でレビュー＋status check を更新する
-- **経路 2: `@vibehawk review` コメント**: PR コメントで `@vibehawk review` と書いて投稿 → `vibehawk-chat.yml` が `@vibehawk review` を検知し、bundled review POST と status check 更新を実行する
+Issue #287（vibehawk-reverdict）の追加により、**GitHub UI で「Resolve conversation」を押すだけで自動的に再判定が走り、status check が更新される**ようになった。空コミット push という workaround は不要。
 
-どちらの経路でも status check `vibehawk` の conclusion が最新差分に基づいて再評価される。空コミット push という workaround は不要。
+現在、以下 3 経路で vibehawk の conclusion を更新できる:
+
+- **経路 1: 会話を resolve するだけ（Issue #287 新規）**: PR コメントの「Resolve conversation」ボタンを押す → `pull_request_review_thread: resolved` イベントで `vibehawk-reverdict` ジョブが起動し、LLM 非実行（API コスト 0）で未解決スレッド数を再集計して status check を更新する。全スレッドを resolve した時点で自動的に `vibehawk` check が `success` に切り替わる
+- **経路 2: "Re-request review" ボタン**: PR ページの Reviewers セクションから vibehawk-for-<owner> 横の 🔄 ボタンを押す → `pull_request: review_requested` トリガーで `vibehawk-review.yml` が再発火し、最新差分でフルレビュー＋status check を更新する
+- **経路 3: `@vibehawk review` コメント**: PR コメントで `@vibehawk review` と書いて投稿 → `vibehawk-chat.yml` が `@vibehawk review` を検知し、bundled review POST と status check 更新を実行する
+
+いずれの経路でも status check `vibehawk` の conclusion が再評価される。日常の resolve 操作では経路 1 が最も軽量（LLM 非実行）。
 
 > **利用者向けアップデート手順**: 既に vibehawk を導入済みのリポジトリは、`templates/.github/workflows/vibehawk-review.yml` および `templates/.github/workflows/vibehawk-chat.yml` の最新版を `.github/workflows/` に上書きコピーして PR を出すこと（再 install は不要、追加 secret 設定も不要）。
 
