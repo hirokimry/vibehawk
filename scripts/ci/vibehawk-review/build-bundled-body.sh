@@ -3,7 +3,8 @@
 #
 # CodeRabbit 互換のレビュー本文（インラインをまとめるコメント、マーカー <!-- vibehawk:summary -->）を
 # comments[] から組み立てる。本スクリプトは以下を出力する（標準出力）:
-#   1. `**Actionable comments posted: N**`（actionable = category が 🧹 Nitpick 以外の件数）
+#   1. `**Actionable comments posted: N**`（actionable = category が 🧹 Nitpick 以外の件数。
+#      N=0 のときは行ごと出さない＝CodeRabbit の nitpick-only 本文と一致、Issue #282）
 #   2. 🧹 Nitpick comments (M) 折り畳み（category が 🧹 Nitpick の指摘をファイル別ネストで集約）
 #   3. 末尾マーカー <!-- vibehawk:summary --> / <!-- vibehawk:sha=<commit_id> -->
 #      （find-prev-summary.sh が前回 SHA を抽出するインクリメンタルレビューの一意特定に必須、Issue #57）
@@ -104,7 +105,7 @@ def render_prompt_group:
 | (.commit_id // "") as $sha
 | [$all[] | select(.category != "🧹 Nitpick")] as $actionable
 | [$all[] | select(.category == "🧹 Nitpick")] as $nits
-| "**Actionable comments posted: " + (($actionable | length) | tostring) + "**\n\n"
+| (if ($actionable | length) > 0 then "**Actionable comments posted: " + (($actionable | length) | tostring) + "**\n\n" else "" end)
   + (if ($nits | length) > 0 then
       "<details>\n<summary>🧹 Nitpick comments (" + (($nits | length) | tostring) + ")</summary><blockquote>\n\n"
       + ( $nits

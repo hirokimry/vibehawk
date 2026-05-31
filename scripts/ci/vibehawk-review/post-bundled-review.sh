@@ -22,6 +22,10 @@ PAYLOAD="${RUNNER_TEMP}/vibehawk-review.json"
 # `echo` は -n の解釈や末尾改行の差異があるため `printf '%s'` を使う（JSON のエスケープを破壊しない）
 printf '%s' "$STRUCTURED_OUTPUT" > "$PAYLOAD"
 
+# Issue #282: nitpick 件数を routing より前に数える（後段の APPROVE 時 body 空化の分岐で使う）。
+# routing（line 37 付近）で .comments から nitpick が除かれるため、ここで先に取得する。
+nitpick_count="$(jq '[.comments[]? | select(.category == "🧹 Nitpick")] | length' "$PAYLOAD")"
+
 # Issue #271: レビュー本文（インラインをまとめるコメント）を build-bundled-body.sh で
 # 構造化フィールドから決定論的に組み立てる（CodeRabbit 互換: Actionable 件数 + 🧹 Nitpick comments）。
 # nitpick を含む raw comments を読むため、nitpick の routing より前に実行する。
@@ -80,13 +84,20 @@ fi
 OVERRIDDEN="${RUNNER_TEMP}/vibehawk-review.overridden.json"
 jq --arg ev "$DECIDED_EVENT" '.event = $ev' "$PAYLOAD" > "$OVERRIDDEN" && mv "$OVERRIDDEN" "$PAYLOAD"
 
-# Issue #222: APPROVE 時は body と comments を空に上書きする（CodeRabbit 模倣）。
-# サマリは sticky walkthrough コメント経路（Issue #219）で別途残る。
-# 既存 validation（line 22-38）の `.body | length > 0` は変更しない。validation は Claude の
-# 非空 body を従来通り検査し、validation 通過後にここで空に上書きする。
+# Issue #222 / #282: APPROVE 時の body 空化は 🧹 Nitpick が無いときのみ行う。
+# 元の趣旨（#222）は「APPROVE 時に冗長な severity サマリを毎回出さない（サマリは sticky に再掲あり）」
+# だったが、#274 でサマリは撤去され、現在 body に載るのは sticky に無い 🧹 Nitpick comments。
+# よって nitpick がある APPROVE で body を空化すると nitpick が消える（#280 で実発生）。
+# CodeRabbit は APPROVE（空 body）+ 別 COMMENTED で nitpick を出すが、vibehawk は 1 本集約のため
+# APPROVE 時も nitpick があれば body を保持して nitpick を残す（Issue #282）。
+# nitpick が無い（truly-clean）APPROVE は従来どおり body と comments を空化する。
 if [[ "$DECIDED_EVENT" == "APPROVE" ]]; then
-  jq '.body = "" | .comments = []' "$PAYLOAD" > "$OVERRIDDEN" && mv "$OVERRIDDEN" "$PAYLOAD"
-  echo "vibehawk: DECIDED_EVENT=APPROVE のため body と comments を空に上書きしました（CodeRabbit 模倣、サマリは sticky comment 経路で残る、Issue #222）"
+  if [[ "${nitpick_count:-0}" -gt 0 ]]; then
+    echo "vibehawk: DECIDED_EVENT=APPROVE だが 🧹 Nitpick ${nitpick_count} 件あるため body を保持して POST します（nitpick を消さない、Issue #282）"
+  else
+    jq '.body = "" | .comments = []' "$PAYLOAD" > "$OVERRIDDEN" && mv "$OVERRIDDEN" "$PAYLOAD"
+    echo "vibehawk: DECIDED_EVENT=APPROVE かつ 🧹 Nitpick 0 件のため body と comments を空に上書きしました（CodeRabbit 模倣、Issue #222/#282）"
+  fi
 fi
 
 event="$(jq -r '.event' "$PAYLOAD")"

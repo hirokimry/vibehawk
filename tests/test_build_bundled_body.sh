@@ -176,12 +176,20 @@ else
   fail "nitpick 無し時の出力が期待通りでない"
 fi
 
-echo "=== Case 4: 0 件 ==="
+echo "=== Case 4: 0 件（Issue #282: Actionable 0 行を出さない） ==="
 out3="$(run_build '{"commit_id":"sha2","comments":[]}')"
-if grep -qF '**Actionable comments posted: 0**' <<< "$out3" && ! grep -qF '全指摘の AI 向け修正指示' <<< "$out3"; then
-  pass "0 件で Actionable comments posted: 0 を表示し、統合 AI プロンプトを出さない"
+if ! grep -qF 'Actionable comments posted' <<< "$out3" && ! grep -qF '全指摘の AI 向け修正指示' <<< "$out3"; then
+  pass "0 件で Actionable comments posted 行を出さず、統合 AI プロンプトも出さない（Issue #282）"
 else
-  fail "0 件時の出力が期待通りでない"
+  fail "0 件時の出力が期待通りでない（Actionable 0 行が出ている）"
+fi
+
+echo "=== Case 5: actionable 0 + 🧹 Nitpick のみ（Issue #282: 件数行なし + nitpick あり、CodeRabbit 互換） ==="
+out4="$(run_build '{"commit_id":"sha3","comments":[{"path":"a.sh","line":5,"category":"🧹 Nitpick","effort":"⚡ Quick win","title":"命名","description":"d","ai_prompt":"p"}]}')"
+if ! grep -qF 'Actionable comments posted' <<< "$out4" && grep -qF '🧹 Nitpick comments (1)' <<< "$out4"; then
+  pass "actionable 0 + nitpick のとき Actionable 行を出さず 🧹 Nitpick comments を出す（CodeRabbit nitpick-only 互換、Issue #282）"
+else
+  fail "nitpick-only 時の出力が期待通りでない"
 fi
 
 echo ""
