@@ -127,11 +127,33 @@ for evt in opened synchronize ready_for_review review_requested; do
   fi
 done
 
-# concurrency
-if echo "$WORKFLOW_BODY" | grep -E "^concurrency:" > /dev/null; then
-  pass "concurrency が設定されている"
+# pull_request_review_thread トリガー（Issue #287: 手動 resolve で verdict 自動更新）
+if echo "$WORKFLOW_BODY" | grep -E "^[[:space:]]*pull_request_review_thread:" > /dev/null; then
+  pass "pull_request_review_thread トリガーが設定されている（Issue #287）"
+else
+  fail "pull_request_review_thread トリガーが設定されていない（Issue #287）"
+fi
+
+# resolve 専用の verdict 再評価ジョブ（Issue #287）
+if echo "$WORKFLOW_BODY" | grep -E "^[[:space:]]*vibehawk-reverdict:" > /dev/null; then
+  pass "vibehawk-reverdict ジョブが定義されている（Issue #287）"
+else
+  fail "vibehawk-reverdict ジョブが定義されていない（Issue #287）"
+fi
+
+# concurrency（Issue #287 でトップレベルからジョブ単位へ移設）
+# review ジョブと reverdict ジョブが別グループを持ち、resolve が実行中 review をキャンセルしない。
+if echo "$WORKFLOW_BODY" | grep -E "^[[:space:]]+concurrency:" > /dev/null; then
+  pass "concurrency がジョブ単位で設定されている（Issue #287）"
 else
   fail "concurrency が設定されていない"
+fi
+
+if echo "$WORKFLOW_BODY" | grep -F 'group: vibehawk-${{ github.event.pull_request.number }}' > /dev/null \
+   && echo "$WORKFLOW_BODY" | grep -F 'group: vibehawk-reverdict-${{ github.event.pull_request.number }}' > /dev/null; then
+  pass "review / reverdict ジョブが別 concurrency グループを持つ（Issue #287）"
+else
+  fail "review / reverdict ジョブの concurrency グループ分離が無い（Issue #287）"
 fi
 
 # cancel-in-progress: true（表記揺れ対応）

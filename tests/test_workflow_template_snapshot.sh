@@ -139,5 +139,23 @@ for pair in "${SYNC_PAIRS[@]}"; do
   fi
 done
 
+# review workflow 限定の parity ガード（Issue #287）:
+# resolve イベントで verdict を自動更新する pull_request_review_thread トリガーが
+# 静かに落とされていないことを検証する（CodeRabbit request_changes_workflow 同等機能の退行防止）。
+# chat workflow には本トリガーは無いため、review ファイルだけを対象にする（汎用ループの外）。
+declare -a REVIEW_WORKFLOWS=(
+  "templates/.github/workflows/vibehawk-review.yml"
+  ".github/workflows/vibehawk-review.yml"
+)
+for rw in "${REVIEW_WORKFLOWS[@]}"; do
+  if [[ -f "$rw" ]]; then
+    if grep -q -e "pull_request_review_thread:" "$rw"; then
+      pass "$rw に pull_request_review_thread トリガーが存在する（Issue #287 parity）"
+    else
+      fail "$rw に pull_request_review_thread トリガーが無い（Issue #287 parity 退行）"
+    fi
+  fi
+done
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

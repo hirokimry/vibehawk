@@ -33,10 +33,13 @@ on:
       - 'yarn.lock'
       - 'pnpm-lock.yaml'
       - 'bun.lockb'
-
-concurrency:
-  group: vibehawk-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # pull_request_review_thread: コメントを手動で resolve / unresolve した時に発火する（Issue #287）。
+  # CodeRabbit の request_changes_workflow 同等の「自 Bot のコメントが全て resolve されたら
+  # APPROVE に自動更新」を実現するための正規導線。LLM レビューは再実行せず、専用の軽量ジョブ
+  # vibehawk-reverdict が verdict のみ再評価する（API コスト 0）。Fork PR は pull_request_target
+  # ではないため secrets 漏洩経路にならない（pull_request 系トリガーと同じ前提、Issue #135）。
+  pull_request_review_thread:
+    types: [resolved, unresolved]
 
 permissions:
   pull-requests: write
@@ -50,7 +53,15 @@ permissions:
 jobs:
   vibehawk-review:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false
+    # pull_request イベント（push / open 等）でのみ高コストな LLM レビューを走らせる。
+    # resolve イベントは下の vibehawk-reverdict ジョブが担当する（Issue #287）。
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    # concurrency をジョブ単位に分離（Issue #287）。full review 同士は coalesce するが、
+    # resolve 由来の reverdict ジョブとはグループを分け、実行中の full review が resolve で
+    # キャンセルされる事故を防ぐ。
+    concurrency:
+      group: vibehawk-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     steps:
       - name: チェックアウト
         uses: actions/checkout@v4
@@ -334,6 +345,66 @@ jobs:
         # Claude prompt 内 check-runs POST は claude-code-action の permission model で
         # deny されるため、workflow step で決定論的に post する。デフォルト GITHUB_TOKEN の
         # checks: write 権限を使い、App installation の permission 状態に依存しない。
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OWNER: ${{ github.repository_owner }}
+        # 詳細: scripts/ci/vibehawk-review/post-status-check.sh（エピック #174 / Issue #176）
+        run: bash scripts/ci/vibehawk-review/post-status-check.sh
+
+  # === resolve イベント専用の verdict 再評価ジョブ（Issue #287）===
+  # コメントを手動で resolve / unresolve した時に、新規 push 無しで verdict を更新する。
+  # claude_review（LLM）ステップを構造的に持たないため、API コストは常に 0。
+  # vibehawk 自身の review thread の未解決件数のみで APPROVE / REQUEST_CHANGES を再判定し、
+  # bot 名義で review を POST → post-status-check.sh が required check `vibehawk` を再導出する。
+  vibehawk-reverdict:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_review_thread' && github.event.pull_request.draft == false
+    concurrency:
+      group: vibehawk-reverdict-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: secrets 検証
+        id: check_secrets
+        env:
+          APP_ID: ${{ secrets.VIBEHAWK_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
+          OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        # 詳細: scripts/ci/vibehawk-review/check-secrets.sh（エピック #174 / Issue #176）
+        run: bash scripts/ci/vibehawk-review/check-secrets.sh
+
+      - name: vibehawk-for-<owner> App Installation Token を取得
+        id: app-token
+        if: steps.check_secrets.outputs.ready == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.VIBEHAWK_APP_ID }}
+          private-key: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
+
+      - name: vibehawk verdict を再評価（Issue #287）
+        # LLM を呼ばず、vibehawk 自身スレッドの未解決件数のみで APPROVE / REQUEST_CHANGES を
+        # 再判定し bot 名義で review を POST する（冪等・自 Bot スレッド 0 件なら skip）。
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OWNER: ${{ github.repository_owner }}
+        # 詳細: scripts/ci/vibehawk-review/re-evaluate-verdict.sh（Issue #287）
+        run: bash scripts/ci/vibehawk-review/re-evaluate-verdict.sh
+
+      - name: vibehawk status check を post（Issue #121-C1 fix / #287）
+        # 再判定後の最新 review state から required check `vibehawk` の conclusion を再導出する。
         if: steps.check_secrets.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
