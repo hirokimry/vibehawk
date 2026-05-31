@@ -841,5 +841,37 @@ else
 fi
 
 echo ""
+echo "--- ケース #282-a: APPROVE + 🧹 Nitpick のみ → body を保持して POST（nitpick が消えない） ---"
+reset_logs
+STRUCTURED_OUTPUT='{"event":"COMMENT","commit_id":"deadbeef","comments":[{"path":"a.sh","line":5,"category":"🧹 Nitpick","effort":"⚡ Quick win","title":"命名","description":"d","ai_prompt":"p"}]}'
+DECIDED_EVENT='APPROVE'
+export STRUCTURED_OUTPUT DECIDED_EVENT
+run_step > "${TEST_TMP}/step-stdout-282a.log" 2>&1
+posts="$(count_posts)"
+final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+final_event="$(jq -r '.event' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+if [[ "$posts" == "1" ]] && [[ "$final_event" == "APPROVE" ]] && grep -qF '🧹 Nitpick comments' <<< "$final_body"; then
+  pass "Issue #282: APPROVE + nitpick で body に 🧹 Nitpick comments を保持して POST（event=APPROVE, posts=${posts}）"
+else
+  fail "Issue #282: APPROVE + nitpick で body が保持されていない（event=${final_event}, posts=${posts}, body長=${#final_body}）"
+fi
+unset STRUCTURED_OUTPUT DECIDED_EVENT
+
+echo ""
+echo "--- ケース #282-b: APPROVE + nitpick 0（truly-clean） → body 空（従来どおり） ---"
+reset_logs
+STRUCTURED_OUTPUT='{"event":"COMMENT","commit_id":"deadbeef","comments":[]}'
+DECIDED_EVENT='APPROVE'
+export STRUCTURED_OUTPUT DECIDED_EVENT
+run_step > "${TEST_TMP}/step-stdout-282b.log" 2>&1
+final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+if [[ -z "$final_body" ]]; then
+  pass "Issue #222/#282: APPROVE + nitpick 0 で body を空化（truly-clean は従来どおり空）"
+else
+  fail "Issue #222/#282: truly-clean APPROVE で body が空でない（body長=${#final_body}）"
+fi
+unset STRUCTURED_OUTPUT DECIDED_EVENT
+
+echo ""
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
