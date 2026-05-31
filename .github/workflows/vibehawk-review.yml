@@ -393,6 +393,7 @@ jobs:
       - name: vibehawk verdict を再評価（Issue #287）
         # LLM を呼ばず、vibehawk 自身スレッドの未解決件数のみで APPROVE / REQUEST_CHANGES を
         # 再判定し bot 名義で review を POST する（冪等・自 Bot スレッド 0 件なら skip）。
+        id: reverdict
         if: steps.check_secrets.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -405,7 +406,10 @@ jobs:
 
       - name: vibehawk status check を post（Issue #121-C1 fix / #287）
         # 再判定後の最新 review state から required check `vibehawk` の conclusion を再導出する。
-        if: steps.check_secrets.outputs.ready == 'true'
+        # decided_event == SKIP（vibehawk 自身のスレッドが無い管轄外イベント）の場合は走らせない。
+        # vibehawk 未レビュー PR に対しスレッド resolve をトリガーに neutral check を新規生成する
+        # 副作用を防ぐため（Issue #287）。
+        if: steps.check_secrets.outputs.ready == 'true' && steps.reverdict.outputs.decided_event != 'SKIP'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}

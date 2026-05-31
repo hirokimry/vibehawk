@@ -141,6 +141,14 @@ else
   fail "vibehawk-reverdict ジョブが定義されていない（Issue #287）"
 fi
 
+# SKIP ガード: 自 Bot スレッド 0 件（管轄外）の resolve イベントで status check を
+# 新規生成しないよう、post-status-check を decided_event != SKIP で gate している（Issue #287）
+if echo "$WORKFLOW_BODY" | grep -F "steps.reverdict.outputs.decided_event != 'SKIP'" > /dev/null; then
+  pass "reverdict の status check が decided_event != SKIP で gate されている（Issue #287）"
+else
+  fail "reverdict の status check に SKIP ガードが無い（Issue #287、管轄外 PR への neutral check 生成防止）"
+fi
+
 # concurrency（Issue #287 でトップレベルからジョブ単位へ移設）
 # review ジョブと reverdict ジョブが別グループを持ち、resolve が実行中 review をキャンセルしない。
 if echo "$WORKFLOW_BODY" | grep -E "^[[:space:]]+concurrency:" > /dev/null; then
