@@ -443,6 +443,9 @@ check run の投稿者表示は `vibehawk-for-<owner>[bot]` ではなく `github
 
 > **vibehawk-reverdict による再導出（Issue #287）**: `pull_request_review_thread: resolved` / `unresolved` イベントでも、`vibehawk-reverdict` ジョブが `post-status-check.sh` を呼び出して `vibehawk` check を再 post する。
 > 再導出ロジックは上記 conclusion 導出表と同一（直前の vibehawk review state から bash `case` でマップ）であり、新規 push なしに `vibehawk` check の conclusion が REQUEST_CHANGES ⇄ APPROVE に自動更新される。
+> ただし `decided_event == SKIP`（自 Bot スレッドが 0 件 = vibehawk 管轄外イベント）の場合は `post-status-check.sh` を実行しない。
+> これは reverdict ジョブの `if: steps.check_secrets.outputs.ready == 'true' && steps.reverdict.outputs.decided_event != 'SKIP'` ガードによる。
+> vibehawk 未レビュー PR にスレッド resolve をトリガーとして `neutral` check が新規生成される副作用を防ぐためであり、前述「vibehawk-reverdict ジョブの仕様」の skip 条件と整合する。
 
 #### paths-ignore 該当 PR への fallback（Issue #157、Issue #160 で範囲縮小）
 

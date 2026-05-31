@@ -155,7 +155,7 @@ Issue #287（vibehawk-reverdict）の追加により、**GitHub UI で「Resolve
 
 現在、以下 3 経路で vibehawk の conclusion を更新できる:
 
-- **経路 1: 会話を resolve するだけ（Issue #287 新規）**: PR コメントの「Resolve conversation」ボタンを押す → `pull_request_review_thread: resolved` イベントで `vibehawk-reverdict` ジョブが起動し、LLM 非実行（API コスト 0）で未解決スレッド数を再集計して status check を更新する。全スレッドを resolve した時点で自動的に `vibehawk` check が `success` に切り替わる
+- **経路 1: 会話を resolve / unresolve するだけ（Issue #287 新規）**: PR コメントの「Resolve conversation」/「Unresolve conversation」ボタンを押す → `pull_request_review_thread: [resolved, unresolved]` の両イベントで `vibehawk-reverdict` ジョブが起動し、LLM 非実行（API コスト 0）で未解決スレッド数を再集計して status check を更新する。全スレッドを resolve した時点で自動的に `vibehawk` check が `success` に切り替わり、resolve 済みを unresolve すると `failure`（REQUEST_CHANGES）に戻る
 - **経路 2: "Re-request review" ボタン**: PR ページの Reviewers セクションから vibehawk-for-<owner> 横の 🔄 ボタンを押す → `pull_request: review_requested` トリガーで `vibehawk-review.yml` が再発火し、最新差分でフルレビュー＋status check を更新する
 - **経路 3: `@vibehawk review` コメント**: PR コメントで `@vibehawk review` と書いて投稿 → `vibehawk-chat.yml` が `@vibehawk review` を検知し、bundled review POST と status check 更新を実行する
 
