@@ -5,7 +5,8 @@
 # comments[] から組み立てる。本スクリプトは以下を出力する（標準出力）:
 #   1. `**Actionable comments posted: N**`（actionable = category が 🧹 Nitpick 以外の件数。
 #      N=0 のときは行ごと出さない＝CodeRabbit の nitpick-only 本文と一致、Issue #282）
-#   2. 🧹 Nitpick comments (M) 折り畳み（category が 🧹 Nitpick の指摘をファイル別ネストで集約）
+#   2. ⚠️ Outside diff range comments (K) 折り畳み（_outside_diff=true の actionable を本文集約、Issue #281）
+#   3. 🧹 Nitpick comments (M) 折り畳み（category が 🧹 Nitpick の指摘をファイル別ネストで集約）
 #   3. 末尾マーカー <!-- vibehawk:summary --> / <!-- vibehawk:sha=<commit_id> -->
 #      （find-prev-summary.sh が前回 SHA を抽出するインクリメンタルレビューの一意特定に必須、Issue #57）
 #
@@ -93,6 +94,25 @@ def render_nit:
       else "" end)
     + "\n\n<details>\n<summary>🤖 AI 向け修正指示</summary>\n\n```\n" + .ai_prompt + "\n```\n\n</details>";
 
+# Issue #281: diff 範囲外の actionable 指摘を本文へ描画する（category/severity/effort の 3 軸ラベル付き）。
+# inline と同じ書式だが本文に置く。nitpick と違い actionable なので severity を出す。
+def render_outside:
+  (
+    if (.start_line != null) then ((.start_line|tostring) + "-" + ((.line // .start_line)|tostring))
+    elif (.line != null) then (.line|tostring)
+    else "" end
+  ) as $lref
+  | (if ($lref | length) > 0 then "`" + $lref + "`: " else "" end)
+    + "_" + .category + "_"
+    + (if ((.severity // "") | length) > 0 then " | _" + .severity + "_" else "" end)
+    + " | _" + .effort + "_\n\n"
+    + "**" + .title + "**\n\n"
+    + .description
+    + (if ((.suggestion // "") | length) > 0 then
+        "\n\n<details>\n<summary>🔧 提案差分</summary>\n\n```suggestion\n" + .suggestion + "\n```\n\n</details>"
+      else "" end)
+    + "\n\n<details>\n<summary>🤖 AI 向け修正指示</summary>\n\n```\n" + .ai_prompt + "\n```\n\n</details>";
+
 # Issue #272: 全指摘の ai_prompt をファイル別（@path 見出し）に束ねる。
 # 人が AI エージェントへ一括貼り付けして全指摘を直せるようにする（CodeRabbit の
 # "Prompt for all review comments with AI agents" 相当、文言は vibehawk 独自）。
@@ -103,9 +123,25 @@ def render_prompt_group:
 
 (.comments // []) as $all
 | (.commit_id // "") as $sha
-| [$all[] | select(.category != "🧹 Nitpick")] as $actionable
+| [$all[] | select(.category != "🧹 Nitpick") | select((._outside_diff // false) | not)] as $actionable_inline
+| [$all[] | select(.category != "🧹 Nitpick") | select(._outside_diff // false)] as $outside
 | [$all[] | select(.category == "🧹 Nitpick")] as $nits
-| (if ($actionable | length) > 0 then "**Actionable comments posted: " + (($actionable | length) | tostring) + "**\n\n" else "" end)
+| (if ($actionable_inline | length) > 0 then "**Actionable comments posted: " + (($actionable_inline | length) | tostring) + "**\n\n" else "" end)
+  + (if ($outside | length) > 0 then
+      "> [!NOTE]\n> diff 範囲外の行を指すため inline に投稿できない指摘です（GitHub Reviews API 制約）。本文に集約します。\n\n"
+      + "<details>\n<summary>⚠️ Outside diff range comments (" + (($outside | length) | tostring) + ")</summary><blockquote>\n\n"
+      + ( $outside
+          | group_by(.path)
+          | map(
+              (.[0].path) as $path
+              | "<details>\n<summary>" + $path + " (" + ((length)|tostring) + ")</summary><blockquote>\n\n"
+                + ( map(render_outside) | join("\n\n---\n\n") )
+                + "\n\n</blockquote></details>"
+            )
+          | join("\n\n")
+        )
+      + "\n\n</blockquote></details>\n\n"
+    else "" end)
   + (if ($nits | length) > 0 then
       "<details>\n<summary>🧹 Nitpick comments (" + (($nits | length) | tostring) + ")</summary><blockquote>\n\n"
       + ( $nits
@@ -123,7 +159,8 @@ def render_prompt_group:
   + (if ($all | length) > 0 then
       "<details>\n<summary>🤖 全指摘の AI 向け修正指示（一括）</summary>\n\n```\n"
       + "各指摘を現在のコードと突き合わせて検証し、まだ有効なものだけを最小限の変更で修正してください。無効な指摘は理由を添えてスキップしてください。\n\n"
-      + (if ($actionable | length) > 0 then "actionable:\n" + ($actionable | render_prompt_group) + "\n\n" else "" end)
+      + (($actionable_inline + $outside) as $act
+         | if ($act | length) > 0 then "actionable:\n" + ($act | render_prompt_group) + "\n\n" else "" end)
       + (if ($nits | length) > 0 then "nitpick:\n" + ($nits | render_prompt_group) + "\n" else "" end)
       + "```\n\n</details>\n\n"
     else "" end)

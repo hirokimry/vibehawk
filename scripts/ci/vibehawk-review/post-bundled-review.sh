@@ -26,19 +26,26 @@ printf '%s' "$STRUCTURED_OUTPUT" > "$PAYLOAD"
 # routing（line 37 付近）で .comments から nitpick が除かれるため、ここで先に取得する。
 nitpick_count="$(jq '[.comments[]? | select(.category == "🧹 Nitpick")] | length' "$PAYLOAD")"
 
+# Issue #281: diff 範囲外の行を指す inline 指摘に _outside_diff フラグを付ける（build-bundled-body が
+# 本文の Outside diff range へ集約、routing で inline から除外）。1 件でも範囲外が混ざると POST 全体が
+# 422 で落ちるのを防ぐ。失敗しても _outside_diff 無し（従来挙動）に degrade する（悪化させない）。
+if ! bash "$(dirname "$0")/mark-outside-diff.sh" "$PAYLOAD"; then
+  echo "::warning::vibehawk: mark-outside-diff に失敗（_outside_diff 判定をスキップし従来挙動で続行）"
+fi
+
 # Issue #271: レビュー本文（インラインをまとめるコメント）を build-bundled-body.sh で
 # 構造化フィールドから決定論的に組み立てる（CodeRabbit 互換: Actionable 件数 + 🧹 Nitpick comments）。
-# nitpick を含む raw comments を読むため、nitpick の routing より前に実行する。
+# nitpick・diff 範囲外を含む raw comments を読むため、routing より前に実行する。
 # 失敗時は graceful skip（exit 0 + ::warning::、次の status check が neutral に倒れる）。
 if ! BUNDLED_BODY="$(bash "$(dirname "$0")/build-bundled-body.sh" "$PAYLOAD")"; then
   echo "::warning::vibehawk: build-bundled-body に失敗したため bundled review POST を skip します（次の status check post が neutral に倒れます）"
   exit 0
 fi
 
-# Issue #271: nitpick（category=🧹 Nitpick）はインラインスレッドに出さず本文に集約する。
-# inline 投稿対象から除外し（routing）、actionable のみ comments[] に残す。
+# Issue #271/#281: inline 投稿対象を「actionable かつ diff 範囲内」に絞る（routing）。
+# 🧹 Nitpick と diff 範囲外（_outside_diff）は inline から除外し、本文へ集約済み。
 ROUTED="${RUNNER_TEMP}/vibehawk-review.routed.json"
-jq '.comments |= ([.[]? | select(.category != "🧹 Nitpick")])' "$PAYLOAD" > "$ROUTED" && mv "$ROUTED" "$PAYLOAD"
+jq '.comments |= ([.[]? | select(.category != "🧹 Nitpick") | select((._outside_diff // false) | not)])' "$PAYLOAD" > "$ROUTED" && mv "$ROUTED" "$PAYLOAD"
 
 # Issue #263: actionable の comments[] を最終 body へ組み立て、GitHub Reviews API 有効フィールド
 # （path/line/side/start_line/start_side/body）のみへ絞り込む。以降の jq 契約検証は組み立て後の body を検査する。

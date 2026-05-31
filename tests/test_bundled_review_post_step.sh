@@ -151,6 +151,11 @@ chmod +x "${TEST_TMP}/assemble-inline-bodies.sh"
 cp "${REPO_ROOT}/scripts/ci/vibehawk-review/build-bundled-body.sh" "${TEST_TMP}/build-bundled-body.sh"
 chmod +x "${TEST_TMP}/build-bundled-body.sh"
 
+# Issue #281: post-bundled-review.sh は同階層の mark-outside-diff.sh も `$(dirname "$0")` で呼ぶ
+# （diff 範囲外 inline を本文集約）。同様に TEST_TMP へ配置して相対解決を成立させる。
+cp "${REPO_ROOT}/scripts/ci/vibehawk-review/mark-outside-diff.sh" "${TEST_TMP}/mark-outside-diff.sh"
+chmod +x "${TEST_TMP}/mark-outside-diff.sh"
+
 run_step() {
   # 共通環境変数: REPO / PR_NUMBER / GH_TOKEN / RUNNER_TEMP / STRUCTURED_OUTPUT / DECIDED_EVENT
   # gh スタブを PATH 先頭に追加して実 gh より優先させる
@@ -871,6 +876,26 @@ else
   fail "Issue #222/#282: truly-clean APPROVE で body が空でない（body長=${#final_body}）"
 fi
 unset STRUCTURED_OUTPUT DECIDED_EVENT
+
+echo ""
+echo "--- ケース #281: diff 範囲外の actionable は inline から外し本文の Outside diff range へ（422 回避） ---"
+reset_logs
+# a.sh の hunk 内行=9..12。line10=in-diff（inline 投稿）, line99=範囲外（本文集約）
+export FILES_JSON='[{"filename":"a.sh","patch":"@@ -9,1 +9,4 @@\n ctx9\n+new10\n+new11\n+new12"}]'
+STRUCTURED_OUTPUT='{"event":"COMMENT","commit_id":"deadbeef","comments":[{"path":"a.sh","line":10,"side":"RIGHT","category":"⚠️ Potential issue","severity":"🟠 Major","effort":"⚡ Quick win","title":"in","description":"d","ai_prompt":"p"},{"path":"a.sh","line":99,"side":"RIGHT","category":"⚠️ Potential issue","severity":"🟡 Minor","effort":"⚡ Quick win","title":"out","description":"d","ai_prompt":"p"}]}'
+DECIDED_EVENT='REQUEST_CHANGES'
+export STRUCTURED_OUTPUT DECIDED_EVENT
+run_step > "${TEST_TMP}/step-stdout-281.log" 2>&1
+posts="$(count_posts)"
+inline_lines="$(jq -r '[.comments[].line] | @csv' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+final_body="$(jq -r '.body' "${TEST_TMP}/runner-temp/vibehawk-review.json")"
+if [[ "$posts" == "1" ]] && [[ "$inline_lines" == "10" ]] \
+   && grep -qF '⚠️ Outside diff range comments (1)' <<< "$final_body"; then
+  pass "Issue #281: 範囲外(99)を inline から除外し本文 Outside へ集約、inline は in-diff(10) のみ POST（422 回避）"
+else
+  fail "Issue #281: out-of-diff の routing が想定外（posts=${posts}, inline_lines=${inline_lines}）"
+fi
+unset FILES_JSON STRUCTURED_OUTPUT DECIDED_EVENT
 
 echo ""
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

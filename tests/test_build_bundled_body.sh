@@ -192,6 +192,26 @@ else
   fail "nitpick-only 時の出力が期待通りでない"
 fi
 
+echo "=== Case 6: _outside_diff の actionable は ⚠️ Outside diff range へ、inline 件数から除外（Issue #281） ==="
+out5="$(run_build '{"commit_id":"sha4","comments":[
+  {"path":"a.sh","line":10,"side":"RIGHT","category":"⚠️ Potential issue","severity":"🟠 Major","effort":"⚡ Quick win","title":"in","description":"d","ai_prompt":"p","_outside_diff":false},
+  {"path":"a.sh","line":99,"side":"RIGHT","category":"⚠️ Potential issue","severity":"🟡 Minor","effort":"🏗️ Heavy lift","title":"out","description":"od","ai_prompt":"op","_outside_diff":true}
+]}')"
+if grep -qF '**Actionable comments posted: 1**' <<< "$out5" \
+   && grep -qF '⚠️ Outside diff range comments (1)' <<< "$out5" \
+   && grep -qF '**out**' <<< "$out5"; then
+  pass "Actionable posted は inline のみ（1）+ ⚠️ Outside diff range comments (1) に範囲外を集約（Issue #281）"
+else
+  fail "Outside diff range セクションの出力が期待通りでない"
+fi
+
+# 範囲外指摘も統合 AI プロンプトに含まれる（握り潰さない）
+if grep -qF -- '- op' <<< "$out5"; then
+  pass "範囲外指摘の ai_prompt も統合 AI プロンプトに含まれる（Issue #281）"
+else
+  fail "範囲外指摘が統合 AI プロンプトに含まれない"
+fi
+
 echo ""
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
