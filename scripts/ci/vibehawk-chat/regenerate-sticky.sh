@@ -35,7 +35,8 @@ if [[ -n "$inline_json" ]]; then
         | { path: (.path // ""), line: (.line // .original_line // 0), body: (.body // "") } ] }')"
 else
   echo "::warning::vibehawk summary: インライン review コメント取得に失敗。空の検出結果で sticky を再生成します（Issue #293）"
-  STRUCTURED_OUTPUT='{"comments":[]}'
+  # コマンド置換で組み立てる（リテラル代入は SC2089/SC2090 を誘発するため）
+  STRUCTURED_OUTPUT="$(jq -nc '{comments: []}')"
 fi
 
 # PR メタ情報（Recent review info 用、取得失敗は空フォールバック）

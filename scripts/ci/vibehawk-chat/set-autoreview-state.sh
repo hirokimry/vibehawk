@@ -39,12 +39,23 @@ body="$(printf '%s\n%s' "🦅 vibehawk: ${human}" "<!-- vibehawk:autoreview=${st
 # 既存の自 Bot autoreview マーカーコメントを find→PATCH、無ければ POST（post-sticky-comment.sh と同パターン）。
 existing="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate 2>/dev/null || true)"
 existing_id=""
+existing_state=""
 if [[ -n "$existing" ]]; then
-  existing_id="$(printf '%s' "$existing" | jq -r -s --arg bot "$BOT_LOGIN" --arg marker "$MARKER_PREFIX" '
+  existing_marker="$(printf '%s' "$existing" | jq -r -s --arg bot "$BOT_LOGIN" --arg marker "$MARKER_PREFIX" '
     [ .[][]
       | select(.user.login == $bot)
       | select((.body // "") | contains($marker)) ]
-    | sort_by(.created_at) | last // {} | .id // ""')"
+    | sort_by(.created_at) | last // {}')"
+  existing_id="$(printf '%s' "$existing_marker" | jq -r '.id // ""')"
+  existing_state="$(printf '%s' "$existing_marker" | jq -r '.body // ""' \
+    | grep -oE 'vibehawk:autoreview=[a-z]+' | sed 's/vibehawk:autoreview=//' | head -1 || true)"
+fi
+
+# 冪等: 既存 state と設定しようとする state が一致するなら、PATCH も通知コメントも skip する
+# （同一コマンド連投での重複通知を防ぐ。re-evaluate-verdict.sh と同じ冪等思想）。
+if [[ -n "$existing_id" && "$existing_state" == "$state" ]]; then
+  echo "vibehawk: autoreview 状態は既に ${state} です。更新・通知を skip します（冪等、Issue #295）"
+  exit 0
 fi
 
 if [[ -n "$existing_id" ]]; then

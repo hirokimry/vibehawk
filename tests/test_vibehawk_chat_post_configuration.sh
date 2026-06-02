@@ -46,8 +46,13 @@ run_in_workdir() {
 }
 
 echo "=== Case 1: .vibehawk.yaml ありで設定値を表示 ==="
-WD1="${TMP_DIR}/wd1"; mkdir -p "$WD1"
-cat > "$WD1/.vibehawk.yaml" <<'EOF'
+# pyyaml 不在環境（macos-latest / windows-latest runner 等）では YAML パースが成立しないため skip する
+# （test_vibehawk_chat_load_config.sh / test_yaml_parser.sh と同じ規約。本番は ubuntu runner で pyyaml 利用可）。
+if ! python3 -c "import yaml" > /dev/null 2>&1; then
+  echo "  ⚠ pyyaml が見つからない → Case 1（YAML パース成功）をスキップ（CI ubuntu では pyyaml 利用可）"
+else
+  WD1="${TMP_DIR}/wd1"; mkdir -p "$WD1"
+  cat > "$WD1/.vibehawk.yaml" <<'EOF'
 language: ja
 size_limits:
   full_review_files: 50
@@ -56,12 +61,13 @@ size_limits:
 path_filters:
   - "!**/*.lock"
 EOF
-rc=$(run_in_workdir "$WD1")
-if [[ "$rc" -eq 0 ]] && grep -qF "language: ja" "$BODY" && grep -qF "full_review_files: 50" "$BODY" \
-   && grep -qF ".vibehawk.yaml" "$BODY" && grep -qF "path_filters: 1 件" "$BODY"; then
-  pass ".vibehawk.yaml ありで設定値（language/size_limits/path_filters 件数）を表示"
-else
-  fail "Case1 不一致: rc=$rc body=$(head -c 400 "$BODY")"
+  rc=$(run_in_workdir "$WD1")
+  if [[ "$rc" -eq 0 ]] && grep -qF "language: ja" "$BODY" && grep -qF "full_review_files: 50" "$BODY" \
+     && grep -qF ".vibehawk.yaml" "$BODY" && grep -qF "path_filters: 1 件" "$BODY"; then
+    pass ".vibehawk.yaml ありで設定値（language/size_limits/path_filters 件数）を表示"
+  else
+    fail "Case1 不一致: rc=$rc body=$(head -c 400 "$BODY")"
+  fi
 fi
 
 echo "=== Case 2: .vibehawk.yaml 不在で default を表示 ==="

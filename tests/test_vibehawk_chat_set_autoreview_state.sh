@@ -92,6 +92,23 @@ else
   fail "確認本文に裸の @vibehawk コマンドがある（${fenced_count}/${at_count}、無限ループ危険）"
 fi
 
+echo "=== Case 6: 既に同一 state（paused）で再度 pause → PATCH も通知も skip（冪等） ==="
+existing_paused='[{"user":{"login":"vibehawk-for-hirokimry[bot]"},"body":"⏸️ <!-- vibehawk:autoreview=paused -->","created_at":"2026-01-01T00:00:00Z","id":99}]'
+rc=$(run_script "@vibehawk pause" "$existing_paused")
+if [[ "$rc" -eq 0 ]] && [[ ! -s "$LOG" ]]; then
+  pass "同一 state 再設定 → PATCH/通知を skip（冪等、重複通知なし）"
+else
+  fail "Case6: rc=$rc log=$(cat "$LOG")"
+fi
+
+echo "=== Case 7: 既存 paused で resume（state 変化あり）→ PATCH 実行 ==="
+rc=$(run_script "@vibehawk resume" "$existing_paused")
+if [[ "$rc" -eq 0 ]] && grep -qF "METHOD=PATCH" "$LOG" && grep -qF "vibehawk:autoreview=active" "$LOG"; then
+  pass "state 変化あり（paused→active）→ PATCH 実行（冪等 skip しない）"
+else
+  fail "Case7: rc=$rc log=$(cat "$LOG")"
+fi
+
 echo "=== Case 5: env 欠落（COMMENT_BODY）→ 非 0 ==="
 set +e
 PATH="$STUB_DIR:$PATH" COMMENTS_FIXTURE="${TMP_DIR}/comments.json" METHOD_LOG="${TMP_DIR}/method.log" \
