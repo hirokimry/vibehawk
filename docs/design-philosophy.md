@@ -600,6 +600,74 @@ vibecorp_stamp_dir
 
 gate hook 失敗時はこのディレクトリ内の `<name>-ok` ファイル有無で原因を切り分けられる。
 
+## @vibehawk コマンド体系の設計（epic #289 で確定）
+
+> [!IMPORTANT]
+> resolve イベントへの自動反応は GitHub Actions では構造的に実現できない。
+> だから vibehawk は `@vibehawk` **コマンド駆動**（`issue_comment` トリガー）で CodeRabbit のコマンド群を再現する。
+> parity の対象は **観察・通知系のみ**。書き換え系は MVV Value 2 により恒久対象外とする。
+
+CodeRabbit には「PR のコメントを全て resolve すると自動で approve に切り替わる」挙動がある。
+vibehawk で同じ「resolve したら自動で再判定」を **resolve イベント起点では実装しない** と決めた。
+代わりに利用者が `@vibehawk` コマンドを投稿したときに再判定する方式を採る。
+
+### 決定の一言要約
+
+| 項目 | 内容 |
+|------|------|
+| 採用 | `@vibehawk` コマンド駆動（`issue_comment` トリガー、`vibehawk-chat.yml` 基盤） |
+| 却下 | resolve イベント自動反応（`pull_request_review_thread` トリガー） |
+| parity 範囲 | 観察・通知系コマンドのみ |
+| 恒久対象外 | コード・ファイルを書き換える系コマンド（MVV Value 2） |
+
+### 根拠 1: resolve 自動反応は Actions で startup_failure になる
+
+`pull_request_review_thread`（resolved / unresolved）は GitHub の **webhook イベント** としては存在する。
+しかし GitHub Actions の `on:` トリガーとしては **使えない**。
+`on:` に書いた workflow は **startup_failure** で起動せず、`vibehawk` required status check が永久に post されない。
+その結果 PR が恒久ブロックされる。
+
+- 📍 実証: Issue #287 / PR #288 はこの方式を試し、startup_failure を再現して close 済み。
+- この事実は「推測」ではなく実際の Actions 実行ログで確認した外部仕様。
+
+### 根拠 2: CodeRabbit が resolve に反応できるのはアーキ差（劣後ではない）
+
+| 観点 | CodeRabbit | vibehawk |
+|------|-----------|----------|
+| 実行基盤 | webhook サーバを持つ GitHub App | GitHub Actions |
+| resolve webhook の受信 | 自前サーバが直接受信できる | Actions の `on:` では受信不可 |
+| resolve 起点の自動 approve | 可能 | 不可（基盤の制約） |
+
+vibehawk が resolve に自動反応「しない」のは品質の劣後ではない。
+サーバを持たない（MVV Value 1）という構造選択の必然的な帰結である。
+
+### 根拠 3: コマンド駆動なら同じ価値を公式の道で再現できる
+
+`issue_comment` は Actions の正規トリガーである。
+利用者が `@vibehawk review` 等を投稿した時点で workflow が起動し、最新差分で再判定できる。
+これは「resolve したら更新される」価値を、利用者の明示操作に置き換えて再現するものである。
+Value 4「公式の道を、迂回せず歩く」とも整合する。
+
+### parity の線引き（MVV Value 2「観察する、書き換えない」）
+
+再現するのは **観察し、伝えるだけ** のコマンドに限る。
+コードや PR メタデータを **書き換える** コマンドは恒久的に実装しない。
+
+| 区分 | コマンド | 方針 |
+|------|---------|------|
+| ✅ 再現（観察・通知系） | review / full review / resolve / summary / help / configuration / pause / resume / ignore | epic #289 で実装 |
+| ❌ 恒久対象外（書き換え系） | autofix / generate docstrings / generate unit tests / generate configuration | MVV Value 2 違反のため実装しない |
+
+書き換え系を実装しないのは CodeRabbit に劣るからではない。
+「観察し、伝えるところで止まる」という vibehawk の核を守る **意図的な差別化** である。
+この恒久対象外は新規制約ではなく、`docs/POLICY.md` 大方針 2（コード生成系を実装しない）の追認にあたる。
+
+### 関連
+
+- MVV: `MVV.md` Value 2「観察する、書き換えない」 / Value 4「公式の道を、迂回せず歩く」
+- やらない範囲（書き換え系の WHAT 記録）: `docs/specification.md`「やらない範囲（明示的除外）」
+- 各コマンドの個別仕様: `docs/specification.md`（実装に伴い各 PR で更新）
+
 ## ガードレール
 
 - **Public Ready**: セキュリティ情報・特定プロダクト名・ローカルパス依存の混入禁止。
