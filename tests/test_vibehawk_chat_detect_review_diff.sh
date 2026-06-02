@@ -138,6 +138,20 @@ else
   fail "Case7 不一致: rc=$rc out=$(cat "$OUT")"
 fi
 
+echo "=== Case 9: 大文字 OWNER でも bot login を小文字正規化して一致 → diff_exists=false ==="
+# 実 bot login は小文字（vibehawk-for-hirokimry[bot]）だが OWNER は大文字混じりで渡る場合
+printf '%s' "$(make_review "$HEAD" 'vibehawk-for-hirokimry[bot]' yes)" > "${TMP_DIR}/reviews.json"
+: > "${TMP_DIR}/github_output"
+rc=0
+PATH="$STUB_DIR:$PATH" REVIEWS_FIXTURE="${TMP_DIR}/reviews.json" GH_FAIL=0 \
+  GH_TOKEN=t REPO="HiroKimry/vibehawk" PR_NUMBER=42 HEAD_SHA="$HEAD" OWNER="HiroKimry" \
+  GITHUB_OUTPUT="${TMP_DIR}/github_output" bash "$SCRIPT" > "${TMP_DIR}/stdout" 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]] && grep -qx "diff_exists=false" "$OUT"; then
+  pass "大文字 OWNER を正規化して bot login 一致 → diff_exists=false"
+else
+  fail "Case9 不一致: rc=$rc out=$(cat "$OUT")"
+fi
+
 echo "=== Case 8: 必須 env 未設定（HEAD_SHA 欠落）→ 非 0 終了 ==="
 set +e
 PATH="$STUB_DIR:$PATH" REVIEWS_FIXTURE="${TMP_DIR}/reviews.json" GH_FAIL=0 \

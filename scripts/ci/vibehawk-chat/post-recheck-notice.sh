@@ -15,7 +15,11 @@ set -euo pipefail
 : "${DECIDED_EVENT:?DECIDED_EVENT must be set}"
 
 # UNRESOLVED_COUNT は REQUEST_CHANGES 時のみ使う。未設定でも安全に動くよう既定値を置く。
+# 整数以外（想定外の step output）は本文へ混入させず 0 に倒す（防御的）。
 UNRESOLVED_COUNT="${UNRESOLVED_COUNT:-0}"
+if [[ ! "$UNRESOLVED_COUNT" =~ ^[0-9]+$ ]]; then
+  UNRESOLVED_COUNT="0"
+fi
 
 case "$DECIDED_EVENT" in
   SKIP)

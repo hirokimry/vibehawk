@@ -17,7 +17,11 @@ set -euo pipefail
 : "${OWNER:?OWNER must be set}"
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
 
-BOT_LOGIN="vibehawk-for-${OWNER}[bot]"
+# GitHub App login は小文字正規化（vibehawk-for-<owner>）。github.repository_owner は大文字
+# 保持があり得る（例: "MyOrg"）ため小文字化してから bot login を組む（re-evaluate-verdict.sh と同じ、PR #193）。
+# 正規化しないと大文字 owner のリポジトリで自 Bot review が一致せず、差分なし経路に入れない。
+normalized_owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
+BOT_LOGIN="vibehawk-for-${normalized_owner}[bot]"
 
 emit() {
   # $1: diff_exists（true/false）  $2: prev_sha
