@@ -636,10 +636,17 @@ CLI による secret 自動書込はせず、3 secrets すべて利用者が Git
 
 - 製品版バージョンは `package.json` の `version` だけで管理する。
 - `npx vibehawk version` が表示するのも `package.json` の値。
-- main マージ時の自動採番・GitHub Release 作成は semantic-release に委ねる。
-  - 📍 導入: Refs #307。
+- リリースは 2 段階で回る。
+  - main は PR 必須 + enforce_admins のため、CI から main へ直接 commit しない設計。
+  - 1. リリース PR 内で `scripts/ci/release/prepare-release.sh` が動く。
+    - Conventional Commits からバージョンを決定する。
+    - `package.json` + `CHANGELOG.md` を PR 差分として更新する。
+  - 2. main マージ時に `release-tag.yml` が動く。
+    - version が新規なら tag + GitHub Release を作成する（branch ref は触らない）。
+    - 作成された Release が `release.yml` の npm publish を発火させる。
+  - 事故防止: push 前後で version が変化した時だけ Release を作る。
 - bump 漏れ警告の監視対象も `package.json`（`.claude-plugin/plugin.json` は対象外）。
-  - 📍 導入: Refs #308。
+  - 📍 実装: `version-bump-check.yml`（Issue #308）。
 
 ## CLI 仕様
 
