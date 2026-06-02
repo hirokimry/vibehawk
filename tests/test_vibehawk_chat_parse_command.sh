@@ -59,13 +59,14 @@ assert_cmd "@vibehawk こんにちは" "chat" "通常メンション（未知語
 assert_cmd "@vibehawk reviewer を追加して" "chat" "reviewer（review の部分文字列誤発火しない）"
 
 echo "=== env 欠落 ==="
+# CI では GITHUB_OUTPUT が環境にエクスポート済みのため、env -u で明示的に unset して検証する。
 set +e
-COMMENT_BODY="x" bash "$SCRIPT" >/dev/null 2>&1
+env -u GITHUB_OUTPUT COMMENT_BODY="x" bash "$SCRIPT" >/dev/null 2>&1
 rc1=$?
-GITHUB_OUTPUT="${TMP_DIR}/out" bash "$SCRIPT" >/dev/null 2>&1
+env -u COMMENT_BODY GITHUB_OUTPUT="${TMP_DIR}/out" bash "$SCRIPT" >/dev/null 2>&1
 rc2=$?
 set -e
-if [[ "$rc1" -ne 0 && "$rc2" -ne 0 ]]; then pass "必須 env 欠落で非 0"; else fail "env 欠落でも 0 終了"; fi
+if [[ "$rc1" -ne 0 && "$rc2" -ne 0 ]]; then pass "必須 env 欠落で非 0"; else fail "env 欠落でも 0 終了（rc1=$rc1 rc2=$rc2）"; fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
