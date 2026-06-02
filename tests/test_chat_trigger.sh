@@ -68,6 +68,7 @@ declare -a expected_chat_scripts=(
   "re-evaluate-verdict.sh"
   "post-recheck-notice.sh"
   "resolve-own-threads.sh"
+  "regenerate-sticky.sh"
 )
 for s in "${expected_chat_scripts[@]}"; do
   if [[ -f "${CHAT_SCRIPTS_DIR}/${s}" ]]; then
@@ -873,6 +874,56 @@ if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "$RESOLVE_SCRIPT" > /dev/null;
   fail "resolve-own-threads に LLM 呼び出しが混入している（Issue #292）"
 else
   pass "resolve-own-threads は LLM を呼ばない決定論的 step（Issue #292）"
+fi
+
+# === Issue #293（epic #289 子4）: @vibehawk summary コマンドの検証 ===
+# sticky walkthrough を LLM 非依存で再生成。verdict は変えない。
+echo "=== Issue #293: @vibehawk summary 検証 ==="
+
+# summary step が regenerate-sticky.sh を呼ぶ
+if grep -F 'id: regenerate_sticky' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/regenerate-sticky.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "summary step (regenerate_sticky) が regenerate-sticky.sh を呼ぶ（Issue #293）"
+else
+  fail "summary step が存在しない（Issue #293）"
+fi
+
+# summary step は @vibehawk summary + PR で発火
+SUMMARY_BLOCK="$(awk '/id: regenerate_sticky/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$SUMMARY_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk summary')" > /dev/null && \
+   echo "$SUMMARY_BLOCK" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
+  pass "summary step の起動条件が @vibehawk summary + PR（Issue #293）"
+else
+  fail "summary step の起動条件が不適切（Issue #293）"
+fi
+
+# pr_head が summary でも発火
+PR_HEAD_SUMMARY_BLOCK="$(awk '/id: pr_head/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$PR_HEAD_SUMMARY_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk summary')" > /dev/null; then
+  pass "pr_head step が @vibehawk summary でも発火する（Issue #293、HEAD SHA 取得）"
+else
+  fail "pr_head step が @vibehawk summary で発火しない（Issue #293）"
+fi
+
+# claude-code-action が summary でスキップ（LLM 不要）
+if echo "$CLAUDE_SKIP_BLOCK" | grep -F "@vibehawk summary" > /dev/null; then
+  pass "claude-code-action が @vibehawk summary でスキップされる（Issue #293、LLM 不要）"
+else
+  # CLAUDE_SKIP_BLOCK は Issue #292 ブロックで定義済み。未定義なら再抽出
+  CLAUDE_SKIP_BLOCK2="$(awk '/- name: claude-code-action でチャット応答/,/uses: anthropics/' "$CHAT_WORKFLOW")"
+  if echo "$CLAUDE_SKIP_BLOCK2" | grep -F "@vibehawk summary" > /dev/null; then
+    pass "claude-code-action が @vibehawk summary でスキップされる（Issue #293、LLM 不要）"
+  else
+    fail "claude-code-action の summary スキップ条件が不在（Issue #293）"
+  fi
+fi
+
+# regenerate-sticky は LLM を呼ばない（決定論的）
+STICKY_SCRIPT="${CHAT_SCRIPTS_DIR}/regenerate-sticky.sh"
+if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "$STICKY_SCRIPT" > /dev/null; then
+  fail "regenerate-sticky に LLM 呼び出しが混入している（Issue #293）"
+else
+  pass "regenerate-sticky は LLM を呼ばない決定論的 step（Issue #293）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
