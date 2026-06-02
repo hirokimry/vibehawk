@@ -138,5 +138,27 @@ else
   fail "既存 tag があるのに release create が呼ばれた: $(cat "$GH_LOG")"
 fi
 
+# --- case 4: head の package.json から version を取得できない → Release 作成しない（graceful skip、Issue #319） ---
+R4="${TMP_ROOT}/r4"
+mkdir -p "$R4"
+setup_repo "$R4"
+before4="$(git -C "$R4" rev-parse HEAD)"
+# version を持たない不正な package.json にして、jq が空を返すケースを再現する
+printf 'not a json\n' > "${R4}/package.json"
+git -C "$R4" add -A
+git -C "$R4" commit -q -m "✨ feat: 壊れた package.json"
+after4="$(git -C "$R4" rev-parse HEAD)"
+: > "$GH_LOG"
+script_exit=0
+(
+  cd "$R4"
+  PATH="${STUB_BIN}:$PATH" BEFORE_SHA="$before4" AFTER_SHA="$after4" bash "$SCRIPT" > /dev/null 2>&1
+) || script_exit=$?
+if [[ "$script_exit" -eq 0 ]] && ! grep -q "release create" "$GH_LOG"; then
+  pass "version 取得不能 → set -e で abort せず gh release create も呼ばない（graceful skip）"
+else
+  fail "version 取得不能時の挙動が想定外（exit=$script_exit, gh=$(cat "$GH_LOG"))"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
