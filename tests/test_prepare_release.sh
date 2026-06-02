@@ -69,7 +69,9 @@ mkdir -p "$R1"
 setup_repo "$R1"
 git -C "$R1" commit -q --allow-empty -m "📖 docs: 説明追記"
 out1="$(cd "$R1" && bash "$SCRIPT" 2> /dev/null)"
-ver1="$(node -p "require('${R1}/package.json').version")"
+# node はネイティブ Windows バイナリで MSYS 絶対パス（/tmp/...）を解決できないため、
+# cd して相対 require で読む（Issue #313、Windows runner の MODULE_NOT_FOUND 対策）。
+ver1="$(cd "$R1" && node -p 'require("./package.json").version')"
 if [[ -z "$out1" && "$ver1" == "0.1.0" ]]; then
   pass "docs のみ → bump せず stdout 空・version 据え置き"
 else
@@ -83,7 +85,7 @@ setup_repo "$R2"
 git -C "$R2" commit -q --allow-empty -m "✨ feat: 新機能"
 git -C "$R2" commit -q --allow-empty -m "🐛 fix: 不具合修正"
 out2="$(cd "$R2" && bash "$SCRIPT" 2> /dev/null)"
-ver2="$(node -p "require('${R2}/package.json').version")"
+ver2="$(cd "$R2" && node -p 'require("./package.json").version')"
 if [[ "$out2" == "0.2.0" ]]; then
   pass "feat 混在 → stdout が新バージョン 0.2.0 のみ"
 else
