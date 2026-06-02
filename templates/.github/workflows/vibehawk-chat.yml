@@ -138,6 +138,29 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: bash scripts/ci/vibehawk-chat/regenerate-sticky.sh
 
+      # Issue #294（epic #289 子5）: `@vibehawk help` で利用可能コマンド一覧を返す（表示のみ・LLM 不要）。
+      # Issue でも PR でも動く（PR 限定にしない）。
+      - name: コマンド一覧を表示（@vibehawk help 経路、Issue #294）
+        id: post_help
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk help')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: bash scripts/ci/vibehawk-chat/post-help.sh
+
+      # Issue #294: `@vibehawk configuration` で現在の vibehawk 設定（.vibehawk.yaml or default）を表示する。
+      - name: 現在の設定を表示（@vibehawk configuration 経路、Issue #294）
+        id: post_configuration
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk configuration')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: bash scripts/ci/vibehawk-chat/post-configuration.sh
+
       # Issue #290: 差分なしの再レビューでは claude-code-action（LLM）を実行しない（API コスト 0）。
       # chat モード（@vibehawk review でない通常メンション）は review_diff が未実行で
       # diff_exists が空のため `'' == 'false'` が偽となり、従来どおり claude が動く。
@@ -146,6 +169,7 @@ jobs:
       # （full review は差分なしスキップを適用せず常に全件レビューする意図的挙動）。
       # Issue #292: @vibehawk resolve は LLM 不要の決定論的操作のため claude をスキップする。
       # Issue #293: @vibehawk summary も LLM 非依存（既存検出結果から sticky 再生成）のためスキップする。
+      # Issue #294: @vibehawk help / configuration も決定論的表示のためスキップする（PR 限定なし）。
       - name: claude-code-action でチャット応答
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
@@ -155,7 +179,9 @@ jobs:
           !(contains(github.event.comment.body, '@vibehawk resolve') &&
             github.event.issue.pull_request != null) &&
           !(contains(github.event.comment.body, '@vibehawk summary') &&
-            github.event.issue.pull_request != null)
+            github.event.issue.pull_request != null) &&
+          !contains(github.event.comment.body, '@vibehawk help') &&
+          !contains(github.event.comment.body, '@vibehawk configuration')
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -269,6 +295,7 @@ jobs:
             - スレッドが PR (`IS_PR=true`) なら PR diff も参考にしてよい（`gh pr diff $ISSUE_NUMBER`）
             - スレッドが Issue (`IS_PR=false`) なら Issue 本文（履歴の最初の要素）を中心に応答
             - LANGUAGE=ja の場合は日本語で応答、それ以外は英語
+            - **未知コマンドへの案内（Issue #294）**: メッセージが `@vibehawk <単語>` の形で、既知コマンド（review / full review / resolve / summary / help / configuration / pause / resume / ignore）のいずれにも該当しない「コマンドのつもりの入力」と見られる場合は、応答に利用可能コマンド一覧（help 相当）を含めて案内する。通常の会話・質問はそのまま会話として応答する。
 
             ### 投稿方法
 
