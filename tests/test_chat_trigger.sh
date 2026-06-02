@@ -767,5 +767,59 @@ else
   pass "差分なし経路スクリプトに LLM 呼び出しが含まれない（Issue #290、gh api のみで API コスト 0）"
 fi
 
+# === Issue #291（epic #289 子2）: @vibehawk full review コマンドの検証 ===
+# 過去指摘を無視した PR 全体再レビュー。@vibehawk review（増分）と排他で衝突しない。
+echo "=== Issue #291: @vibehawk full review 検証 ==="
+
+# IS_FULL_REVIEW env が prompt に渡る
+if grep -F "IS_FULL_REVIEW:" "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F "contains(github.event.comment.body, '@vibehawk full review')" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に IS_FULL_REVIEW (contains '@vibehawk full review') が渡される（Issue #291）"
+else
+  fail "prompt に IS_FULL_REVIEW が渡されていない（Issue #291、full review コマンド検知の前提）"
+fi
+
+# prompt に全体再レビューモード分岐と「過去指摘無視・全件評価」指示が含まれる
+if grep -F "全体再レビューモード" "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F "過去の vibehawk 指摘" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に全体再レビューモード（過去指摘無視・全件評価）が含まれる（Issue #291）"
+else
+  fail "prompt に全体再レビューモードの分岐指示が含まれない（Issue #291）"
+fi
+
+# pr_head が full review でも発火する
+PR_HEAD_FULL_BLOCK="$(awk '/id: pr_head/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$PR_HEAD_FULL_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk full review')" > /dev/null; then
+  pass "pr_head step が @vibehawk full review でも発火する（Issue #291、HEAD SHA 取得）"
+else
+  fail "pr_head step が @vibehawk full review で発火しない（Issue #291）"
+fi
+
+# post_review が full review でも発火する
+POST_REVIEW_FULL_BLOCK="$(awk '/id: post_review/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$POST_REVIEW_FULL_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk full review')" > /dev/null; then
+  pass "post_review step が @vibehawk full review でも bundled review を post する（Issue #291）"
+else
+  fail "post_review step が @vibehawk full review で発火しない（Issue #291）"
+fi
+
+# post-status-check が full review でも発火する
+STATUS_CHECK_BLOCK="$(awk '/status check を post（@vibehawk/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$STATUS_CHECK_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk full review')" > /dev/null; then
+  pass "post-status-check step が @vibehawk full review でも status check を更新する（Issue #291）"
+else
+  fail "post-status-check step が @vibehawk full review で発火しない（Issue #291）"
+fi
+
+# 衝突しないこと: review_diff / reverdict gate は @vibehawk full review を含まない（増分経路と排他）
+REVIEW_DIFF_BLOCK="$(awk '/id: review_diff/,/run: bash/' "$CHAT_WORKFLOW")"
+REVERDICT_BLOCK="$(awk '/id: reverdict/,/run: bash/' "$CHAT_WORKFLOW")"
+if ! echo "$REVIEW_DIFF_BLOCK" | grep -F "@vibehawk full review" > /dev/null && \
+   ! echo "$REVERDICT_BLOCK" | grep -F "@vibehawk full review" > /dev/null; then
+  pass "review_diff / reverdict は @vibehawk full review を gate に含まない（増分経路と衝突しない、Issue #291）"
+else
+  fail "review_diff / reverdict が full review を巻き込んでいる（Issue #291、増分経路と衝突）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
