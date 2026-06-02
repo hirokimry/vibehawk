@@ -38,18 +38,18 @@ set -euo pipefail
 OWNER_NAME="${REPO%%/*}"
 REPO_NAME="${REPO##*/}"
 
+# reviewThreads 全ページ走査ヘルパーを source する（first:100 1 回読みの取りこぼし対策、CodeRabbit 指摘）。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/ci/vibehawk-chat/lib-review-threads.sh
+. "${SCRIPT_DIR}/lib-review-threads.sh"
+
 # GitHub App login は小文字正規化（vibehawk-for-<owner>）。github.repository_owner は大文字
 # 保持があり得る（例: "MyOrg"）ため両側を小文字化してから比較する（auto-resolve.sh と同じ、PR #193）。
 normalized_owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
 EXPECTED_LOGIN="vibehawk-for-${normalized_owner}"
 
-# reviewThreads を author 付きで取得する（auto-resolve.sh と同形のクエリ）。
-# GraphQL の author.login は [bot] サフィックスなしで返る（REST API とは異なる GitHub GraphQL 仕様）。
-THREADS_JSON="$(gh api graphql \
-  -f query='query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login } } } } } } } }' \
-  -F owner="${OWNER_NAME}" \
-  -F name="${REPO_NAME}" \
-  -F pr="${PR_NUMBER}")"
+# reviewThreads を author 付きで全ページ取得する（GraphQL author.login は [bot] サフィックスなし）。
+THREADS_JSON="$(fetch_all_review_threads "${OWNER_NAME}" "${REPO_NAME}" "${PR_NUMBER}")"
 
 # 自 Bot（vibehawk-for-<owner>）が author のスレッドだけを抽出する。author.login も小文字正規化する。
 own_total="$(printf '%s' "$THREADS_JSON" | jq --arg login "$EXPECTED_LOGIN" '

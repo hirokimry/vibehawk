@@ -90,6 +90,25 @@ else
   fail "Case3 不一致: rc=$rc body=$(head -c 400 "$BODY")"
 fi
 
+echo "=== Case 3b: 型不正 .vibehawk.yaml（size_limits/path_filters が非オブジェクト）で落ちず default ==="
+if ! python3 -c "import yaml" > /dev/null 2>&1; then
+  echo "  ⚠ pyyaml が見つからない → Case 3b（型不正 YAML パース）をスキップ"
+else
+  WD3b="${TMP_DIR}/wd3b"; mkdir -p "$WD3b"
+  cat > "$WD3b/.vibehawk.yaml" <<'EOF'
+language: ja
+size_limits: "oops"
+path_filters: foo
+EOF
+  rc=$(run_in_workdir "$WD3b")
+  # YAML としては読めるが schema が崩れている → 各キーは default、language は読めるので ja
+  if [[ "$rc" -eq 0 ]] && grep -qF "full_review_files: 30" "$BODY" && grep -qF "path_filters: 0 件" "$BODY"; then
+    pass "型不正 YAML でも落ちず各キー default にフォールバック"
+  else
+    fail "Case3b 不一致: rc=$rc body=$(head -c 400 "$BODY")"
+  fi
+fi
+
 echo "=== Case 4: 外部 URL を含まない ==="
 if ! grep -qE 'https?://' "$BODY"; then
   pass "configuration 本文に外部 URL を含まない"

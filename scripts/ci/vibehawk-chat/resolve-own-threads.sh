@@ -33,21 +33,14 @@ set -euo pipefail
 normalized_owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
 EXPECTED_LOGIN="vibehawk-for-${normalized_owner}"
 
-# 全 reviewThread を {id, isResolved, author.login} で取得する（auto-resolve.sh と同形・同上限）。
-# GraphQL author.login は [bot] サフィックスなしで返る（REST API とは異なる GitHub GraphQL 仕様）。
-THREADS_JSON="$(gh api graphql \
-  -f query='query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } } } } } } } }' \
-  -F owner="${REPO%%/*}" \
-  -F name="${REPO##*/}" \
-  -F pr="${PR_NUMBER}")"
+# reviewThreads 全ページ走査ヘルパーを source する（first:100 1 回読みだと 101 件目以降を取りこぼす、CodeRabbit 指摘）。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/ci/vibehawk-chat/lib-review-threads.sh
+. "${SCRIPT_DIR}/lib-review-threads.sh"
 
-# first: 100 上限の truncation 警告: 100 件返ってきたら 101 件目以降を取りこぼしている可能性がある。
-# 手動 resolve は「全件解決」が意図のため、上限到達を可観測にする（auto-resolve.sh は LLM 選択リスト
-# 入力のため上限の意味が異なるが、本スクリプトは全件収集なので明示警告する）。
-total_nodes="$(printf '%s' "$THREADS_JSON" | jq '.data.repository.pullRequest.reviewThreads.nodes | length')"
-if [[ "$total_nodes" -ge 100 ]]; then
-  echo "::warning::vibehawk: reviewThreads が上限 100 件に達しました。101 件目以降の未解決スレッドは今回の resolve 対象外の可能性があります（Issue #292）"
-fi
+# 全 reviewThread を {id, isResolved, author.login} で全ページ取得する。
+# GraphQL author.login は [bot] サフィックスなしで返る（REST API とは異なる GitHub GraphQL 仕様）。
+THREADS_JSON="$(fetch_all_review_threads "${REPO%%/*}" "${REPO##*/}" "${PR_NUMBER}")"
 
 # 自 Bot かつ未解決のスレッド id を収集する（author.login も小文字正規化して比較）。
 own_unresolved_ids=()

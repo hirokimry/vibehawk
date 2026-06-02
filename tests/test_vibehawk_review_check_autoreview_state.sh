@@ -61,6 +61,10 @@ echo "=== Case 4: 不正値マーカー → active（安全側） ==="
 rc=$(run_script "[{\"user\":{\"login\":\"$bot\"},\"body\":\"<!-- vibehawk:autoreview=bogus -->\",\"created_at\":\"2026-01-01T00:00:00Z\"}]")
 if [[ "$rc" -eq 0 ]] && grep -qx "state=active" "$OUT"; then pass "不正値 → active（安全側）"; else fail "Case4: rc=$rc out=$(cat "$OUT")"; fi
 
+echo "=== Case 4b: 自 Bot ignored マーカー → state=ignored（ignore 正常系、Issue #295） ==="
+rc=$(run_script "[{\"user\":{\"login\":\"$bot\"},\"body\":\"🚫 <!-- vibehawk:autoreview=ignored -->\",\"created_at\":\"2026-01-01T00:00:00Z\"}]")
+if [[ "$rc" -eq 0 ]] && grep -qx "state=ignored" "$OUT"; then pass "自 Bot ignored マーカー → ignored（ignore 要件の正常系）"; else fail "Case4b: rc=$rc out=$(cat "$OUT")"; fi
+
 echo "=== Case 5: 最新マーカー優先（paused→active の順で active） ==="
 rc=$(run_script "[{\"user\":{\"login\":\"$bot\"},\"body\":\"<!-- vibehawk:autoreview=paused -->\",\"created_at\":\"2026-01-01T00:00:00Z\"},{\"user\":{\"login\":\"$bot\"},\"body\":\"<!-- vibehawk:autoreview=active -->\",\"created_at\":\"2026-01-02T00:00:00Z\"}]")
 if [[ "$rc" -eq 0 ]] && grep -qx "state=active" "$OUT"; then pass "最新マーカー（active）を優先"; else fail "Case5: rc=$rc out=$(cat "$OUT")"; fi

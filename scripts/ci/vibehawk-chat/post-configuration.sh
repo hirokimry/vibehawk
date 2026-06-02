@@ -30,12 +30,14 @@ if [[ -f ".vibehawk.yaml" ]]; then
   fi
   if [[ -n "$config_json" ]]; then
     source_label=".vibehawk.yaml"
-    language="$(printf '%s' "$config_json" | jq -r '.language // "en"')"
-    full_review_files="$(printf '%s' "$config_json" | jq -r '.size_limits.full_review_files // 30')"
-    focused_review_files="$(printf '%s' "$config_json" | jq -r '.size_limits.focused_review_files // 80')"
-    skip_inline_files="$(printf '%s' "$config_json" | jq -r '.size_limits.skip_inline_files // 3000')"
-    path_filters_count="$(printf '%s' "$config_json" | jq -r '(.path_filters // []) | length')"
-    path_instructions_count="$(printf '%s' "$config_json" | jq -r '(.path_instructions // []) | length')"
+    # `?` で型不正（例: size_limits: "oops" / path_filters: foo）でも jq を非 0 で落とさず、
+    # 各キーは default にフォールバックする（schema 崩れでも configuration コマンドを落とさない）。
+    language="$(printf '%s' "$config_json" | jq -r '.language? // "en"' 2>/dev/null || printf 'en')"
+    full_review_files="$(printf '%s' "$config_json" | jq -r '.size_limits?.full_review_files? // 30' 2>/dev/null || printf '30')"
+    focused_review_files="$(printf '%s' "$config_json" | jq -r '.size_limits?.focused_review_files? // 80' 2>/dev/null || printf '80')"
+    skip_inline_files="$(printf '%s' "$config_json" | jq -r '.size_limits?.skip_inline_files? // 3000' 2>/dev/null || printf '3000')"
+    path_filters_count="$(printf '%s' "$config_json" | jq -r '((.path_filters? | arrays) // []) | length' 2>/dev/null || printf '0')"
+    path_instructions_count="$(printf '%s' "$config_json" | jq -r '((.path_instructions? | arrays) // []) | length' 2>/dev/null || printf '0')"
   else
     source_label="default（.vibehawk.yaml の解析に失敗）"
   fi

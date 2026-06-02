@@ -651,12 +651,20 @@ Value 4「公式の道を、迂回せず歩く」とも整合する。
 ### parity の線引き（MVV Value 2「観察する、書き換えない」）
 
 再現するのは **観察し、伝えるだけ** のコマンドに限る。
-コードや PR メタデータを **書き換える** コマンドは恒久的に実装しない。
+**利用者のコード・PR 本文・ラベル等のメタデータを書き換える** コマンドは恒久的に実装しない。
+
+> [!NOTE]
+> Value 2 の「書き換えない」が指すのは **利用者の成果物**（コード / PR description / label / milestone 等）である。
+> 以下は Value 2 の対象外＝許容する。いずれも vibehawk 自身の観察結果の管理であり、利用者の成果物には触れないため。
+> - `resolve`: vibehawk **自身が出した** review thread を resolved 化する（自分の発言を畳む）。
+> - `pause` / `resume` / `ignore`: 自動レビューの ON/OFF 状態を **GitHub マーカーコメント**（vibehawk 自身のコメント）で管理する。
 
 | 区分 | コマンド | 方針 |
 |------|---------|------|
 | ✅ 再現（観察・通知系） | review / full review / resolve / summary / help / configuration / pause / resume / ignore | epic #289 で実装 |
-| ❌ 恒久対象外（書き換え系） | autofix / generate docstrings / generate unit tests / generate configuration | MVV Value 2 違反のため実装しない |
+| ❌ 恒久対象外（書き換え系） | autofix / generate docstrings / generate unit tests / generate configuration | MVV Value 2 違反（利用者のコード・PR メタデータを書き換える）のため実装しない |
+
+`resolve` / `pause` / `resume` / `ignore` は vibehawk 自身の review thread と自動レビュー状態の管理であり、利用者の成果物を書き換えないため Value 2 と矛盾しない。
 
 書き換え系を実装しないのは CodeRabbit に劣るからではない。
 「観察し、伝えるところで止まる」という vibehawk の核を守る **意図的な差別化** である。

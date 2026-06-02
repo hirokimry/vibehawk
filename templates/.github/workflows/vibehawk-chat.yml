@@ -69,18 +69,27 @@ jobs:
         if: steps.check_secrets.outputs.ready == 'true'
         run: bash scripts/ci/vibehawk-chat/load-config.sh
 
+      # CodeRabbit 指摘対応（Issue #289）: コマンドを 1 度だけ厳密 parse し、単一の command 出力で
+      # 全 step を分岐させる。contains() の部分一致による会話文の誤発火を排除する。
+      - name: コマンドを厳密 parse（Issue #289）
+        id: parse_command
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: bash scripts/ci/vibehawk-chat/parse-command.sh
+
       # Issue #135: `@vibehawk review` 経路で必要な PR HEAD SHA を workflow step で取得する。
       # Claude prompt 内で `gh pr view` / `gh api` を呼ぶ必要をなくすことで、
       # プロンプト注入経由の API 操作攻撃面を最小化する（Issue #121-C1 fix と同じ思想、
       # `@vibehawk review` 関連のセキュリティレビュー指摘 H-1 への対応）。
-      - name: PR HEAD SHA を取得（@vibehawk review / full review / resolve / summary 経路、Issue #135 / #291 / #292 / #293）
+      - name: PR HEAD SHA を取得（review / full review / resolve / summary 経路、Issue #135 / #291 / #292 / #293）
         id: pr_head
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          (contains(github.event.comment.body, '@vibehawk review') ||
-           contains(github.event.comment.body, '@vibehawk full review') ||
-           contains(github.event.comment.body, '@vibehawk resolve') ||
-           contains(github.event.comment.body, '@vibehawk summary')) &&
+          (steps.parse_command.outputs.command == 'review' ||
+           steps.parse_command.outputs.command == 'full-review' ||
+           steps.parse_command.outputs.command == 'resolve' ||
+           steps.parse_command.outputs.command == 'summary') &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -95,7 +104,7 @@ jobs:
         id: review_diff
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk review') &&
+          steps.parse_command.outputs.command == 'review' &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -111,7 +120,7 @@ jobs:
         id: resolve_threads
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk resolve') &&
+          steps.parse_command.outputs.command == 'resolve' &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -128,7 +137,7 @@ jobs:
         id: regenerate_sticky
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk summary') &&
+          steps.parse_command.outputs.command == 'summary' &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -144,7 +153,7 @@ jobs:
         id: post_help
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk help')
+          steps.parse_command.outputs.command == 'help'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -155,7 +164,7 @@ jobs:
         id: post_configuration
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk configuration')
+          steps.parse_command.outputs.command == 'configuration'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -167,9 +176,9 @@ jobs:
         id: set_autoreview_state
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          (contains(github.event.comment.body, '@vibehawk pause') ||
-           contains(github.event.comment.body, '@vibehawk resume') ||
-           contains(github.event.comment.body, '@vibehawk ignore')) &&
+          (steps.parse_command.outputs.command == 'pause' ||
+           steps.parse_command.outputs.command == 'resume' ||
+           steps.parse_command.outputs.command == 'ignore') &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -189,23 +198,16 @@ jobs:
       # Issue #293: @vibehawk summary も LLM 非依存（既存検出結果から sticky 再生成）のためスキップする。
       # Issue #294: @vibehawk help / configuration も決定論的表示のためスキップする（PR 限定なし）。
       - name: claude-code-action でチャット応答
+        # 厳密 parse した command で分岐（Issue #289、CodeRabbit 指摘対応）。
+        # claude が動くのは: 通常メンション（chat） / full review / review かつ差分あり のみ。
+        # review かつ差分なし / resolve / summary / help / configuration / pause / resume / ignore は
+        # 決定論的 step が処理するため claude をスキップする。
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          !(contains(github.event.comment.body, '@vibehawk review') &&
-            github.event.issue.pull_request != null &&
-            steps.review_diff.outputs.diff_exists == 'false') &&
-          !(contains(github.event.comment.body, '@vibehawk resolve') &&
-            github.event.issue.pull_request != null) &&
-          !(contains(github.event.comment.body, '@vibehawk summary') &&
-            github.event.issue.pull_request != null) &&
-          !contains(github.event.comment.body, '@vibehawk help') &&
-          !contains(github.event.comment.body, '@vibehawk configuration') &&
-          !(contains(github.event.comment.body, '@vibehawk pause') &&
-            github.event.issue.pull_request != null) &&
-          !(contains(github.event.comment.body, '@vibehawk resume') &&
-            github.event.issue.pull_request != null) &&
-          !(contains(github.event.comment.body, '@vibehawk ignore') &&
-            github.event.issue.pull_request != null)
+          (steps.parse_command.outputs.command == 'chat' ||
+           steps.parse_command.outputs.command == 'full-review' ||
+           (steps.parse_command.outputs.command == 'review' &&
+            steps.review_diff.outputs.diff_exists == 'true'))
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -214,8 +216,8 @@ jobs:
             REPO: ${{ github.repository }}
             ISSUE_NUMBER: ${{ github.event.issue.number }}
             IS_PR: ${{ github.event.issue.pull_request != null }}
-            IS_REVIEW_REQUEST: ${{ contains(github.event.comment.body, '@vibehawk review') }}
-            IS_FULL_REVIEW: ${{ contains(github.event.comment.body, '@vibehawk full review') }}
+            IS_REVIEW_REQUEST: ${{ steps.parse_command.outputs.command == 'review' }}
+            IS_FULL_REVIEW: ${{ steps.parse_command.outputs.command == 'full-review' }}
             HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
             TRIGGERING_USER: ${{ github.event.comment.user.login }}
             TRIGGERING_COMMENT_ID: ${{ github.event.comment.id }}
@@ -353,9 +355,9 @@ jobs:
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
           github.event.issue.pull_request != null &&
-          ((contains(github.event.comment.body, '@vibehawk review') &&
+          ((steps.parse_command.outputs.command == 'review' &&
             steps.review_diff.outputs.diff_exists == 'true') ||
-           contains(github.event.comment.body, '@vibehawk full review'))
+           steps.parse_command.outputs.command == 'full-review')
         env:
           # App Installation Token を使う: vibehawk-for-<owner>[bot] 名義で review を投稿するため
           # （以前の review との一貫性を保つ、Issue #121 bundled review API 設計に整合）
@@ -374,9 +376,9 @@ jobs:
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
           github.event.issue.pull_request != null &&
-          ((contains(github.event.comment.body, '@vibehawk review') &&
+          ((steps.parse_command.outputs.command == 'review' &&
             steps.review_diff.outputs.diff_exists == 'false') ||
-           contains(github.event.comment.body, '@vibehawk resolve'))
+           steps.parse_command.outputs.command == 'resolve')
         env:
           # App Installation Token を使う: vibehawk-for-<owner>[bot] 名義で review を投稿するため
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -390,7 +392,7 @@ jobs:
       - name: 差分なし → 再チェック通知コメント（@vibehawk review 経路、Issue #290）
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk review') &&
+          steps.parse_command.outputs.command == 'review' &&
           github.event.issue.pull_request != null &&
           steps.review_diff.outputs.diff_exists == 'false'
         env:
@@ -412,9 +414,9 @@ jobs:
         if: |
           always() &&
           steps.check_secrets.outputs.ready == 'true' &&
-          (contains(github.event.comment.body, '@vibehawk review') ||
-           contains(github.event.comment.body, '@vibehawk full review') ||
-           contains(github.event.comment.body, '@vibehawk resolve')) &&
+          (steps.parse_command.outputs.command == 'review' ||
+           steps.parse_command.outputs.command == 'full-review' ||
+           steps.parse_command.outputs.command == 'resolve') &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

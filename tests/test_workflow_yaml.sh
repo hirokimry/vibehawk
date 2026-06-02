@@ -1221,22 +1221,30 @@ echo "=== Issue #295: 自動レビュー状態 gate 検証 ==="
 
 # 注: 本テストは run: bash scripts/ci/*.sh をスクリプト内容にインライン展開するため、
 # 「bash <path>.sh」リテラルではなく id / gate 条件 / 展開後スクリプト内容文字列で検証する。
+# CodeRabbit 指摘対応: グローバル grep ではなく該当 step ブロックにスコープして検証する。
+
+# autoreview_state step ブロック（id: autoreview_state 〜 次 step id: prev_summary）に check ロジックがあるか
+AUTOREVIEW_STEP_BLOCK="$(echo "$WORKFLOW_BODY" | awk '/id: autoreview_state/{f=1} f&&/id: prev_summary/{exit} f{print}')"
 if echo "$WORKFLOW_BODY" | grep -F 'id: autoreview_state' > /dev/null && \
-   echo "$WORKFLOW_BODY" | grep -F 'vibehawk:autoreview=' > /dev/null; then
-  pass "autoreview_state step が存在し check-autoreview-state ロジック（vibehawk:autoreview マーカー読取）を含む（Issue #295）"
+   echo "$AUTOREVIEW_STEP_BLOCK" | grep -F 'vibehawk:autoreview=' > /dev/null; then
+  pass "autoreview_state step が存在し、その step 内で vibehawk:autoreview マーカーを読む（Issue #295）"
 else
-  fail "autoreview_state step が存在しない（Issue #295）"
+  fail "autoreview_state step が存在しない / マーカー読取が step 内にない（Issue #295）"
 fi
 
-if echo "$WORKFLOW_BODY" | grep -F "steps.autoreview_state.outputs.state == 'active'" > /dev/null; then
-  pass "claude_review が state == 'active' で gate される（Issue #295、paused/ignored で自動レビュー skip）"
+# claude_review step ブロックに state == 'active' gate があるか（step スコープ）
+CLAUDE_REVIEW_BLOCK="$(echo "$WORKFLOW_BODY" | awk '/id: claude_review/{f=1} f{print} f&&/uses: anthropics/{exit}')"
+if echo "$CLAUDE_REVIEW_BLOCK" | grep -F "steps.autoreview_state.outputs.state == 'active'" > /dev/null; then
+  pass "claude_review step が state == 'active' で gate される（Issue #295、paused/ignored で自動レビュー skip）"
 else
-  fail "claude_review の active gate が存在しない（Issue #295）"
+  fail "claude_review step の active gate が存在しない（Issue #295）"
 fi
 
-if echo "$WORKFLOW_BODY" | grep -F "steps.autoreview_state.outputs.state != 'active'" > /dev/null && \
-   echo "$WORKFLOW_BODY" | grep -F 'conclusion="success"' > /dev/null; then
-  pass "paused/ignored 時（state != active）に vibehawk=success を post する専用 step がある（Issue #295、merge ブロック防止）"
+# paused 専用 status step ブロックに state != 'active' gate + success post があるか（step スコープ）
+PAUSED_STEP_BLOCK="$(echo "$WORKFLOW_BODY" | awk '/自動レビュー一時停止中/{f=1} f{print} f&&/AUTOREVIEW_STATE/{c++} c>=2{exit}')"
+if echo "$PAUSED_STEP_BLOCK" | grep -F "steps.autoreview_state.outputs.state != 'active'" > /dev/null && \
+   echo "$PAUSED_STEP_BLOCK" | grep -F 'AUTOREVIEW_STATE' > /dev/null; then
+  pass "paused/ignored 時（state != active）に vibehawk status を post する専用 step がある（Issue #295、merge ブロック防止）"
 else
   fail "paused/ignored 時の success post step が存在しない（Issue #295）"
 fi
