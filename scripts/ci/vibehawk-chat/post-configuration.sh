@@ -21,13 +21,10 @@ path_instructions_count="0"
 source_label="default（.vibehawk.yaml なし）"
 
 if [[ -f ".vibehawk.yaml" ]]; then
-  # load-config.sh と同じ python→json 解析。pyyaml 不在なら導入を試みる（best-effort、失敗しても落とさない）。
-  # 不正 YAML / python 不在 / 導入失敗時は default 表示にフォールバックする。
+  # PyYAML での解析を試みる。本番の chat workflow は ubuntu-latest で PyYAML がプリインストール
+  # 済みのため解析できる。pyyaml 不在環境（一部 OS）や不正 YAML では default 表示にフォールバックする。
+  # 実行時の pip install は行わない（テスト runner 等の環境を汚染しないため）。
   config_json=""
-  if ! python3 -c "import yaml" 2>/dev/null; then
-    # python3 -m pip を使う（`pip` だと python2 の pip が呼ばれ import チェックと不整合になり得る）
-    python3 -m pip install --user --quiet pyyaml 2>/dev/null || true
-  fi
   if python3 -c "import yaml" 2>/dev/null; then
     config_json="$(python3 -c "import yaml,json; print(json.dumps(yaml.safe_load(open('.vibehawk.yaml')) or {}))" 2>/dev/null || printf '')"
   fi
