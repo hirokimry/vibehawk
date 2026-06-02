@@ -62,6 +62,23 @@ else
   fail "docs/POLICY.md が存在しない"
 fi
 
+# docs/design-philosophy.md に @vibehawk コマンド体系の設計判断が含まれる（Issue #296、epic #289 の WHY 明文化）
+if [[ -f "docs/design-philosophy.md" ]]; then
+  if grep -F "## @vibehawk コマンド体系の設計（epic #289 で確定）" docs/design-philosophy.md > /dev/null && \
+     grep -F "startup_failure" docs/design-philosophy.md > /dev/null && \
+     grep -F "pull_request_review_thread" docs/design-philosophy.md > /dev/null && \
+     grep -F "webhook サーバを持つ GitHub App" docs/design-philosophy.md > /dev/null && \
+     grep -F "issue_comment" docs/design-philosophy.md > /dev/null && \
+     grep -F "観察する、書き換えない" docs/design-philosophy.md > /dev/null && \
+     grep -F "意図的な差別化" docs/design-philosophy.md > /dev/null; then
+    pass "docs/design-philosophy.md に @vibehawk コマンド体系の設計判断（WHY 4 点 + 線引き）反映"
+  else
+    fail "docs/design-philosophy.md に @vibehawk コマンド体系の設計判断が反映されていない"
+  fi
+else
+  fail "docs/design-philosophy.md が存在しない"
+fi
+
 # docs/SECURITY.md に vibehawk-for-<owner>[bot] が含まれる（Issue #61 経路 2 必須化反映確認）
 if [[ -f "docs/SECURITY.md" ]]; then
   if grep -F "vibehawk-for-<owner>[bot]" docs/SECURITY.md > /dev/null; then

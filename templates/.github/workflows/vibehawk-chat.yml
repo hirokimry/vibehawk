@@ -73,8 +73,26 @@ jobs:
       # Claude prompt 内で `gh pr view` / `gh api` を呼ぶ必要をなくすことで、
       # プロンプト注入経由の API 操作攻撃面を最小化する（Issue #121-C1 fix と同じ思想、
       # `@vibehawk review` 関連のセキュリティレビュー指摘 H-1 への対応）。
-      - name: PR HEAD SHA を取得（@vibehawk review 経路、Issue #135）
+      - name: PR HEAD SHA を取得（@vibehawk review / full review / resolve / summary 経路、Issue #135 / #291 / #292 / #293）
         id: pr_head
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          (contains(github.event.comment.body, '@vibehawk review') ||
+           contains(github.event.comment.body, '@vibehawk full review') ||
+           contains(github.event.comment.body, '@vibehawk resolve') ||
+           contains(github.event.comment.body, '@vibehawk summary')) &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: bash scripts/ci/vibehawk-chat/fetch-pr-head.sh
+
+      # Issue #290（epic #289 子1）: `@vibehawk review` で前回レビュー以降のコミット差分の
+      # 有無を判定する。差分なし（diff_exists=false）なら LLM 非実行の verdict 再評価経路へ、
+      # 差分ありなら従来の増分 LLM レビュー経路へ後続 step を分岐させる。
+      - name: 差分判定（@vibehawk review 経路、Issue #290）
+        id: review_diff
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
           contains(github.event.comment.body, '@vibehawk review') &&
@@ -83,10 +101,111 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
-        run: bash scripts/ci/vibehawk-chat/fetch-pr-head.sh
+          HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/ci/vibehawk-chat/detect-review-diff.sh
 
+      # Issue #292（epic #289 子3）: `@vibehawk resolve` で vibehawk 自身の未解決 review thread を
+      # 一括 resolved 化する（決定論的・LLM 非依存）。後続の reverdict が全解決→APPROVE に再評価する。
+      - name: 自身の指摘を一括 resolve（@vibehawk resolve 経路、Issue #292）
+        id: resolve_threads
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk resolve') &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          OWNER: ${{ github.repository_owner }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: bash scripts/ci/vibehawk-chat/resolve-own-threads.sh
+
+      # Issue #293（epic #289 子4）: `@vibehawk summary` で sticky walkthrough を LLM 非依存で
+      # 再生成する。既存インライン指摘 + PR メタから build-sticky-body.sh | post-sticky-comment.sh
+      # を流用して再 upsert する（verdict は変えない）。
+      - name: sticky walkthrough を再生成（@vibehawk summary 経路、Issue #293）
+        id: regenerate_sticky
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk summary') &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/ci/vibehawk-chat/regenerate-sticky.sh
+
+      # Issue #294（epic #289 子5）: `@vibehawk help` で利用可能コマンド一覧を返す（表示のみ・LLM 不要）。
+      # Issue でも PR でも動く（PR 限定にしない）。
+      - name: コマンド一覧を表示（@vibehawk help 経路、Issue #294）
+        id: post_help
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk help')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: bash scripts/ci/vibehawk-chat/post-help.sh
+
+      # Issue #294: `@vibehawk configuration` で現在の vibehawk 設定（.vibehawk.yaml or default）を表示する。
+      - name: 現在の設定を表示（@vibehawk configuration 経路、Issue #294）
+        id: post_configuration
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk configuration')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: bash scripts/ci/vibehawk-chat/post-configuration.sh
+
+      # Issue #295（epic #289 子6）: `@vibehawk pause` / `resume` / `ignore` で自動レビュー状態を
+      # GitHub マーカーコメントに保持する（外部 DB なし）。PR 限定（review thread を持つのは PR）。
+      - name: 自動レビュー状態を設定（@vibehawk pause/resume/ignore 経路、Issue #295）
+        id: set_autoreview_state
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          (contains(github.event.comment.body, '@vibehawk pause') ||
+           contains(github.event.comment.body, '@vibehawk resume') ||
+           contains(github.event.comment.body, '@vibehawk ignore')) &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          OWNER: ${{ github.repository_owner }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: bash scripts/ci/vibehawk-chat/set-autoreview-state.sh
+
+      # Issue #290: 差分なしの再レビューでは claude-code-action（LLM）を実行しない（API コスト 0）。
+      # chat モード（@vibehawk review でない通常メンション）は review_diff が未実行で
+      # diff_exists が空のため `'' == 'false'` が偽となり、従来どおり claude が動く。
+      # Issue #291: @vibehawk full review は文字列上 @vibehawk review を含まないため
+      # skip 条件（contains '@vibehawk review'）が偽となり、差分の有無に関わらず必ず claude が動く
+      # （full review は差分なしスキップを適用せず常に全件レビューする意図的挙動）。
+      # Issue #292: @vibehawk resolve は LLM 不要の決定論的操作のため claude をスキップする。
+      # Issue #293: @vibehawk summary も LLM 非依存（既存検出結果から sticky 再生成）のためスキップする。
+      # Issue #294: @vibehawk help / configuration も決定論的表示のためスキップする（PR 限定なし）。
       - name: claude-code-action でチャット応答
-        if: steps.check_secrets.outputs.ready == 'true'
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          !(contains(github.event.comment.body, '@vibehawk review') &&
+            github.event.issue.pull_request != null &&
+            steps.review_diff.outputs.diff_exists == 'false') &&
+          !(contains(github.event.comment.body, '@vibehawk resolve') &&
+            github.event.issue.pull_request != null) &&
+          !(contains(github.event.comment.body, '@vibehawk summary') &&
+            github.event.issue.pull_request != null) &&
+          !contains(github.event.comment.body, '@vibehawk help') &&
+          !contains(github.event.comment.body, '@vibehawk configuration') &&
+          !(contains(github.event.comment.body, '@vibehawk pause') &&
+            github.event.issue.pull_request != null) &&
+          !(contains(github.event.comment.body, '@vibehawk resume') &&
+            github.event.issue.pull_request != null) &&
+          !(contains(github.event.comment.body, '@vibehawk ignore') &&
+            github.event.issue.pull_request != null)
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -96,6 +215,7 @@ jobs:
             ISSUE_NUMBER: ${{ github.event.issue.number }}
             IS_PR: ${{ github.event.issue.pull_request != null }}
             IS_REVIEW_REQUEST: ${{ contains(github.event.comment.body, '@vibehawk review') }}
+            IS_FULL_REVIEW: ${{ contains(github.event.comment.body, '@vibehawk full review') }}
             HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
             TRIGGERING_USER: ${{ github.event.comment.user.login }}
             TRIGGERING_COMMENT_ID: ${{ github.event.comment.id }}
@@ -107,12 +227,22 @@ jobs:
 
             利用者が `@vibehawk` でメンションしました。スレッド全体を読んで応答してください。
 
-            ## モード判定（最重要、Issue #135）
+            ## モード判定（最重要、Issue #135 / #291）
 
-            コメント本文に `@vibehawk review` が含まれ、かつ `IS_PR=true` の場合は **再レビューモード** に切り替えてください（chat 応答ではなく review 経路を呼ぶ）。それ以外は通常の **chat 応答モード** です。
+            コメント本文のコマンドに応じて 3 モードに分岐してください（**full review を最優先で判定**。`@vibehawk full review` は文字列上 `@vibehawk review` を含まないため、両者は排他です）。
 
-            - `IS_REVIEW_REQUEST=true` かつ `IS_PR=true` → 再レビューモード（以下「再レビューモード」セクション参照）
-            - それ以外 → chat 応答モード（以下「chat 応答モード」セクション参照）
+            - `IS_FULL_REVIEW=true` かつ `IS_PR=true` → **全体再レビューモード**（以下「全体再レビューモード」セクション参照、Issue #291）
+            - `IS_REVIEW_REQUEST=true` かつ `IS_PR=true` → **再レビューモード**（以下「再レビューモード」セクション参照、Issue #135）
+            - それ以外 → **chat 応答モード**（以下「chat 応答モード」セクション参照）
+
+            ## 全体再レビューモード（Issue #291、`@vibehawk full review` コマンド）
+
+            利用者が **過去の指摘を無視した PR 全体の再レビュー** を依頼しています。再レビューモードと同じ payload ファイル出力機構を使いますが、以下が異なります。
+
+            - **過去の vibehawk 指摘・既存 review thread・前回サマリを一切参照しない**。PR の全ファイルを最初から fresh に評価する（増分判定をしない）。
+            - レビュー本文（REVIEW_BODY）冒頭は「🦅 vibehawk: 全体再レビュー（@vibehawk full review コマンドによる全件再評価）」にする。
+            - それ以外の手順（`gh pr diff $ISSUE_NUMBER` で全体差分取得 → severity 5 段階で評価 → event 決定 → 末尾マーカー 2 行 → payload 2 ファイル出力 → API は呼ばない）は **下記「再レビューモード」の手順 1〜5 と完全に同一** です。手順は再レビューモードを参照してください。
+            - 「再レビューモードでの禁止事項」も全て本モードに適用されます。
 
             ## 再レビューモード（Issue #135、`@vibehawk review` コマンド）
 
@@ -189,6 +319,7 @@ jobs:
             - スレッドが PR (`IS_PR=true`) なら PR diff も参考にしてよい（`gh pr diff $ISSUE_NUMBER`）
             - スレッドが Issue (`IS_PR=false`) なら Issue 本文（履歴の最初の要素）を中心に応答
             - LANGUAGE=ja の場合は日本語で応答、それ以外は英語
+            - **未知コマンドへの案内（Issue #294）**: メッセージが `@vibehawk <単語>` の形で、既知コマンド（review / full review / resolve / summary / help / configuration / pause / resume / ignore）のいずれにも該当しない「コマンドのつもりの入力」と見られる場合は、応答に利用可能コマンド一覧（help 相当）を含めて案内する。通常の会話・質問はそのまま会話として応答する。
 
             ### 投稿方法
 
@@ -217,10 +348,14 @@ jobs:
       # `@vibehawk review` 関連セキュリティレビュー H-1 / Issue #121-C1 fix と同じ思想）。
       - name: vibehawk bundled review を post（@vibehawk review 経路、Issue #135）
         id: post_review
+        # Issue #290: 差分ありのときだけ bundled review を post する（LLM が走った経路のみ）。
+        # Issue #291: @vibehawk full review は差分判定を経由せず常に LLM が走るため、PR であれば post する。
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk review') &&
-          github.event.issue.pull_request != null
+          github.event.issue.pull_request != null &&
+          ((contains(github.event.comment.body, '@vibehawk review') &&
+            steps.review_diff.outputs.diff_exists == 'true') ||
+           contains(github.event.comment.body, '@vibehawk full review'))
         env:
           # App Installation Token を使う: vibehawk-for-<owner>[bot] 名義で review を投稿するため
           # （以前の review との一貫性を保つ、Issue #121 bundled review API 設計に整合）
@@ -230,19 +365,56 @@ jobs:
           HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
         run: bash scripts/ci/vibehawk-chat/post-bundled-review.sh
 
+      # Issue #290（epic #289 子1）: 差分なし経路の verdict 再評価。LLM を一切呼ばず、
+      # vibehawk 自 Bot の未解決スレッド数だけで APPROVE / REQUEST_CHANGES を再 post する。
+      - name: 差分なし → verdict 再評価（@vibehawk review 経路、Issue #290）
+        id: reverdict
+        # Issue #290: 差分なし @vibehawk review。Issue #292: @vibehawk resolve 後の全解決→APPROVE 再評価。
+        # どちらも LLM 非実行で自 Bot 未解決スレッド数だけで verdict を再判定する。
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          github.event.issue.pull_request != null &&
+          ((contains(github.event.comment.body, '@vibehawk review') &&
+            steps.review_diff.outputs.diff_exists == 'false') ||
+           contains(github.event.comment.body, '@vibehawk resolve'))
+        env:
+          # App Installation Token を使う: vibehawk-for-<owner>[bot] 名義で review を投稿するため
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/ci/vibehawk-chat/re-evaluate-verdict.sh
+
+      # Issue #290: 差分なし経路で「指摘の再チェックのみ実施した」ことを利用者に通知する。
+      - name: 差分なし → 再チェック通知コメント（@vibehawk review 経路、Issue #290）
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk review') &&
+          github.event.issue.pull_request != null &&
+          steps.review_diff.outputs.diff_exists == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          DECIDED_EVENT: ${{ steps.reverdict.outputs.decided_event }}
+          UNRESOLVED_COUNT: ${{ steps.reverdict.outputs.unresolved_count }}
+        run: bash scripts/ci/vibehawk-chat/post-recheck-notice.sh
+
       # Issue #135: `@vibehawk review` コマンド経路で bundled review POST 後に
       # status check `vibehawk` を決定論的に更新する。vibehawk-review.yml の
       # `vibehawk status check を post` step と同等のロジック。
       # Claude prompt から check-runs を呼ばない設計（Issue #121-C1 fix と同じ理由、
       # claude-code-action permission model で deny されるため）。
-      - name: vibehawk status check を post（@vibehawk review 経路、Issue #135）
+      - name: vibehawk status check を post（@vibehawk review / full review / resolve 経路、Issue #135 / #291 / #292）
         # always() 修飾: claude-code-action や post_review step が失敗しても、
         # 直前の review 状態（または review 未投稿）に応じた status check を必ず更新する。
         # required status check が永久ブロックされる UX 欠陥（Issue #135 起因）の再発防止。
         if: |
           always() &&
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk review') &&
+          (contains(github.event.comment.body, '@vibehawk review') ||
+           contains(github.event.comment.body, '@vibehawk full review') ||
+           contains(github.event.comment.body, '@vibehawk resolve')) &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

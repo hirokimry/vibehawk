@@ -87,6 +87,19 @@ jobs:
           app-id: ${{ secrets.VIBEHAWK_APP_ID }}
           private-key: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
 
+      # Issue #295（epic #289 子6）: PR の自動レビュー状態（active/paused/ignored）を読む。
+      # paused/ignored なら claude_review を skip（自動レビュー停止）し、status check は別 step が
+      # success「一時停止中」を post する。手動 @vibehawk review は本状態を読まず常に動く。
+      - name: 自動レビュー状態を確認（Issue #295）
+        id: autoreview_state
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/ci/vibehawk-review/check-autoreview-state.sh
+
       - name: 前回サマリコメントを取得（Issue #8 インクリメンタルレビュー判定）
         id: prev_summary
         if: steps.check_secrets.outputs.ready == 'true'
@@ -138,7 +151,10 @@ jobs:
         # よる skip 経路（hashFiles）を撤廃する。Claude が「応答を返す」のは API の最低保証であり、
         # 「副作用を必ず実行する」（ファイル書き出し）よりも遥かに強い保証となる（CEO 採用案）。
         id: claude_review
-        if: steps.check_secrets.outputs.ready == 'true'
+        # Issue #295: 自動レビューが paused / ignored の PR では claude_review を skip する。
+        # structured_output が空になるため、後続の decide_event / auto_resolve / sticky / bundled も
+        # 既存 gate `structured_output != ''` でカスケード skip される（LLM・posting なし）。
+        if: steps.check_secrets.outputs.ready == 'true' && steps.autoreview_state.outputs.state == 'active'
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -334,7 +350,9 @@ jobs:
         # Claude prompt 内 check-runs POST は claude-code-action の permission model で
         # deny されるため、workflow step で決定論的に post する。デフォルト GITHUB_TOKEN の
         # checks: write 権限を使い、App installation の permission 状態に依存しない。
-        if: steps.check_secrets.outputs.ready == 'true'
+        # Issue #295: 自動レビューが active のときのみ通常の status check を post する
+        # （paused/ignored は下の専用 step が success「一時停止中」を post する）。
+        if: steps.check_secrets.outputs.ready == 'true' && steps.autoreview_state.outputs.state == 'active'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -343,3 +361,16 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         # 詳細: scripts/ci/vibehawk-review/post-status-check.sh（エピック #174 / Issue #176）
         run: bash scripts/ci/vibehawk-review/post-status-check.sh
+
+      # Issue #295: 自動レビューが paused / ignored の PR では auto-review を skip した上で、
+      # required check `vibehawk` を success「一時停止中」で post して merge ブロックを防ぐ。
+      - name: vibehawk status check を post（自動レビュー一時停止中、Issue #295）
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          steps.autoreview_state.outputs.state != 'active'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTOREVIEW_STATE: ${{ steps.autoreview_state.outputs.state }}
+        run: bash scripts/ci/vibehawk-review/post-autoreview-paused-status.sh

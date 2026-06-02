@@ -549,6 +549,9 @@ CodeRabbit は issue-comment とは **別経路で PR description 本体も stic
 
 これらは別 Issue で順次検討する（本 Issue #219 のスコープ外）。
 
+> [!NOTE]
+> `@vibehawk` 構造化コマンド（item #18）を「resolve イベント自動反応」ではなく `issue_comment` コマンド駆動で再現する設計判断（WHY）と、観察系のみ parity・書き換え系は恒久対象外とする線引きは [`docs/design-philosophy.md`](design-philosophy.md)「@vibehawk コマンド体系の設計（epic #289 で確定）」を参照。
+
 ### vibecorp 側に残す
 
 | 機能 | 残す理由 |
