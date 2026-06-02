@@ -71,6 +71,7 @@ declare -a expected_chat_scripts=(
   "regenerate-sticky.sh"
   "post-help.sh"
   "post-configuration.sh"
+  "set-autoreview-state.sh"
 )
 for s in "${expected_chat_scripts[@]}"; do
   if [[ -f "${CHAT_SCRIPTS_DIR}/${s}" ]]; then
@@ -978,6 +979,44 @@ if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "${CHAT_SCRIPTS_DIR}/post-help
   fail "post-help / post-configuration に LLM 呼び出しが混入している（Issue #294）"
 else
   pass "post-help / post-configuration は LLM を呼ばない決定論的 step（Issue #294）"
+fi
+
+# === Issue #295（epic #289 子6）: @vibehawk pause / resume / ignore コマンドの検証 ===
+echo "=== Issue #295: @vibehawk pause / resume / ignore 検証 ==="
+
+# 状態設定 step が set-autoreview-state.sh を呼ぶ
+if grep -F 'id: set_autoreview_state' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/set-autoreview-state.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "状態設定 step (set_autoreview_state) が set-autoreview-state.sh を呼ぶ（Issue #295）"
+else
+  fail "状態設定 step が存在しない（Issue #295）"
+fi
+
+# pause / resume / ignore 3 コマンドで発火する
+SET_STATE_BLOCK="$(awk '/id: set_autoreview_state/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$SET_STATE_BLOCK" | grep -F "@vibehawk pause" > /dev/null && \
+   echo "$SET_STATE_BLOCK" | grep -F "@vibehawk resume" > /dev/null && \
+   echo "$SET_STATE_BLOCK" | grep -F "@vibehawk ignore" > /dev/null; then
+  pass "状態設定 step が pause / resume / ignore 3 コマンドで発火する（Issue #295）"
+else
+  fail "状態設定 step の起動条件が不適切（Issue #295）"
+fi
+
+# claude-code-action が pause/resume/ignore でスキップ
+CLAUDE_SKIP_PRI="$(awk '/- name: claude-code-action でチャット応答/,/uses: anthropics/' "$CHAT_WORKFLOW")"
+if echo "$CLAUDE_SKIP_PRI" | grep -F "@vibehawk pause" > /dev/null && \
+   echo "$CLAUDE_SKIP_PRI" | grep -F "@vibehawk resume" > /dev/null && \
+   echo "$CLAUDE_SKIP_PRI" | grep -F "@vibehawk ignore" > /dev/null; then
+  pass "claude-code-action が pause/resume/ignore でスキップされる（Issue #295、LLM 不要）"
+else
+  fail "claude-code-action の pause/resume/ignore スキップ条件が不在（Issue #295）"
+fi
+
+# set-autoreview-state は LLM を呼ばない
+if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "${CHAT_SCRIPTS_DIR}/set-autoreview-state.sh" > /dev/null; then
+  fail "set-autoreview-state に LLM 呼び出しが混入している（Issue #295）"
+else
+  pass "set-autoreview-state は LLM を呼ばない決定論的 step（Issue #295）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

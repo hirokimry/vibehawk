@@ -161,6 +161,24 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: bash scripts/ci/vibehawk-chat/post-configuration.sh
 
+      # Issue #295（epic #289 子6）: `@vibehawk pause` / `resume` / `ignore` で自動レビュー状態を
+      # GitHub マーカーコメントに保持する（外部 DB なし）。PR 限定（review thread を持つのは PR）。
+      - name: 自動レビュー状態を設定（@vibehawk pause/resume/ignore 経路、Issue #295）
+        id: set_autoreview_state
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          (contains(github.event.comment.body, '@vibehawk pause') ||
+           contains(github.event.comment.body, '@vibehawk resume') ||
+           contains(github.event.comment.body, '@vibehawk ignore')) &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          OWNER: ${{ github.repository_owner }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: bash scripts/ci/vibehawk-chat/set-autoreview-state.sh
+
       # Issue #290: 差分なしの再レビューでは claude-code-action（LLM）を実行しない（API コスト 0）。
       # chat モード（@vibehawk review でない通常メンション）は review_diff が未実行で
       # diff_exists が空のため `'' == 'false'` が偽となり、従来どおり claude が動く。
@@ -181,7 +199,13 @@ jobs:
           !(contains(github.event.comment.body, '@vibehawk summary') &&
             github.event.issue.pull_request != null) &&
           !contains(github.event.comment.body, '@vibehawk help') &&
-          !contains(github.event.comment.body, '@vibehawk configuration')
+          !contains(github.event.comment.body, '@vibehawk configuration') &&
+          !(contains(github.event.comment.body, '@vibehawk pause') &&
+            github.event.issue.pull_request != null) &&
+          !(contains(github.event.comment.body, '@vibehawk resume') &&
+            github.event.issue.pull_request != null) &&
+          !(contains(github.event.comment.body, '@vibehawk ignore') &&
+            github.event.issue.pull_request != null)
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
