@@ -64,6 +64,15 @@ declare -a expected_chat_scripts=(
   "fetch-pr-head.sh"
   "post-bundled-review.sh"
   "post-status-check.sh"
+  "detect-review-diff.sh"
+  "re-evaluate-verdict.sh"
+  "post-recheck-notice.sh"
+  "resolve-own-threads.sh"
+  "regenerate-sticky.sh"
+  "post-help.sh"
+  "post-configuration.sh"
+  "set-autoreview-state.sh"
+  "parse-command.sh"
 )
 for s in "${expected_chat_scripts[@]}"; do
   if [[ -f "${CHAT_SCRIPTS_DIR}/${s}" ]]; then
@@ -528,7 +537,7 @@ echo "=== Issue #135: @vibehawk review 再レビュー分岐 検証 ==="
 
 # prompt に IS_REVIEW_REQUEST 環境変数（@vibehawk review 検知結果）が渡される
 if grep -F "IS_REVIEW_REQUEST:" "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F "contains(github.event.comment.body, '@vibehawk review')" "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F "steps.parse_command.outputs.command == 'review'" "$CHAT_WORKFLOW" > /dev/null; then
   pass "prompt に IS_REVIEW_REQUEST (contains '@vibehawk review') が渡される（Issue #135）"
 else
   fail "prompt に IS_REVIEW_REQUEST が渡されていない（Issue #135、@vibehawk review コマンド検知の前提）"
@@ -613,7 +622,7 @@ fi
 # pr_head step は @vibehawk review + PR + secrets ready のときのみ実行
 PR_HEAD_BLOCK="$(awk '/id: pr_head/,/^[[:space:]]+- name:/' "$CHAT_WORKFLOW")"
 if echo "$PR_HEAD_BLOCK" | grep -F "steps.check_secrets.outputs.ready == 'true'" > /dev/null && \
-   echo "$PR_HEAD_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk review')" > /dev/null && \
+   echo "$PR_HEAD_BLOCK" | grep -F "steps.parse_command.outputs.command == 'review'" > /dev/null && \
    echo "$PR_HEAD_BLOCK" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
   pass "pr_head step の起動条件が secrets ready + @vibehawk review + PR である（Issue #135）"
 else
@@ -687,7 +696,7 @@ else
 fi
 
 # check-runs step は @vibehawk review コマンドかつ PR の場合のみ実行される
-if echo "$CHAT_POST_PROMPT" | grep -F "contains(github.event.comment.body, '@vibehawk review')" > /dev/null && \
+if echo "$CHAT_POST_PROMPT" | grep -F "steps.parse_command.outputs.command == 'review'" > /dev/null && \
    echo "$CHAT_POST_PROMPT" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
   pass "後続 check-runs step は @vibehawk review かつ PR の場合のみ実行（Issue #135）"
 else
@@ -712,6 +721,318 @@ if echo "$CHAT_SURFACE" | grep -F '.state == "APPROVED" or .state == "CHANGES_RE
   pass "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込む（Issue #135、Issue #121 追加修正の踏襲）"
 else
   fail "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込んでいない（Issue #135）"
+fi
+
+# === Issue #290（epic #289 子1）: @vibehawk review の diff-aware 分岐の検証 ===
+# `@vibehawk review` で前回レビュー以降のコミット差分の有無を判定し、差分なしなら
+# LLM 非実行の verdict 再評価経路へ、差分ありなら従来の増分 LLM レビュー経路へ分岐する。
+echo "=== Issue #290: @vibehawk review diff-aware 分岐 検証 ==="
+
+# 差分判定 step（review_diff）が存在し detect-review-diff.sh を呼ぶ
+if grep -F 'id: review_diff' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/detect-review-diff.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "差分判定 step (review_diff) が detect-review-diff.sh を呼ぶ（Issue #290）"
+else
+  fail "差分判定 step (review_diff) が存在しない（Issue #290）"
+fi
+
+# claude-code-action step が差分なし(@vibehawk review + PR + diff_exists=false)時にスキップされる
+if grep -F "steps.review_diff.outputs.diff_exists == 'false'" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "差分なし時に claude-code-action をスキップする gate (diff_exists == 'false') が存在する（Issue #290、LLM 非実行）"
+else
+  fail "claude-code-action の差分なしスキップ gate が存在しない（Issue #290、LLM 非実行が達成されない）"
+fi
+
+# bundled review POST は差分あり(diff_exists=true)時のみ実行される
+if grep -F "steps.review_diff.outputs.diff_exists == 'true'" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "bundled review POST が差分あり(diff_exists == 'true')時のみ実行される gate が存在する（Issue #290）"
+else
+  fail "bundled review POST の差分あり gate が存在しない（Issue #290）"
+fi
+
+# 差分なし経路の verdict 再評価 step（reverdict）が re-evaluate-verdict.sh を呼ぶ
+if grep -F 'id: reverdict' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/re-evaluate-verdict.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "差分なし経路の verdict 再評価 step (reverdict) が re-evaluate-verdict.sh を呼ぶ（Issue #290）"
+else
+  fail "差分なし経路の verdict 再評価 step が存在しない（Issue #290）"
+fi
+
+# 差分なし経路の再チェック通知 step が post-recheck-notice.sh を呼ぶ
+if grep -F 'bash scripts/ci/vibehawk-chat/post-recheck-notice.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "差分なし経路の再チェック通知 step が post-recheck-notice.sh を呼ぶ（Issue #290）"
+else
+  fail "差分なし経路の再チェック通知 step が存在しない（Issue #290）"
+fi
+
+# re-evaluate-verdict / detect-review-diff は LLM・claude -p・npx・bunx を呼ばない（API コスト 0）
+REVERDICT_CONTENT="$(cat "${CHAT_SCRIPTS_DIR}/re-evaluate-verdict.sh" "${CHAT_SCRIPTS_DIR}/detect-review-diff.sh" 2>/dev/null || true)"
+if echo "$REVERDICT_CONTENT" | grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' > /dev/null; then
+  fail "差分なし経路スクリプトに LLM 呼び出し（claude -p / npx / bunx）が混入している（Issue #290、コスト 0 の前提崩壊）"
+else
+  pass "差分なし経路スクリプトに LLM 呼び出しが含まれない（Issue #290、gh api のみで API コスト 0）"
+fi
+
+# === Issue #291（epic #289 子2）: @vibehawk full review コマンドの検証 ===
+# 過去指摘を無視した PR 全体再レビュー。@vibehawk review（増分）と排他で衝突しない。
+echo "=== Issue #291: @vibehawk full review 検証 ==="
+
+# IS_FULL_REVIEW env が prompt に渡る
+if grep -F "IS_FULL_REVIEW:" "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F "steps.parse_command.outputs.command == 'full-review'" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に IS_FULL_REVIEW (contains '@vibehawk full review') が渡される（Issue #291）"
+else
+  fail "prompt に IS_FULL_REVIEW が渡されていない（Issue #291、full review コマンド検知の前提）"
+fi
+
+# prompt に全体再レビューモード分岐と「過去指摘無視・全件評価」指示が含まれる
+if grep -F "全体再レビューモード" "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F "過去の vibehawk 指摘" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "prompt に全体再レビューモード（過去指摘無視・全件評価）が含まれる（Issue #291）"
+else
+  fail "prompt に全体再レビューモードの分岐指示が含まれない（Issue #291）"
+fi
+
+# pr_head が full review でも発火する
+PR_HEAD_FULL_BLOCK="$(awk '/id: pr_head/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$PR_HEAD_FULL_BLOCK" | grep -F "steps.parse_command.outputs.command == 'full-review'" > /dev/null; then
+  pass "pr_head step が @vibehawk full review でも発火する（Issue #291、HEAD SHA 取得）"
+else
+  fail "pr_head step が @vibehawk full review で発火しない（Issue #291）"
+fi
+
+# post_review が full review でも発火する
+POST_REVIEW_FULL_BLOCK="$(awk '/id: post_review/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$POST_REVIEW_FULL_BLOCK" | grep -F "steps.parse_command.outputs.command == 'full-review'" > /dev/null; then
+  pass "post_review step が @vibehawk full review でも bundled review を post する（Issue #291）"
+else
+  fail "post_review step が @vibehawk full review で発火しない（Issue #291）"
+fi
+
+# post-status-check が full review でも発火する
+STATUS_CHECK_BLOCK="$(awk '/status check を post（@vibehawk/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$STATUS_CHECK_BLOCK" | grep -F "steps.parse_command.outputs.command == 'full-review'" > /dev/null; then
+  pass "post-status-check step が @vibehawk full review でも status check を更新する（Issue #291）"
+else
+  fail "post-status-check step が @vibehawk full review で発火しない（Issue #291）"
+fi
+
+# 衝突しないこと: review_diff / reverdict gate は @vibehawk full review を含まない（増分経路と排他）
+REVIEW_DIFF_BLOCK="$(awk '/id: review_diff/,/run: bash/' "$CHAT_WORKFLOW")"
+REVERDICT_BLOCK="$(awk '/id: reverdict/,/run: bash/' "$CHAT_WORKFLOW")"
+if ! echo "$REVIEW_DIFF_BLOCK" | grep -F "@vibehawk full review" > /dev/null && \
+   ! echo "$REVERDICT_BLOCK" | grep -F "@vibehawk full review" > /dev/null; then
+  pass "review_diff / reverdict は @vibehawk full review を gate に含まない（増分経路と衝突しない、Issue #291）"
+else
+  fail "review_diff / reverdict が full review を巻き込んでいる（Issue #291、増分経路と衝突）"
+fi
+
+# === Issue #292（epic #289 子3）: @vibehawk resolve コマンドの検証 ===
+# vibehawk 自身の未解決スレッドを一括 resolve。LLM 不要の決定論的操作。
+echo "=== Issue #292: @vibehawk resolve 検証 ==="
+
+# resolve step が resolve-own-threads.sh を呼ぶ
+if grep -F 'id: resolve_threads' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/resolve-own-threads.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "resolve step (resolve_threads) が resolve-own-threads.sh を呼ぶ（Issue #292）"
+else
+  fail "resolve step が存在しない（Issue #292）"
+fi
+
+# resolve step は @vibehawk resolve + PR で発火する
+RESOLVE_BLOCK="$(awk '/id: resolve_threads/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$RESOLVE_BLOCK" | grep -F "steps.parse_command.outputs.command == 'resolve'" > /dev/null && \
+   echo "$RESOLVE_BLOCK" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
+  pass "resolve step の起動条件が @vibehawk resolve + PR（Issue #292）"
+else
+  fail "resolve step の起動条件が不適切（Issue #292）"
+fi
+
+# claude-code-action が resolve でスキップされる（LLM 不要）
+CLAUDE_SKIP_BLOCK="$(awk '/- name: claude-code-action でチャット応答/,/uses: anthropics/' "$CHAT_WORKFLOW")"
+# 新設計: claude gate は肯定形（chat / full-review / review&diff）。resolve は含まれない＝スキップ。
+if ! echo "$CLAUDE_SKIP_BLOCK" | grep -F "'resolve'" > /dev/null && \
+   echo "$CLAUDE_SKIP_BLOCK" | grep -F "command == 'chat'" > /dev/null; then
+  pass "claude-code-action の肯定 gate に resolve が含まれない＝スキップされる（Issue #292、LLM 不要）"
+else
+  fail "claude-code-action の resolve スキップ条件が不在（Issue #292）"
+fi
+
+# reverdict が resolve でも発火する（全解決→APPROVE 再評価）
+REVERDICT_RESOLVE_BLOCK="$(awk '/id: reverdict/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$REVERDICT_RESOLVE_BLOCK" | grep -F "steps.parse_command.outputs.command == 'resolve'" > /dev/null; then
+  pass "reverdict step が @vibehawk resolve でも verdict を再評価する（Issue #292）"
+else
+  fail "reverdict step が @vibehawk resolve で発火しない（Issue #292）"
+fi
+
+# resolve-own-threads は二重防御を持つ（node_id glob + author 再確認）
+RESOLVE_SCRIPT="${CHAT_SCRIPTS_DIR}/resolve-own-threads.sh"
+if grep -F '[!A-Za-z0-9+/=_-]' "$RESOLVE_SCRIPT" > /dev/null && \
+   grep -F 'EXPECTED_LOGIN' "$RESOLVE_SCRIPT" > /dev/null; then
+  pass "resolve-own-threads が二重防御（node_id glob + author 再確認）を持つ（Issue #292）"
+else
+  fail "resolve-own-threads の二重防御が不足（Issue #292、誤 resolve リスク）"
+fi
+
+# resolve-own-threads は claude -p / npx / bunx を呼ばない（決定論的）
+if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "$RESOLVE_SCRIPT" > /dev/null; then
+  fail "resolve-own-threads に LLM 呼び出しが混入している（Issue #292）"
+else
+  pass "resolve-own-threads は LLM を呼ばない決定論的 step（Issue #292）"
+fi
+
+# === Issue #293（epic #289 子4）: @vibehawk summary コマンドの検証 ===
+# sticky walkthrough を LLM 非依存で再生成。verdict は変えない。
+echo "=== Issue #293: @vibehawk summary 検証 ==="
+
+# summary step が regenerate-sticky.sh を呼ぶ
+if grep -F 'id: regenerate_sticky' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/regenerate-sticky.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "summary step (regenerate_sticky) が regenerate-sticky.sh を呼ぶ（Issue #293）"
+else
+  fail "summary step が存在しない（Issue #293）"
+fi
+
+# summary step は @vibehawk summary + PR で発火
+SUMMARY_BLOCK="$(awk '/id: regenerate_sticky/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$SUMMARY_BLOCK" | grep -F "steps.parse_command.outputs.command == 'summary'" > /dev/null && \
+   echo "$SUMMARY_BLOCK" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
+  pass "summary step の起動条件が @vibehawk summary + PR（Issue #293）"
+else
+  fail "summary step の起動条件が不適切（Issue #293）"
+fi
+
+# pr_head が summary でも発火
+PR_HEAD_SUMMARY_BLOCK="$(awk '/id: pr_head/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$PR_HEAD_SUMMARY_BLOCK" | grep -F "steps.parse_command.outputs.command == 'summary'" > /dev/null; then
+  pass "pr_head step が @vibehawk summary でも発火する（Issue #293、HEAD SHA 取得）"
+else
+  fail "pr_head step が @vibehawk summary で発火しない（Issue #293）"
+fi
+
+# claude-code-action が summary でスキップ（LLM 不要）
+if ! echo "$CLAUDE_SKIP_BLOCK" | grep -F "'summary'" > /dev/null; then
+  pass "claude-code-action の肯定 gate に summary が含まれない＝スキップされる（Issue #293、LLM 不要）"
+else
+  fail "claude-code-action の summary スキップ条件が不在（Issue #293）"
+fi
+
+# regenerate-sticky は LLM を呼ばない（決定論的）
+STICKY_SCRIPT="${CHAT_SCRIPTS_DIR}/regenerate-sticky.sh"
+if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "$STICKY_SCRIPT" > /dev/null; then
+  fail "regenerate-sticky に LLM 呼び出しが混入している（Issue #293）"
+else
+  pass "regenerate-sticky は LLM を呼ばない決定論的 step（Issue #293）"
+fi
+
+# === Issue #294（epic #289 子5）: @vibehawk help / configuration コマンドの検証 ===
+# 表示のみ・LLM 不要・PR 限定なし。
+echo "=== Issue #294: @vibehawk help / configuration 検証 ==="
+
+# help step が post-help.sh を呼ぶ
+if grep -F 'id: post_help' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/post-help.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "help step (post_help) が post-help.sh を呼ぶ（Issue #294）"
+else
+  fail "help step が存在しない（Issue #294）"
+fi
+
+# configuration step が post-configuration.sh を呼ぶ
+if grep -F 'id: post_configuration' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/post-configuration.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "configuration step (post_configuration) が post-configuration.sh を呼ぶ（Issue #294）"
+else
+  fail "configuration step が存在しない（Issue #294）"
+fi
+
+# help / configuration は PR 限定なし（github.event.issue.pull_request != null を gate に持たない）
+POST_HELP_BLOCK="$(awk '/id: post_help/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$POST_HELP_BLOCK" | grep -F "steps.parse_command.outputs.command == 'help'" > /dev/null && \
+   ! echo "$POST_HELP_BLOCK" | grep -F "pull_request != null" > /dev/null; then
+  pass "help step は @vibehawk help で発火し PR 限定なし（Issue でも動く、Issue #294）"
+else
+  fail "help step の起動条件が不適切（Issue #294）"
+fi
+
+# claude-code-action が help / configuration でスキップ
+CLAUDE_SKIP_HC="$(awk '/- name: claude-code-action でチャット応答/,/uses: anthropics/' "$CHAT_WORKFLOW")"
+if ! echo "$CLAUDE_SKIP_HC" | grep -F "'help'" > /dev/null && \
+   ! echo "$CLAUDE_SKIP_HC" | grep -F "'configuration'" > /dev/null; then
+  pass "claude-code-action の肯定 gate に help / configuration が含まれない＝スキップされる（Issue #294、LLM 不要）"
+else
+  fail "claude-code-action の help / configuration スキップ条件が不在（Issue #294）"
+fi
+
+# chat prompt に未知コマンド→help 案内
+if grep -F "未知コマンドへの案内" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "chat prompt に未知コマンド→help 案内の指示が含まれる（Issue #294）"
+else
+  fail "chat prompt に未知コマンド案内が不在（Issue #294）"
+fi
+
+# post-help / post-configuration は LLM を呼ばない
+if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "${CHAT_SCRIPTS_DIR}/post-help.sh" "${CHAT_SCRIPTS_DIR}/post-configuration.sh" > /dev/null; then
+  fail "post-help / post-configuration に LLM 呼び出しが混入している（Issue #294）"
+else
+  pass "post-help / post-configuration は LLM を呼ばない決定論的 step（Issue #294）"
+fi
+
+# === Issue #295（epic #289 子6）: @vibehawk pause / resume / ignore コマンドの検証 ===
+echo "=== Issue #295: @vibehawk pause / resume / ignore 検証 ==="
+
+# 状態設定 step が set-autoreview-state.sh を呼ぶ
+if grep -F 'id: set_autoreview_state' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/set-autoreview-state.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "状態設定 step (set_autoreview_state) が set-autoreview-state.sh を呼ぶ（Issue #295）"
+else
+  fail "状態設定 step が存在しない（Issue #295）"
+fi
+
+# pause / resume / ignore 3 コマンドで発火する
+SET_STATE_BLOCK="$(awk '/id: set_autoreview_state/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$SET_STATE_BLOCK" | grep -F "command == 'pause'" > /dev/null && \
+   echo "$SET_STATE_BLOCK" | grep -F "command == 'resume'" > /dev/null && \
+   echo "$SET_STATE_BLOCK" | grep -F "command == 'ignore'" > /dev/null; then
+  pass "状態設定 step が pause / resume / ignore 3 コマンドで発火する（Issue #295）"
+else
+  fail "状態設定 step の起動条件が不適切（Issue #295）"
+fi
+
+# claude-code-action が pause/resume/ignore でスキップ
+CLAUDE_SKIP_PRI="$(awk '/- name: claude-code-action でチャット応答/,/uses: anthropics/' "$CHAT_WORKFLOW")"
+if ! echo "$CLAUDE_SKIP_PRI" | grep -F "'pause'" > /dev/null && \
+   ! echo "$CLAUDE_SKIP_PRI" | grep -F "'resume'" > /dev/null && \
+   ! echo "$CLAUDE_SKIP_PRI" | grep -F "'ignore'" > /dev/null; then
+  pass "claude-code-action の肯定 gate に pause/resume/ignore が含まれない＝スキップされる（Issue #295、LLM 不要）"
+else
+  fail "claude-code-action の pause/resume/ignore スキップ条件が不在（Issue #295）"
+fi
+
+# set-autoreview-state は LLM を呼ばない
+if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "${CHAT_SCRIPTS_DIR}/set-autoreview-state.sh" > /dev/null; then
+  fail "set-autoreview-state に LLM 呼び出しが混入している（Issue #295）"
+else
+  pass "set-autoreview-state は LLM を呼ばない決定論的 step（Issue #295）"
+fi
+
+# === CodeRabbit 指摘対応（Issue #289）: 厳密コマンド parse 検証 ===
+echo "=== コマンド厳密 parse（contains 部分一致の排除）検証 ==="
+
+if grep -F 'id: parse_command' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/parse-command.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "parse_command step が parse-command.sh を呼ぶ（Issue #289、厳密 parse）"
+else
+  fail "parse_command step が存在しない（Issue #289）"
+fi
+
+# コマンド分岐は contains() 部分一致ではなく command 出力で判定する
+# （job 起動ゲートの contains '@vibehawk' のみ許容、コマンド名の contains は撲滅）
+LEFTOVER_CONTAINS="$(grep -cE "contains\(github.event.comment.body, '@vibehawk (review|full review|resolve|summary|help|configuration|pause|resume|ignore)'\)" "$CHAT_WORKFLOW" || true)"
+if [[ "$LEFTOVER_CONTAINS" -eq 0 ]]; then
+  pass "コマンド分岐が contains() 部分一致を使っていない（command 出力で判定、Issue #289）"
+else
+  fail "contains() 部分一致のコマンド判定が残っている（${LEFTOVER_CONTAINS} 件、Issue #289、prose 誤発火リスク）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

@@ -158,6 +158,8 @@ vibehawk が一度 `failure` を post すると、利用者が指摘に対応し
 
 どちらの経路でも status check `vibehawk` の conclusion が最新差分に基づいて再評価される。空コミット push という workaround は不要。
 
+> **なぜ resolve 自動反応ではなくコマンド駆動か**: GitHub Actions は resolve イベント（`pull_request_review_thread`）を `on:` トリガーにできないため、`@vibehawk` コマンド駆動で再現している。設計判断の詳細は [`docs/design-philosophy.md`](docs/design-philosophy.md)「@vibehawk コマンド体系の設計（epic #289 で確定）」を参照。
+
 > **利用者向けアップデート手順**: 既に vibehawk を導入済みのリポジトリは、`templates/.github/workflows/vibehawk-review.yml` および `templates/.github/workflows/vibehawk-chat.yml` の最新版を `.github/workflows/` に上書きコピーして PR を出すこと（再 install は不要、追加 secret 設定も不要）。
 
 ### メンテナー向け運用
