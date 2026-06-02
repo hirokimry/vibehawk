@@ -64,6 +64,9 @@ declare -a expected_chat_scripts=(
   "fetch-pr-head.sh"
   "post-bundled-review.sh"
   "post-status-check.sh"
+  "detect-review-diff.sh"
+  "re-evaluate-verdict.sh"
+  "post-recheck-notice.sh"
 )
 for s in "${expected_chat_scripts[@]}"; do
   if [[ -f "${CHAT_SCRIPTS_DIR}/${s}" ]]; then
@@ -712,6 +715,56 @@ if echo "$CHAT_SURFACE" | grep -F '.state == "APPROVED" or .state == "CHANGES_RE
   pass "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込む（Issue #135、Issue #121 追加修正の踏襲）"
 else
   fail "substantive review filter が state APPROVED/CHANGES_REQUESTED で絞り込んでいない（Issue #135）"
+fi
+
+# === Issue #290（epic #289 子1）: @vibehawk review の diff-aware 分岐の検証 ===
+# `@vibehawk review` で前回レビュー以降のコミット差分の有無を判定し、差分なしなら
+# LLM 非実行の verdict 再評価経路へ、差分ありなら従来の増分 LLM レビュー経路へ分岐する。
+echo "=== Issue #290: @vibehawk review diff-aware 分岐 検証 ==="
+
+# 差分判定 step（review_diff）が存在し detect-review-diff.sh を呼ぶ
+if grep -F 'id: review_diff' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/detect-review-diff.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "差分判定 step (review_diff) が detect-review-diff.sh を呼ぶ（Issue #290）"
+else
+  fail "差分判定 step (review_diff) が存在しない（Issue #290）"
+fi
+
+# claude-code-action step が差分なし(@vibehawk review + PR + diff_exists=false)時にスキップされる
+if grep -F "steps.review_diff.outputs.diff_exists == 'false'" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "差分なし時に claude-code-action をスキップする gate (diff_exists == 'false') が存在する（Issue #290、LLM 非実行）"
+else
+  fail "claude-code-action の差分なしスキップ gate が存在しない（Issue #290、LLM 非実行が達成されない）"
+fi
+
+# bundled review POST は差分あり(diff_exists=true)時のみ実行される
+if grep -F "steps.review_diff.outputs.diff_exists == 'true'" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "bundled review POST が差分あり(diff_exists == 'true')時のみ実行される gate が存在する（Issue #290）"
+else
+  fail "bundled review POST の差分あり gate が存在しない（Issue #290）"
+fi
+
+# 差分なし経路の verdict 再評価 step（reverdict）が re-evaluate-verdict.sh を呼ぶ
+if grep -F 'id: reverdict' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/re-evaluate-verdict.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "差分なし経路の verdict 再評価 step (reverdict) が re-evaluate-verdict.sh を呼ぶ（Issue #290）"
+else
+  fail "差分なし経路の verdict 再評価 step が存在しない（Issue #290）"
+fi
+
+# 差分なし経路の再チェック通知 step が post-recheck-notice.sh を呼ぶ
+if grep -F 'bash scripts/ci/vibehawk-chat/post-recheck-notice.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "差分なし経路の再チェック通知 step が post-recheck-notice.sh を呼ぶ（Issue #290）"
+else
+  fail "差分なし経路の再チェック通知 step が存在しない（Issue #290）"
+fi
+
+# re-evaluate-verdict / detect-review-diff は LLM・claude -p・npx・bunx を呼ばない（API コスト 0）
+REVERDICT_CONTENT="$(cat "${CHAT_SCRIPTS_DIR}/re-evaluate-verdict.sh" "${CHAT_SCRIPTS_DIR}/detect-review-diff.sh" 2>/dev/null || true)"
+if echo "$REVERDICT_CONTENT" | grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' > /dev/null; then
+  fail "差分なし経路スクリプトに LLM 呼び出し（claude -p / npx / bunx）が混入している（Issue #290、コスト 0 の前提崩壊）"
+else
+  pass "差分なし経路スクリプトに LLM 呼び出しが含まれない（Issue #290、gh api のみで API コスト 0）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

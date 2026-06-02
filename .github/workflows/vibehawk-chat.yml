@@ -85,8 +85,32 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
         run: bash scripts/ci/vibehawk-chat/fetch-pr-head.sh
 
+      # Issue #290（epic #289 子1）: `@vibehawk review` で前回レビュー以降のコミット差分の
+      # 有無を判定する。差分なし（diff_exists=false）なら LLM 非実行の verdict 再評価経路へ、
+      # 差分ありなら従来の増分 LLM レビュー経路へ後続 step を分岐させる。
+      - name: 差分判定（@vibehawk review 経路、Issue #290）
+        id: review_diff
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk review') &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/ci/vibehawk-chat/detect-review-diff.sh
+
+      # Issue #290: 差分なしの再レビューでは claude-code-action（LLM）を実行しない（API コスト 0）。
+      # chat モード（@vibehawk review でない通常メンション）は review_diff が未実行で
+      # diff_exists が空のため `'' == 'false'` が偽となり、従来どおり claude が動く。
       - name: claude-code-action でチャット応答
-        if: steps.check_secrets.outputs.ready == 'true'
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          !(contains(github.event.comment.body, '@vibehawk review') &&
+            github.event.issue.pull_request != null &&
+            steps.review_diff.outputs.diff_exists == 'false')
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -217,10 +241,12 @@ jobs:
       # `@vibehawk review` 関連セキュリティレビュー H-1 / Issue #121-C1 fix と同じ思想）。
       - name: vibehawk bundled review を post（@vibehawk review 経路、Issue #135）
         id: post_review
+        # Issue #290: 差分ありのときだけ bundled review を post する（LLM が走った経路のみ）。
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
           contains(github.event.comment.body, '@vibehawk review') &&
-          github.event.issue.pull_request != null
+          github.event.issue.pull_request != null &&
+          steps.review_diff.outputs.diff_exists == 'true'
         env:
           # App Installation Token を使う: vibehawk-for-<owner>[bot] 名義で review を投稿するため
           # （以前の review との一貫性を保つ、Issue #121 bundled review API 設計に整合）
@@ -229,6 +255,38 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
         run: bash scripts/ci/vibehawk-chat/post-bundled-review.sh
+
+      # Issue #290（epic #289 子1）: 差分なし経路の verdict 再評価。LLM を一切呼ばず、
+      # vibehawk 自 Bot の未解決スレッド数だけで APPROVE / REQUEST_CHANGES を再 post する。
+      - name: 差分なし → verdict 再評価（@vibehawk review 経路、Issue #290）
+        id: reverdict
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk review') &&
+          github.event.issue.pull_request != null &&
+          steps.review_diff.outputs.diff_exists == 'false'
+        env:
+          # App Installation Token を使う: vibehawk-for-<owner>[bot] 名義で review を投稿するため
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/ci/vibehawk-chat/re-evaluate-verdict.sh
+
+      # Issue #290: 差分なし経路で「指摘の再チェックのみ実施した」ことを利用者に通知する。
+      - name: 差分なし → 再チェック通知コメント（@vibehawk review 経路、Issue #290）
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk review') &&
+          github.event.issue.pull_request != null &&
+          steps.review_diff.outputs.diff_exists == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          DECIDED_EVENT: ${{ steps.reverdict.outputs.decided_event }}
+          UNRESOLVED_COUNT: ${{ steps.reverdict.outputs.unresolved_count }}
+        run: bash scripts/ci/vibehawk-chat/post-recheck-notice.sh
 
       # Issue #135: `@vibehawk review` コマンド経路で bundled review POST 後に
       # status check `vibehawk` を決定論的に更新する。vibehawk-review.yml の
