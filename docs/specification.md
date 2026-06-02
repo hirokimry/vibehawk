@@ -612,6 +612,42 @@ CLI による secret 自動書込はせず、3 secrets すべて利用者が Git
 
 （稼働率、障害復旧等の要件を記載）
 
+## 🔖 バージョニング・リリース方針
+
+> [!IMPORTANT]
+> vibehawk 製品版バージョンの正（Source of Truth）は `package.json` の `version`。
+> `.claude-plugin/plugin.json` は vendored な vibecorp 開発フレームワークのマニフェスト。
+> vibehawk のリリース対象ではない。
+
+### 📦 2 つの version は別物
+
+| ファイル | 何のバージョンか | 値の例 | リリース対象 |
+|---|---|---|---|
+| `package.json` | vibehawk 製品本体（npm CLI / PR レビュー） | `version` / name `vibehawk` | ✅ 対象（npm publish される） |
+| `.claude-plugin/plugin.json` | 開発に使う vibecorp フレームワーク（vendored） | manifest `version` / name `vibecorp` | ❌ 対象外（npm 非公開・製品コード非参照） |
+
+- 両者は **同じものの 2 つの値ではない**。
+- `.claude-plugin/plugin.json` の `version` / `name` は vibecorp 由来。
+- vibehawk 側から rename・version 同期を **してはいけない**。
+  - 誤ってやると vendored マニフェストを壊す。
+  - 📍 根拠: コミット `a7c16dd`（vibehawk が vibecorp プラグインを導入）。
+
+### 🚀 製品版の上げ方
+
+- 製品版バージョンは `package.json` の `version` だけで管理する。
+- `npx vibehawk version` が表示するのも `package.json` の値。
+- リリースは 2 段階で回る。
+  - main は PR 必須 + enforce_admins のため、CI から main へ直接 commit しない設計。
+  - 1. リリース PR 内で `scripts/ci/release/prepare-release.sh` が動く。
+    - Conventional Commits からバージョンを決定する。
+    - `package.json` + `CHANGELOG.md` を PR 差分として更新する。
+  - 2. main マージ時に `release-tag.yml` が動く。
+    - version が新規なら tag + GitHub Release を作成する（branch ref は触らない）。
+    - 作成された Release が `release.yml` の npm publish を発火させる。
+  - 事故防止: push 前後で version が変化した時だけ Release を作る。
+- bump 漏れ警告の監視対象も `package.json`（`.claude-plugin/plugin.json` は対象外）。
+  - 📍 実装: `version-bump-check.yml`（Issue #308）。
+
 ## CLI 仕様
 
 vibehawk は npm パッケージとして CLI を提供する。利用者は `npx vibehawk install` で GitHub App Manifest Flow を起動できる。

@@ -1,0 +1,38 @@
+name: release-tag
+
+# main への push 時に package.json の version が新規なら tag + GitHub Release を自動作成する（Issue #307）。
+#
+# 設計（branch protection 両立）:
+# - main は require_pr + enforce_admins で CI からの直接 commit が不可。
+# - version の bump はリリース PR 内で prepare-release.sh が行い、本 workflow は
+#   tag と GitHub Release の作成のみ担う（branch ref には触れない）。
+# - 作成された Release が release.yml（on: release: published）の npm publish を発火させる。
+# - 事故防止: push 前後で version が変化した時だけ Release を作る（release-tag-on-main.sh 内で判定）。
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag-and-release:
+    name: version 新規時に tag + GitHub Release を作成
+    runs-on: ubuntu-latest
+    steps:
+      - name: チェックアウト（fetch-depth 0 でタグ・履歴も取得）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: version 新規時に tag + GitHub Release を作成
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/release/release-tag-on-main.sh
