@@ -25,7 +25,8 @@ if [[ -f ".vibehawk.yaml" ]]; then
   # 不正 YAML / python 不在 / 導入失敗時は default 表示にフォールバックする。
   config_json=""
   if ! python3 -c "import yaml" 2>/dev/null; then
-    pip install --user --quiet pyyaml 2>/dev/null || true
+    # python3 -m pip を使う（`pip` だと python2 の pip が呼ばれ import チェックと不整合になり得る）
+    python3 -m pip install --user --quiet pyyaml 2>/dev/null || true
   fi
   if python3 -c "import yaml" 2>/dev/null; then
     config_json="$(python3 -c "import yaml,json; print(json.dumps(yaml.safe_load(open('.vibehawk.yaml')) or {}))" 2>/dev/null || printf '')"
