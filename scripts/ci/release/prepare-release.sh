@@ -38,21 +38,27 @@ update_changelog() {
 
   # 改行を含むセクションを awk -v で渡すと BSD awk が落ちるため一時ファイル経由で渡す（shell.md 互換）。
   secfile="$(mktemp "$(dirname "$changelog")/.CHANGELOG-sec.XXXXXX")"
+  tmp="$(mktemp "$(dirname "$changelog")/.CHANGELOG.XXXXXX")"
   {
     printf '## v%s - %s\n\n' "$version" "$today"
     printf '%s' "$CC_RELEASE_NOTES"
   } > "$secfile"
 
   # 先頭の `## v<数字>` 見出しの直前に新セクションを挿入する（既存履歴を壊さない）。
-  tmp="$(mktemp "$(dirname "$changelog")/.CHANGELOG.XXXXXX")"
-  awk -v secfile="$secfile" '
-    function emit(  line) { while ((getline line < secfile) > 0) print line; close(secfile) }
-    BEGIN { inserted = 0 }
-    /^## v[0-9]/ && inserted == 0 { emit(); inserted = 1 }
-    { print }
-    END { if (inserted == 0) emit() }
-  ' "$changelog" > "$tmp" && mv "$tmp" "$changelog"
-  rm -f "$secfile"
+  # awk / mv が失敗しても一時ファイルを残さないよう、成否どちらでも後始末する（set -e 下の早期 exit 対策、Issue #315）。
+  if awk -v secfile="$secfile" '
+      function emit(  line) { while ((getline line < secfile) > 0) print line; close(secfile) }
+      BEGIN { inserted = 0 }
+      /^## v[0-9]/ && inserted == 0 { emit(); inserted = 1 }
+      { print }
+      END { if (inserted == 0) emit() }
+    ' "$changelog" > "$tmp" && mv "$tmp" "$changelog"; then
+    rm -f "$secfile"
+  else
+    rm -f "$secfile" "$tmp"
+    log_warn "CHANGELOG.md の更新に失敗しました"
+    return 1
+  fi
 }
 
 main() {

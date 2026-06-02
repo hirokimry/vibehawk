@@ -30,11 +30,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Node.js セットアップ
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: version 新規時に tag + GitHub Release を作成
         env:
           BEFORE_SHA: ${{ github.event.before }}
