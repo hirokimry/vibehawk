@@ -73,12 +73,13 @@ jobs:
       # Claude prompt 内で `gh pr view` / `gh api` を呼ぶ必要をなくすことで、
       # プロンプト注入経由の API 操作攻撃面を最小化する（Issue #121-C1 fix と同じ思想、
       # `@vibehawk review` 関連のセキュリティレビュー指摘 H-1 への対応）。
-      - name: PR HEAD SHA を取得（@vibehawk review / full review 経路、Issue #135 / #291）
+      - name: PR HEAD SHA を取得（@vibehawk review / full review / resolve 経路、Issue #135 / #291 / #292）
         id: pr_head
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
           (contains(github.event.comment.body, '@vibehawk review') ||
-           contains(github.event.comment.body, '@vibehawk full review')) &&
+           contains(github.event.comment.body, '@vibehawk full review') ||
+           contains(github.event.comment.body, '@vibehawk resolve')) &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -103,18 +104,37 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: bash scripts/ci/vibehawk-chat/detect-review-diff.sh
 
+      # Issue #292（epic #289 子3）: `@vibehawk resolve` で vibehawk 自身の未解決 review thread を
+      # 一括 resolved 化する（決定論的・LLM 非依存）。後続の reverdict が全解決→APPROVE に再評価する。
+      - name: 自身の指摘を一括 resolve（@vibehawk resolve 経路、Issue #292）
+        id: resolve_threads
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk resolve') &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          OWNER: ${{ github.repository_owner }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: bash scripts/ci/vibehawk-chat/resolve-own-threads.sh
+
       # Issue #290: 差分なしの再レビューでは claude-code-action（LLM）を実行しない（API コスト 0）。
       # chat モード（@vibehawk review でない通常メンション）は review_diff が未実行で
       # diff_exists が空のため `'' == 'false'` が偽となり、従来どおり claude が動く。
       # Issue #291: @vibehawk full review は文字列上 @vibehawk review を含まないため
       # skip 条件（contains '@vibehawk review'）が偽となり、差分の有無に関わらず必ず claude が動く
       # （full review は差分なしスキップを適用せず常に全件レビューする意図的挙動）。
+      # Issue #292: @vibehawk resolve は LLM 不要の決定論的操作のため claude をスキップする。
       - name: claude-code-action でチャット応答
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
           !(contains(github.event.comment.body, '@vibehawk review') &&
             github.event.issue.pull_request != null &&
-            steps.review_diff.outputs.diff_exists == 'false')
+            steps.review_diff.outputs.diff_exists == 'false') &&
+          !(contains(github.event.comment.body, '@vibehawk resolve') &&
+            github.event.issue.pull_request != null)
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -277,11 +297,14 @@ jobs:
       # vibehawk 自 Bot の未解決スレッド数だけで APPROVE / REQUEST_CHANGES を再 post する。
       - name: 差分なし → verdict 再評価（@vibehawk review 経路、Issue #290）
         id: reverdict
+        # Issue #290: 差分なし @vibehawk review。Issue #292: @vibehawk resolve 後の全解決→APPROVE 再評価。
+        # どちらも LLM 非実行で自 Bot 未解決スレッド数だけで verdict を再判定する。
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
-          contains(github.event.comment.body, '@vibehawk review') &&
           github.event.issue.pull_request != null &&
-          steps.review_diff.outputs.diff_exists == 'false'
+          ((contains(github.event.comment.body, '@vibehawk review') &&
+            steps.review_diff.outputs.diff_exists == 'false') ||
+           contains(github.event.comment.body, '@vibehawk resolve'))
         env:
           # App Installation Token を使う: vibehawk-for-<owner>[bot] 名義で review を投稿するため
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -310,7 +333,7 @@ jobs:
       # `vibehawk status check を post` step と同等のロジック。
       # Claude prompt から check-runs を呼ばない設計（Issue #121-C1 fix と同じ理由、
       # claude-code-action permission model で deny されるため）。
-      - name: vibehawk status check を post（@vibehawk review / full review 経路、Issue #135 / #291）
+      - name: vibehawk status check を post（@vibehawk review / full review / resolve 経路、Issue #135 / #291 / #292）
         # always() 修飾: claude-code-action や post_review step が失敗しても、
         # 直前の review 状態（または review 未投稿）に応じた status check を必ず更新する。
         # required status check が永久ブロックされる UX 欠陥（Issue #135 起因）の再発防止。
@@ -318,7 +341,8 @@ jobs:
           always() &&
           steps.check_secrets.outputs.ready == 'true' &&
           (contains(github.event.comment.body, '@vibehawk review') ||
-           contains(github.event.comment.body, '@vibehawk full review')) &&
+           contains(github.event.comment.body, '@vibehawk full review') ||
+           contains(github.event.comment.body, '@vibehawk resolve')) &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

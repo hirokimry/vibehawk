@@ -67,6 +67,7 @@ declare -a expected_chat_scripts=(
   "detect-review-diff.sh"
   "re-evaluate-verdict.sh"
   "post-recheck-notice.sh"
+  "resolve-own-threads.sh"
 )
 for s in "${expected_chat_scripts[@]}"; do
   if [[ -f "${CHAT_SCRIPTS_DIR}/${s}" ]]; then
@@ -819,6 +820,59 @@ if ! echo "$REVIEW_DIFF_BLOCK" | grep -F "@vibehawk full review" > /dev/null && 
   pass "review_diff / reverdict は @vibehawk full review を gate に含まない（増分経路と衝突しない、Issue #291）"
 else
   fail "review_diff / reverdict が full review を巻き込んでいる（Issue #291、増分経路と衝突）"
+fi
+
+# === Issue #292（epic #289 子3）: @vibehawk resolve コマンドの検証 ===
+# vibehawk 自身の未解決スレッドを一括 resolve。LLM 不要の決定論的操作。
+echo "=== Issue #292: @vibehawk resolve 検証 ==="
+
+# resolve step が resolve-own-threads.sh を呼ぶ
+if grep -F 'id: resolve_threads' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/resolve-own-threads.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "resolve step (resolve_threads) が resolve-own-threads.sh を呼ぶ（Issue #292）"
+else
+  fail "resolve step が存在しない（Issue #292）"
+fi
+
+# resolve step は @vibehawk resolve + PR で発火する
+RESOLVE_BLOCK="$(awk '/id: resolve_threads/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$RESOLVE_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk resolve')" > /dev/null && \
+   echo "$RESOLVE_BLOCK" | grep -F "github.event.issue.pull_request != null" > /dev/null; then
+  pass "resolve step の起動条件が @vibehawk resolve + PR（Issue #292）"
+else
+  fail "resolve step の起動条件が不適切（Issue #292）"
+fi
+
+# claude-code-action が resolve でスキップされる（LLM 不要）
+CLAUDE_SKIP_BLOCK="$(awk '/- name: claude-code-action でチャット応答/,/uses: anthropics/' "$CHAT_WORKFLOW")"
+if echo "$CLAUDE_SKIP_BLOCK" | grep -F "@vibehawk resolve" > /dev/null; then
+  pass "claude-code-action が @vibehawk resolve でスキップされる（Issue #292、LLM 不要）"
+else
+  fail "claude-code-action の resolve スキップ条件が不在（Issue #292）"
+fi
+
+# reverdict が resolve でも発火する（全解決→APPROVE 再評価）
+REVERDICT_RESOLVE_BLOCK="$(awk '/id: reverdict/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$REVERDICT_RESOLVE_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk resolve')" > /dev/null; then
+  pass "reverdict step が @vibehawk resolve でも verdict を再評価する（Issue #292）"
+else
+  fail "reverdict step が @vibehawk resolve で発火しない（Issue #292）"
+fi
+
+# resolve-own-threads は二重防御を持つ（node_id glob + author 再確認）
+RESOLVE_SCRIPT="${CHAT_SCRIPTS_DIR}/resolve-own-threads.sh"
+if grep -F '[!A-Za-z0-9+/=_-]' "$RESOLVE_SCRIPT" > /dev/null && \
+   grep -F 'EXPECTED_LOGIN' "$RESOLVE_SCRIPT" > /dev/null; then
+  pass "resolve-own-threads が二重防御（node_id glob + author 再確認）を持つ（Issue #292）"
+else
+  fail "resolve-own-threads の二重防御が不足（Issue #292、誤 resolve リスク）"
+fi
+
+# resolve-own-threads は claude -p / npx / bunx を呼ばない（決定論的）
+if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "$RESOLVE_SCRIPT" > /dev/null; then
+  fail "resolve-own-threads に LLM 呼び出しが混入している（Issue #292）"
+else
+  pass "resolve-own-threads は LLM を呼ばない決定論的 step（Issue #292）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
