@@ -69,6 +69,8 @@ declare -a expected_chat_scripts=(
   "post-recheck-notice.sh"
   "resolve-own-threads.sh"
   "regenerate-sticky.sh"
+  "post-help.sh"
+  "post-configuration.sh"
 )
 for s in "${expected_chat_scripts[@]}"; do
   if [[ -f "${CHAT_SCRIPTS_DIR}/${s}" ]]; then
@@ -924,6 +926,58 @@ if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "$STICKY_SCRIPT" > /dev/null; 
   fail "regenerate-sticky に LLM 呼び出しが混入している（Issue #293）"
 else
   pass "regenerate-sticky は LLM を呼ばない決定論的 step（Issue #293）"
+fi
+
+# === Issue #294（epic #289 子5）: @vibehawk help / configuration コマンドの検証 ===
+# 表示のみ・LLM 不要・PR 限定なし。
+echo "=== Issue #294: @vibehawk help / configuration 検証 ==="
+
+# help step が post-help.sh を呼ぶ
+if grep -F 'id: post_help' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/post-help.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "help step (post_help) が post-help.sh を呼ぶ（Issue #294）"
+else
+  fail "help step が存在しない（Issue #294）"
+fi
+
+# configuration step が post-configuration.sh を呼ぶ
+if grep -F 'id: post_configuration' "$CHAT_WORKFLOW" > /dev/null && \
+   grep -F 'bash scripts/ci/vibehawk-chat/post-configuration.sh' "$CHAT_WORKFLOW" > /dev/null; then
+  pass "configuration step (post_configuration) が post-configuration.sh を呼ぶ（Issue #294）"
+else
+  fail "configuration step が存在しない（Issue #294）"
+fi
+
+# help / configuration は PR 限定なし（github.event.issue.pull_request != null を gate に持たない）
+POST_HELP_BLOCK="$(awk '/id: post_help/,/run: bash/' "$CHAT_WORKFLOW")"
+if echo "$POST_HELP_BLOCK" | grep -F "contains(github.event.comment.body, '@vibehawk help')" > /dev/null && \
+   ! echo "$POST_HELP_BLOCK" | grep -F "pull_request != null" > /dev/null; then
+  pass "help step は @vibehawk help で発火し PR 限定なし（Issue でも動く、Issue #294）"
+else
+  fail "help step の起動条件が不適切（Issue #294）"
+fi
+
+# claude-code-action が help / configuration でスキップ
+CLAUDE_SKIP_HC="$(awk '/- name: claude-code-action でチャット応答/,/uses: anthropics/' "$CHAT_WORKFLOW")"
+if echo "$CLAUDE_SKIP_HC" | grep -F "@vibehawk help" > /dev/null && \
+   echo "$CLAUDE_SKIP_HC" | grep -F "@vibehawk configuration" > /dev/null; then
+  pass "claude-code-action が @vibehawk help / configuration でスキップされる（Issue #294、LLM 不要）"
+else
+  fail "claude-code-action の help / configuration スキップ条件が不在（Issue #294）"
+fi
+
+# chat prompt に未知コマンド→help 案内
+if grep -F "未知コマンドへの案内" "$CHAT_WORKFLOW" > /dev/null; then
+  pass "chat prompt に未知コマンド→help 案内の指示が含まれる（Issue #294）"
+else
+  fail "chat prompt に未知コマンド案内が不在（Issue #294）"
+fi
+
+# post-help / post-configuration は LLM を呼ばない
+if grep -E 'claude -p|npx|bunx|ANTHROPIC_API_KEY' "${CHAT_SCRIPTS_DIR}/post-help.sh" "${CHAT_SCRIPTS_DIR}/post-configuration.sh" > /dev/null; then
+  fail "post-help / post-configuration に LLM 呼び出しが混入している（Issue #294）"
+else
+  pass "post-help / post-configuration は LLM を呼ばない決定論的 step（Issue #294）"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
