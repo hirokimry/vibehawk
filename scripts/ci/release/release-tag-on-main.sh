@@ -31,7 +31,8 @@ read_version_at() {
     printf ''
     return 0
   fi
-  printf '%s' "$blob" | jq -r '.version // ""'
+  # jq が失敗（不正 JSON 等）しても set -e で abort せず空文字に倒す（Issue #317）。
+  printf '%s' "$blob" | jq -r '.version // ""' 2> /dev/null || true
 }
 
 main() {
@@ -42,8 +43,13 @@ main() {
   fi
   local before="${BEFORE_SHA:-}"
 
+  # jq が失敗しても abort せず空文字に倒し、version 不明時は graceful skip する（Issue #317、bad tag 防止）。
   local ver_after
-  ver_after="$(jq -r '.version // ""' package.json)"
+  ver_after="$(jq -r '.version // ""' package.json 2> /dev/null || true)"
+  if [[ -z "$ver_after" ]]; then
+    log_info "package.json から version を取得できないため Release 作成をスキップします"
+    return 0
+  fi
 
   # 直前の version を特定する。all-zero SHA（初回 push）や読み取り不能時は空。
   local ver_before=""
