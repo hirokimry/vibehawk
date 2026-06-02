@@ -476,6 +476,22 @@ gh api でスレッド全コメント取得
 
 経路 2 必須化が本機能および Issue #8 / #9 / #10 / #11 の設計に与えた影響の詳細評価は `docs/route2-impact-analysis.md` を参照。
 
+## @vibehawk コマンド体系（epic #289 実装済み）
+
+`@vibehawk` メンションコマンドが CodeRabbit のコマンド体系と同等（**観察・通知系のみ**）に揃っている。各コマンドは `vibehawk-chat.yml`（`issue_comment` トリガー）経由で動作する。
+
+| コマンド | 動作 |
+|---|---|
+| `@vibehawk review` | 増分再レビュー。前回レビューからコミット差分が無ければ LLM を回さず未解決スレッド数だけで verdict を再評価する（差分ありは増分 LLM レビュー） |
+| `@vibehawk full review` | 過去指摘を無視して PR 全体を再レビューする |
+| `@vibehawk resolve` | vibehawk 自身の未解決 review thread を一括 resolved 化する |
+| `@vibehawk summary` | sticky walkthrough を LLM 非依存で再生成する |
+| `@vibehawk help` | 利用可能コマンド一覧を表示する |
+| `@vibehawk configuration` | 現在の `.vibehawk.yaml`（不在時 default）を表示する |
+| `@vibehawk pause` / `resume` / `ignore` | この PR の自動レビューを一時停止 / 再開 / 恒久無効化する（状態は GitHub マーカーコメントで保持） |
+
+設計判断（resolve イベント自動反応が Actions で不可なため `issue_comment` コマンド駆動で代替、書き換え系は MVV Value 2 で恒久対象外）は [`docs/design-philosophy.md`](design-philosophy.md)「@vibehawk コマンド体系の設計（epic #289 で確定）」を参照。
+
 ## やらない範囲（明示的除外）
 
 vibehawk の責務範囲外として実装しない機能、および vibecorp 側に残す機能を明示する。
@@ -512,7 +528,7 @@ CodeRabbit walkthrough コメントが持つ機能群のうち、vibehawk sticky
 | 2 | Suggested labels / reviewers | 「このラベル付けたら?」「この人レビューしたら?」の自動提案 | CODEOWNERS 解析 + ラベル候補生成 LLM |
 | 3 | Poem | レビューの最後に 4〜6 行の詩を添える | LLM プロンプト追加のみ（実装容易、敢えて見送り） |
 | 4 | Sequence diagram | Mermaid で関数呼出フロー図を生成 | コード解析 + Mermaid 出力 |
-| 5 | Tips 末尾誘導 | `@vibehawk help` でコマンド一覧を返す案内行 | コマンド対応（#18）と一体実装 |
+| 5 | ~~Tips 末尾誘導~~ | ~~`@vibehawk help` でコマンド一覧を返す案内行~~ | **実装済み（epic #289、`@vibehawk help` / `configuration`）** |
 | 6 | High level summary の `*_in_walkthrough` 切替 | サマリを PR description 側 / walkthrough 側どちらに置くかの選択 | PR description 書き換え機能（グループ 3）が前提 |
 
 #### グループ 2: sticky walkthrough 内の関連性分析系（4 機能）
@@ -545,9 +561,9 @@ CodeRabbit は issue-comment とは **別経路で PR description 本体も stic
 | 15 | `@coderabbitai` chat / Q&A | 既存の `@mention` 単発応答は実装済み。未実装は **複数ターン会話・任意 Q&A・コードベース横断理解付き応答**（CodeRabbit 同等の対話モード） | LLM 対話モード + 会話履歴保持 |
 | 16 | Reply to inline thread comments | 既存の `@mention` は **PR コメント** への応答のみ。未実装は **inline review thread への bot 自動応答**（ユーザー返信を検知して bot が thread 内で返す） | `pull_request_review_comment` webhook 受信経路 |
 | 17 | Auto-close conversations | 既存 `auto_resolve` は bot 自身の review thread を bot 視点で解決のみ。未実装は **修正適用を diff 解析で検知して thread を自動 resolve**（ユーザー commit の影響評価） | diff 解析 + コミット履歴判定 |
-| 18 | `@vibehawk` 系構造化コマンド対応 | 既存の `@mention` は単発質問のみ。未実装は **`@vibehawk review` / `full review` / `pause` / `ignore` / `summary` 等の構造化コマンド** | `issue_comment` webhook + コマンドパーサ |
+| 18 | ~~`@vibehawk` 系構造化コマンド対応~~ | ~~既存の `@mention` は単発質問のみ。未実装は **`@vibehawk review` / `full review` / `pause` / `ignore` / `summary` 等の構造化コマンド**~~ | **実装済み（epic #289、観察・通知系のみ。下記「§@vibehawk コマンド体系」参照）** |
 
-これらは別 Issue で順次検討する（本 Issue #219 のスコープ外）。
+これらは別 Issue で順次検討する（本 Issue #219 のスコープ外）。item 18（および item 5 の `@vibehawk help`）は epic #289 で実装済み。
 
 > [!NOTE]
 > `@vibehawk` 構造化コマンド（item #18）を「resolve イベント自動反応」ではなく `issue_comment` コマンド駆動で再現する設計判断（WHY）と、観察系のみ parity・書き換え系は恒久対象外とする線引きは [`docs/design-philosophy.md`](design-philosophy.md)「@vibehawk コマンド体系の設計（epic #289 で確定）」を参照。
