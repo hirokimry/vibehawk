@@ -73,13 +73,14 @@ jobs:
       # Claude prompt 内で `gh pr view` / `gh api` を呼ぶ必要をなくすことで、
       # プロンプト注入経由の API 操作攻撃面を最小化する（Issue #121-C1 fix と同じ思想、
       # `@vibehawk review` 関連のセキュリティレビュー指摘 H-1 への対応）。
-      - name: PR HEAD SHA を取得（@vibehawk review / full review / resolve 経路、Issue #135 / #291 / #292）
+      - name: PR HEAD SHA を取得（@vibehawk review / full review / resolve / summary 経路、Issue #135 / #291 / #292 / #293）
         id: pr_head
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
           (contains(github.event.comment.body, '@vibehawk review') ||
            contains(github.event.comment.body, '@vibehawk full review') ||
-           contains(github.event.comment.body, '@vibehawk resolve')) &&
+           contains(github.event.comment.body, '@vibehawk resolve') ||
+           contains(github.event.comment.body, '@vibehawk summary')) &&
           github.event.issue.pull_request != null
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -120,6 +121,23 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: bash scripts/ci/vibehawk-chat/resolve-own-threads.sh
 
+      # Issue #293（epic #289 子4）: `@vibehawk summary` で sticky walkthrough を LLM 非依存で
+      # 再生成する。既存インライン指摘 + PR メタから build-sticky-body.sh | post-sticky-comment.sh
+      # を流用して再 upsert する（verdict は変えない）。
+      - name: sticky walkthrough を再生成（@vibehawk summary 経路、Issue #293）
+        id: regenerate_sticky
+        if: |
+          steps.check_secrets.outputs.ready == 'true' &&
+          contains(github.event.comment.body, '@vibehawk summary') &&
+          github.event.issue.pull_request != null
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/ci/vibehawk-chat/regenerate-sticky.sh
+
       # Issue #290: 差分なしの再レビューでは claude-code-action（LLM）を実行しない（API コスト 0）。
       # chat モード（@vibehawk review でない通常メンション）は review_diff が未実行で
       # diff_exists が空のため `'' == 'false'` が偽となり、従来どおり claude が動く。
@@ -127,6 +145,7 @@ jobs:
       # skip 条件（contains '@vibehawk review'）が偽となり、差分の有無に関わらず必ず claude が動く
       # （full review は差分なしスキップを適用せず常に全件レビューする意図的挙動）。
       # Issue #292: @vibehawk resolve は LLM 不要の決定論的操作のため claude をスキップする。
+      # Issue #293: @vibehawk summary も LLM 非依存（既存検出結果から sticky 再生成）のためスキップする。
       - name: claude-code-action でチャット応答
         if: |
           steps.check_secrets.outputs.ready == 'true' &&
@@ -134,6 +153,8 @@ jobs:
             github.event.issue.pull_request != null &&
             steps.review_diff.outputs.diff_exists == 'false') &&
           !(contains(github.event.comment.body, '@vibehawk resolve') &&
+            github.event.issue.pull_request != null) &&
+          !(contains(github.event.comment.body, '@vibehawk summary') &&
             github.event.issue.pull_request != null)
         uses: anthropics/claude-code-action@12310e4417c3473095c957cb311b3cf59a38d659
         with:
