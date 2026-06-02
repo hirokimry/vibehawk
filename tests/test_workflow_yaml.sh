@@ -1216,5 +1216,30 @@ else
   pass "Claude prompt から旧記述「本 prompt で唯一許可される POST は resolveReviewThread mutation のみ」が削除されている（Issue #167）"
 fi
 
+# === Issue #295（epic #289 子6）: 自動レビュー pause/resume/ignore の review.yml 統合 ===
+echo "=== Issue #295: 自動レビュー状態 gate 検証 ==="
+
+# 注: 本テストは run: bash scripts/ci/*.sh をスクリプト内容にインライン展開するため、
+# 「bash <path>.sh」リテラルではなく id / gate 条件 / 展開後スクリプト内容文字列で検証する。
+if echo "$WORKFLOW_BODY" | grep -F 'id: autoreview_state' > /dev/null && \
+   echo "$WORKFLOW_BODY" | grep -F 'vibehawk:autoreview=' > /dev/null; then
+  pass "autoreview_state step が存在し check-autoreview-state ロジック（vibehawk:autoreview マーカー読取）を含む（Issue #295）"
+else
+  fail "autoreview_state step が存在しない（Issue #295）"
+fi
+
+if echo "$WORKFLOW_BODY" | grep -F "steps.autoreview_state.outputs.state == 'active'" > /dev/null; then
+  pass "claude_review が state == 'active' で gate される（Issue #295、paused/ignored で自動レビュー skip）"
+else
+  fail "claude_review の active gate が存在しない（Issue #295）"
+fi
+
+if echo "$WORKFLOW_BODY" | grep -F "steps.autoreview_state.outputs.state != 'active'" > /dev/null && \
+   echo "$WORKFLOW_BODY" | grep -F 'conclusion="success"' > /dev/null; then
+  pass "paused/ignored 時（state != active）に vibehawk=success を post する専用 step がある（Issue #295、merge ブロック防止）"
+else
+  fail "paused/ignored 時の success post step が存在しない（Issue #295）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
