@@ -43,8 +43,8 @@ else
   fail "set -euo pipefail がない"
 fi
 
-if ! command -v node > /dev/null 2>&1 || ! command -v git > /dev/null 2>&1; then
-  fail "node / git のいずれかが PATH にない"
+if ! command -v jq > /dev/null 2>&1 || ! command -v git > /dev/null 2>&1; then
+  fail "jq / git のいずれかが PATH にない"
   echo "=== 結果: $PASSED passed, $FAILED failed ==="
   exit 1
 fi

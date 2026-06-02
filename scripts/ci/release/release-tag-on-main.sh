@@ -24,18 +24,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 read_version_at() {
   # 指定 ref の package.json から version を読む（読めなければ空文字）。
-  local ref="$1"
-  git show "${ref}:package.json" 2> /dev/null \
-    | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version' 2> /dev/null \
-    || true
+  # version-bump-check.sh（Issue #308）と解析方式を jq に統一する（Issue #315）。
+  local ref="$1" blob
+  blob="$(git show "${ref}:package.json" 2> /dev/null || true)"
+  if [[ -z "$blob" ]]; then
+    printf ''
+    return 0
+  fi
+  printf '%s' "$blob" | jq -r '.version // ""'
 }
 
 main() {
   : "${AFTER_SHA:?AFTER_SHA is required}"
+  if ! command -v jq > /dev/null 2>&1; then
+    log_error "jq が必要です"
+    return 2
+  fi
   local before="${BEFORE_SHA:-}"
 
   local ver_after
-  ver_after="$(node -p 'require("./package.json").version')"
+  ver_after="$(jq -r '.version // ""' package.json)"
 
   # 直前の version を特定する。all-zero SHA（初回 push）や読み取り不能時は空。
   local ver_before=""
