@@ -29,7 +29,8 @@ update_changelog() {
   local version="$1"
   local changelog="${REPO_ROOT}/CHANGELOG.md"
   if [[ ! -f "$changelog" ]]; then
-    log_warn "CHANGELOG.md が無いため追記をスキップします"
+    # log_warn は stderr 出力だが、stdout=新バージョン専用の意図を明示するため >&2 を併記する（Issue #317）。
+    log_warn "CHANGELOG.md が無いため追記をスキップします" >&2
     return 0
   fi
 
@@ -56,7 +57,7 @@ update_changelog() {
     rm -f "$secfile"
   else
     rm -f "$secfile" "$tmp"
-    log_warn "CHANGELOG.md の更新に失敗しました"
+    log_warn "CHANGELOG.md の更新に失敗しました" >&2
     return 1
   fi
 }
