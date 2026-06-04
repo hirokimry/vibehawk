@@ -41,8 +41,9 @@ jobs:
           cache: 'npm'
 
       - name: npm を OIDC trusted publishing 対応版へ更新（npm >= 11.5.1）
-        # Node 24 同梱 npm が要件未満でも確実に満たすよう明示更新する（Issue #321）
-        run: npm install -g npm@latest
+        # 要件 >= 11.5.1 を満たしつつメジャーを 11 に固定し、リリースの再現性を保つ（npm@latest だと
+        # 将来のメジャー更新で OIDC 署名フロー変更にリリース時まで気付けないため）（Issue #321）
+        run: npm install -g npm@^11.5.1
 
       - name: 依存パッケージのインストール
         # Issue #91: tests/test_setup_wizard.sh が @clack/prompts を require するため
