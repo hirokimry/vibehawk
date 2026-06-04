@@ -126,5 +126,26 @@ else
   fail "package.json の publishConfig 設定が不足"
 fi
 
+# OIDC 一本化: NODE_AUTH_TOKEN / NPM_TOKEN を参照しない（Issue #321）
+if echo "$body" | grep -E "NODE_AUTH_TOKEN|NPM_TOKEN" > /dev/null; then
+  fail "NODE_AUTH_TOKEN / NPM_TOKEN が参照されている（OIDC 一本化されていない）"
+else
+  pass "NODE_AUTH_TOKEN / NPM_TOKEN を参照しない（OIDC trusted publishing 一本化、Issue #321）"
+fi
+
+# OIDC trusted publishing の Node 要件（Node >= 22.14.0、Issue #321）
+if echo "$body" | grep -E "node-version:[[:space:]]*'2[2-9]" > /dev/null; then
+  pass "node-version が 22 以上（OIDC trusted publishing 要件 Node >= 22.14.0）"
+else
+  fail "node-version が 22 未満（OIDC trusted publishing 要件 Node >= 22.14.0 を満たさない）"
+fi
+
+# npm >= 11.5.1 を保証する明示更新ステップ（Issue #321）
+if echo "$body" | grep -E "npm install -g npm@" > /dev/null; then
+  pass "npm を明示更新するステップがある（npm >= 11.5.1 保証、Issue #321）"
+else
+  fail "npm を明示更新するステップがない（npm >= 11.5.1 が保証されない）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

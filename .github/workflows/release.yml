@@ -35,10 +35,15 @@ jobs:
       - name: Node.js セットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # OIDC trusted publishing は Node >= 22.14.0 / npm >= 11.5.1 を要求する（npm 公式 docs、Issue #321）
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
-          # OIDC publish: NODE_AUTH_TOKEN 不要（id-token: write で provenance 署名）
+
+      - name: npm を OIDC trusted publishing 対応版へ更新（npm >= 11.5.1）
+        # 要件 >= 11.5.1 を満たしつつメジャーを 11 に固定し、リリースの再現性を保つ（npm@latest だと
+        # 将来のメジャー更新で OIDC 署名フロー変更にリリース時まで気付けないため）（Issue #321）
+        run: npm install -g npm@^11.5.1
 
       - name: 依存パッケージのインストール
         # Issue #91: tests/test_setup_wizard.sh が @clack/prompts を require するため
@@ -53,7 +58,5 @@ jobs:
         run: bash scripts/ci/release/verify-tag-version.sh
 
       - name: npm publish (provenance 付き、OIDC 経由)
-        env:
-          # NODE_AUTH_TOKEN は GitHub Actions OIDC が自動発行する短寿命 token を使用
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # OIDC trusted publishing: id-token: write で短寿命 token を取得するため NODE_AUTH_TOKEN は不要（Issue #321）
         run: npm publish --provenance --access public
