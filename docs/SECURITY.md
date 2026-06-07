@@ -70,6 +70,14 @@ Fork PR からの secrets 漏洩を防ぐため以下を遵守する。
 - Fork PR で `pull_request_target` トリガーを使用しない
 - `administration: write` / `secrets: write` / `workflows: write` / `id-token: write` は付与しない（Issue #22 修正後、`id-token: write` も禁止権限に追加）
 
+#### 例外承認: release-tag.yml の `actions: write`（Issue #333）
+
+リリース自動化のため `release-tag.yml` に限り `actions: write` を例外承認する。
+
+- 用途: GitHub Release 作成後、`gh workflow run` で `release.yml`（npm publish）を起動するため（`GITHUB_TOKEN` が作成した Release は `release: published` を発火させない GitHub 公式仕様の回避）。
+- 承認経路: CEO の明示指示による人間承認ルート（`.claude/rules/autonomous-restrictions.md` §6）。
+- スコープ: リポジトリ内 workflow の起動権限のみ。禁止権限（`administration` / `secrets` / `workflows` / `id-token: write`）とは性質が異なる。`workflow_dispatch` は Fork PR から発火できないため secrets 漏洩経路にならない。
+
 ### 認証経路の設計（経路 2 必須化、Issue #61 で確定）
 
 vibehawk は **利用者ごとに独立した GitHub App `vibehawk-for-<owner>`** の認証を採用する。

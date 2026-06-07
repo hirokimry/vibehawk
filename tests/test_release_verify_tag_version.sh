@@ -115,6 +115,39 @@ else
   fail "::error::メッセージが想定と異なる: $output"
 fi
 
+# RELEASE_TAG（明示渡し）を最優先する（workflow_dispatch 対策、Issue #333）
+set +e
+( cd "${TMPDIR_TEST}/repo" && RELEASE_TAG="v1.2.3" bash "$SCRIPT" > /dev/null 2>&1 )
+exit_code=$?
+set -e
+if [[ "$exit_code" -eq 0 ]]; then
+  pass "RELEASE_TAG=v1.2.3 と version 1.2.3 が一致 → exit 0"
+else
+  fail "RELEASE_TAG 一致でも exit $exit_code"
+fi
+
+# workflow_dispatch 再現: GITHUB_REF_NAME=main でも RELEASE_TAG が優先される（Issue #333）
+set +e
+( cd "${TMPDIR_TEST}/repo" && GITHUB_REF_NAME="main" RELEASE_TAG="v1.2.3" bash "$SCRIPT" > /dev/null 2>&1 )
+exit_code=$?
+set -e
+if [[ "$exit_code" -eq 0 ]]; then
+  pass "GITHUB_REF_NAME=main でも RELEASE_TAG=v1.2.3 が優先され exit 0"
+else
+  fail "RELEASE_TAG 優先が効かず exit $exit_code（GITHUB_REF_NAME=main を tag と誤認）"
+fi
+
+# RELEASE_TAG / GITHUB_REF_NAME ともに未設定 → exit 非 0
+set +e
+( cd "${TMPDIR_TEST}/repo" && env -u GITHUB_REF_NAME -u RELEASE_TAG bash "$SCRIPT" > /dev/null 2>&1 )
+exit_code=$?
+set -e
+if [[ "$exit_code" -ne 0 ]]; then
+  pass "RELEASE_TAG / GITHUB_REF_NAME ともに未設定 → exit 非 0 ($exit_code)"
+else
+  fail "両方未設定でも成功してしまう"
+fi
+
 set +e
 output=$(cd "${TMPDIR_TEST}/repo" && GITHUB_REF_NAME="v1.2.3" bash "$SCRIPT" 2>&1)
 exit_code=$?

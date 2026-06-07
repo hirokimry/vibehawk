@@ -643,8 +643,13 @@ CLI による secret 自動書込はせず、3 secrets すべて利用者が Git
     - `package.json` + `CHANGELOG.md` を PR 差分として更新する。
   - 2. main マージ時に `release-tag.yml` が動く。
     - version が新規なら tag + GitHub Release を作成する（branch ref は触らない）。
-    - 作成された Release が `release.yml` の npm publish を発火させる。
-  - 事故防止: push 前後で version が変化した時だけ Release を作る。
+    - 続けて `release.yml`（npm publish）を `workflow_dispatch` で明示起動する（Issue #333）。
+  - 3. `release.yml` が npm publish（OIDC provenance）を実行する。
+    - 起動経路は 2 つ。`release: published`（人手が UI 等で作成した Release）と `workflow_dispatch`（自動 Release 向け）。
+    - 自動 Release を `workflow_dispatch` で繋ぐ理由: `GITHUB_TOKEN` が作成した Release は `release: published` を発火させない。
+      - GitHub 公式仕様。`GITHUB_TOKEN` 由来イベントは `workflow_dispatch` / `repository_dispatch` を除き新しい workflow を起こさない。
+      - これを直さないと自動 publish が永久に発火しない（Issue #333 で判明した真因）。
+  - 事故防止: push 前後で version が変化した時だけ Release を作り、publish を起動する。
 - bump 漏れ警告の監視対象も `package.json`（`.claude-plugin/plugin.json` は対象外）。
   - 📍 実装: `version-bump-check.yml`（Issue #308）。
 

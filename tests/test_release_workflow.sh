@@ -45,6 +45,27 @@ else
   fail "release トリガーが設定されていない"
 fi
 
+# workflow_dispatch トリガー（GITHUB_TOKEN 製 Release からの publish 起動経路、Issue #333）
+if echo "$body" | grep -E "^[[:space:]]*workflow_dispatch:" > /dev/null; then
+  pass "workflow_dispatch トリガーが設定されている（Issue #333）"
+else
+  fail "workflow_dispatch トリガーが設定されていない（自動 Release から publish を起動できない）"
+fi
+
+# workflow_dispatch の tag 入力（checkout ref / concurrency で参照）
+if echo "$body" | grep -E "^[[:space:]]*tag:" > /dev/null; then
+  pass "workflow_dispatch の tag 入力が定義されている"
+else
+  fail "workflow_dispatch の tag 入力が定義されていない"
+fi
+
+# checkout ref / concurrency が両トリガー対応（inputs.tag フォールバック）
+if echo "$body" | grep -F "inputs.tag" > /dev/null; then
+  pass "ref / concurrency が inputs.tag フォールバックを持つ（両トリガー対応）"
+else
+  fail "inputs.tag フォールバックがない（workflow_dispatch 経路で tag が解決されない）"
+fi
+
 # push / pull_request トリガー不在（誤 publish 防止）
 for forbidden_trigger in "^[[:space:]]*push:" "^[[:space:]]*pull_request:" "^[[:space:]]*pull_request_target:"; do
   if echo "$body" | grep -E "$forbidden_trigger" > /dev/null; then
@@ -145,6 +166,25 @@ if echo "$body" | grep -E "npm install -g npm@" > /dev/null; then
   pass "npm を明示更新するステップがある（npm >= 11.5.1 保証、Issue #321）"
 else
   fail "npm を明示更新するステップがない（npm >= 11.5.1 が保証されない）"
+fi
+
+# release-tag.yml 側: gh workflow run のため actions: write を持つ（Issue #333）
+TAG_WORKFLOW="${REPO_ROOT}/.github/workflows/release-tag.yml"
+if [[ -f "$TAG_WORKFLOW" ]]; then
+  pass "release-tag.yml が存在する"
+  tag_body="$(awk '!/^[[:space:]]*#/' "$TAG_WORKFLOW")"
+  if echo "$tag_body" | grep -E "actions:[[:space:]]*write" > /dev/null; then
+    pass "release-tag.yml に actions: write がある（gh workflow run 用、Issue #333）"
+  else
+    fail "release-tag.yml に actions: write がない（release.yml を起動できない）"
+  fi
+  if echo "$tag_body" | grep -F "release-tag-on-main.sh" > /dev/null; then
+    pass "release-tag.yml が release-tag-on-main.sh を呼ぶ"
+  else
+    fail "release-tag.yml が release-tag-on-main.sh を呼ばない"
+  fi
+else
+  fail "release-tag.yml が存在しない"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
