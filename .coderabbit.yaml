@@ -4,17 +4,19 @@
 language: ja-JP
 
 reviews:
+  # Issue #327: CodeRabbit を停止し merge gate を vibehawk の status check 単独に一本化したため
+  # 自動レビューを無効化する（App が installed のままでも PR に自動レビューを post しない）。
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
-    auto_incremental_review: true
+    auto_incremental_review: false
     base_branches:
       - ".*"
 
-  request_changes_workflow: true
+  request_changes_workflow: false
 
   auto_resolve:
-    enabled: true
+    enabled: false
 
   path_filters:
     - "!*.lock"
@@ -34,4 +36,5 @@ reviews:
         If any requirements are not addressed, clearly point them out.
 
 chat:
-  auto_reply: true
+  # Issue #327: CodeRabbit 停止に伴いオンデマンド応答も無効化する。
+  auto_reply: false

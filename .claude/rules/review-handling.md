@@ -41,7 +41,7 @@
 
 severity の定義は `.claude/rules/severity/coderabbit.md`（CodeRabbit 公式仕様）と `.claude/rules/severity/claude-action.md`（vibecorp 実体版）を参照する。
 
-- 運用状況: Issue #532 以降、vibecorp 本体は `claude_action.enabled: false` で運用中（CodeRabbit Bot 単独）。
+- 運用状況: Issue #327 以降、vibehawk 本体は CodeRabbit を停止し、vibehawk レビュー（`vibehawk` status check）単独で運用中（`coderabbit.enabled: false` / `claude_action.enabled: false`）。merge gate は `vibehawk` の required status check のみ。
 - `severity/claude-action.md` の役割: claude-code-action 再有効化時 / 利用者が `enabled: true` で運用する場合の Source of Truth として保持する。
 
 ### 🔍 Info の扱い（severity 定義は同じ、判定で拡張）
