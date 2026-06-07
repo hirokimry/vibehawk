@@ -24,6 +24,18 @@ const SEVERITY_EMOJI = { '🔴': 4, '🟠': 3, '🟡': 2, '🔵': 1, '⚪': 0 };
 // git ref の許容文字（オプション注入・traversal を二重防御で弾く）
 const REF_ALLOWED = /^[A-Za-z0-9._/@{}^~-]+$/;
 
+// intent ラベル 7 種（.claude/rules/intent-labels.md）。--intent はこの集合に限定し、
+// 任意テキストがプロンプトに混入するインジェクション経路を塞ぐ（CISO レビュー H-1）。
+const INTENT_LABELS = ['feature', 'bugfix', 'performance', 'security', 'refactor', 'infra', 'docs'];
+
+function normalizeIntent(intent) {
+  const v = String(intent == null ? '' : intent).trim().replace(/^intent\//, '').toLowerCase();
+  if (!INTENT_LABELS.includes(v)) {
+    throw new Error(`vibehawk: --intent は ${INTENT_LABELS.join(' / ')} のいずれかです`);
+  }
+  return v;
+}
+
 function validateRef(ref) {
   if (typeof ref !== 'string' || ref.length === 0) {
     throw new Error('vibehawk: --base の ref が空です');
@@ -55,8 +67,9 @@ function parseArgs(argv) {
       if (opts.base == null) throw new Error('vibehawk: --base には ref が必要です');
       validateRef(opts.base);
     } else if (a === '--intent') {
-      opts.intent = list[++i];
-      if (opts.intent == null) throw new Error('vibehawk: --intent にはラベルが必要です');
+      const v = list[++i];
+      if (v == null) throw new Error('vibehawk: --intent にはラベルが必要です');
+      opts.intent = normalizeIntent(v);
     } else if (a === '--output') {
       const v = list[++i];
       if (v !== 'text' && v !== 'json') throw new Error("vibehawk: --output は text か json です");
@@ -239,16 +252,14 @@ function maxSeverity(findings) {
   return max;
 }
 
-// text 出力から最大 severity rank を拾う（絵文字マーカー優先、語も補助）
+// text 出力から最大 severity rank を拾う。severity マーカー絵文字のみを根拠にする
+// （英単語マッチは "majority"/"informational" 等で誤検出するため不採用、CFO レビュー M-1）。
+// text 出力では severity マーカー（🔴🟠🟡🔵⚪）の付与をプロンプトで必須化している。
 function maxSeverityFromText(text) {
   let max = -1;
   const s = String(text || '');
   for (const emo of Object.keys(SEVERITY_EMOJI)) {
     if (s.includes(emo) && SEVERITY_EMOJI[emo] > max) max = SEVERITY_EMOJI[emo];
-  }
-  for (const word of Object.keys(SEVERITY_RANK)) {
-    const re = new RegExp(`\\b${word}\\b`, 'i');
-    if (re.test(s) && SEVERITY_RANK[word] > max) max = SEVERITY_RANK[word];
   }
   return max;
 }
@@ -261,7 +272,7 @@ function shouldFail(maxRank, failOn) {
 }
 
 function preflight({ env = process.env, spawn = spawnSync, cwd = process.cwd(), criteriaPath = CRITERIA_PATH } = {}) {
-  if (env.ANTHROPIC_API_KEY) {
+  if (env.ANTHROPIC_API_KEY && String(env.ANTHROPIC_API_KEY).trim()) {
     throw new Error(
       'vibehawk: ANTHROPIC_API_KEY が設定されています。\n'
       + '  追加課金ゼロを守るため、ローカルレビューは Pro/Max 枠の OAuth のみで実行します。\n'
@@ -369,7 +380,8 @@ function run({
     return 1;
   }
   if (r.status !== 0) {
-    const errtext = String(r.stderr || '');
+    // claude の stderr をそのまま流すと万一の機密混入を広げるため長さを制限する（CISO レビュー M-3）
+    const errtext = String(r.stderr || '').slice(0, 2000);
     if (/login|authenticate|authentication|oauth|token|unauthor/i.test(errtext)) {
       stderr.write(`vibehawk: claude の認証が必要です。'npx vibehawk setup-token' で OAuth トークンを設定してください。\n${errtext}\n`);
     } else {
@@ -396,6 +408,8 @@ function run({
 
 module.exports = {
   CRITERIA_PATH,
+  INTENT_LABELS,
+  normalizeIntent,
   validateRef,
   parseArgs,
   buildDiffArgs,
