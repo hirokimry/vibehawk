@@ -22,7 +22,7 @@ const { parseRepoArg } = require('./oauth');
 
 const MAX_RETRY = 5;
 
-// Issue #249: bot アイコン用に同梱する vibehawk ロゴ画像（PNG / 200×200 / 1MB 未満）の絶対パス。
+// Issue #249 / #325: bot アイコン用に同梱する vibehawk ロゴ画像（PNG / 512×512 / 1MB 未満）の絶対パス。
 // GitHub App のロゴは Manifest Flow / REST / GraphQL では設定できず、App 所有者の
 // Display information 画面での手動アップロードのみ可能なため、案内文で同梱パスを提示する。
 const LOGO_PATH = path.join(__dirname, '..', 'assets', 'vibehawk-logo.png');
