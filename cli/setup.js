@@ -10,6 +10,7 @@
 // - CLI は secret を一切 touch しない（gh secret set / 書込系 gh api を呼ばない）
 
 const { spawnSync } = require('child_process');
+const path = require('path');
 const clack = require('@clack/prompts');
 const install = require('./install');
 const oauth = require('./oauth');
@@ -20,6 +21,11 @@ const { parseOwnerArg, validateOwner } = require('./naming');
 const { parseRepoArg } = require('./oauth');
 
 const MAX_RETRY = 5;
+
+// Issue #249: bot アイコン用に同梱する vibehawk ロゴ画像（PNG / 200×200 / 1MB 未満）の絶対パス。
+// GitHub App のロゴは Manifest Flow / REST / GraphQL では設定できず、App 所有者の
+// Display information 画面での手動アップロードのみ可能なため、案内文で同梱パスを提示する。
+const LOGO_PATH = path.join(__dirname, '..', 'assets', 'vibehawk-logo.png');
 
 // Issue #91 完了条件: dogfooding（vibehawk 自身を teardown → setup）で 5 分以内に完走することを確認
 // 5 分（300_000 ms）を客観的判定の閾値として使用する
@@ -220,6 +226,31 @@ function buildSteps({ owner, repo }) {
         state.appIdString = String(result.id);
         return { ok: true, info: `App 名: ${result.name || `vibehawk-for-${owner}`} / App ID: ${result.id}` };
       },
+    },
+    {
+      id: 'app-logo',
+      label: 'bot アイコン（ロゴ）を差し替え',
+      // Issue #249: GitHub App のロゴは Manifest Flow / REST / GraphQL では設定できず、App 所有者の
+      // Display information 画面（settings/apps/<slug>）での手動アップロードのみ可能。同梱ロゴへの
+      // ドラッグ&ドロップという手動 1 ステップへ導線を縮める。secret-pem と同じ設定 URL を案内する。
+      // 認証・認可・credential 経路には一切触れない（getValue / clipboard / isSensitive 値出力なし）。
+      // slug 未設定（app-create 失敗等）の場合は URL に 'undefined' を混入させず App 一覧へフォールバックする。
+      getUrl: (state) => {
+        const slug = state.credentials && state.credentials.slug;
+        return slug
+          ? `https://github.com/settings/apps/${slug}`
+          : 'https://github.com/settings/apps';
+      },
+      getInstructions: () =>
+        [
+          'App 設定ページの "Display information" を開き、現在のロゴ（GitHub のデフォルトアイコン）に',
+          '同梱の vibehawk ロゴ画像をドラッグ&ドロップしてアップロードしてください。',
+          `画像の場所: ${LOGO_PATH}`,
+          'ロゴ差し替えは任意です。設定しなくても vibehawk の動作には影響しません。',
+        ].join('\n'),
+      // GitHub にはアイコン設定状態を確認する API が無いため、app-install と同じ目視確認経路にする。
+      verify: () => ({ ok: true, reason: 'manual_confirmation', hint: '' }),
+      isSensitive: false,
     },
     {
       id: 'app-install',

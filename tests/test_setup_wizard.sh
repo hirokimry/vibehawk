@@ -341,22 +341,22 @@ else
   fail "setup.parseDryRun の挙動が想定と異なる"
 fi
 
-# setup.js: buildSteps が STEPS.length === 6 を返す
+# setup.js: buildSteps が STEPS.length === 7 を返す（Issue #249 で app-logo ステップ追加）
 if node -e '
 const setup = require("./cli/setup");
 const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
 if (!Array.isArray(steps)) process.exit(1);
-if (steps.length !== 6) { console.error("expected 6 steps, got:", steps.length); process.exit(1); }
+if (steps.length !== 7) { console.error("expected 7 steps, got:", steps.length); process.exit(1); }
 // secret-token ステップが isSensitive: true
 const tokenStep = steps.find((s) => s.id === "secret-token");
 if (!tokenStep || tokenStep.isSensitive !== true) { console.error("secret-token must have isSensitive: true (CISO Critical)"); process.exit(1); }
-// secret-app-id / app-install は isSensitive: false
-for (const id of ["app-install", "secret-app-id"]) {
+// secret-app-id / app-install / app-logo は isSensitive: false
+for (const id of ["app-install", "secret-app-id", "app-logo"]) {
   const s = steps.find((x) => x.id === id);
   if (!s || s.isSensitive !== false) { console.error(id, "must have isSensitive: false"); process.exit(1); }
 }
 '; then
-  pass "buildSteps が 6 ステップを返し secret-token に isSensitive: true が付与されている（CISO Critical）"
+  pass "buildSteps が 7 ステップを返し secret-token に isSensitive: true が付与されている（CISO Critical）"
 else
   fail "buildSteps の構造が想定と異なる"
 fi
@@ -656,6 +656,104 @@ if grep -vE '^\s*(//|\*)' cli/setup.js | grep -F '/user/installations' > /dev/nu
   fail "cli/setup.js の実コードが /user/installations を参照（Issue #110 の根本原因が残存）"
 else
   pass "cli/setup.js の実コードが /user/installations を参照しない（Issue #110 根本原因の機械保証）"
+fi
+
+# Issue #249: app-logo ステップ（bot アイコン用デフォルトロゴ同梱 + アップロード誘導）
+echo "=== app-logo ステップ検証 (Issue #249) ==="
+
+# assert 1: app-logo が app-create の直後に挿入されている（App 作成ステップ直後の案内表示）
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const createIdx = steps.findIndex((s) => s.id === "app-create");
+const logoIdx = steps.findIndex((s) => s.id === "app-logo");
+if (logoIdx === -1) { console.error("app-logo step not found"); process.exit(1); }
+if (logoIdx !== createIdx + 1) { console.error("app-logo must be right after app-create, createIdx:", createIdx, "logoIdx:", logoIdx); process.exit(1); }
+'; then
+  pass "app-logo ステップが app-create の直後に挿入されている（Issue #249: App 作成ステップ直後の案内）"
+else
+  fail "app-logo ステップが app-create の直後に挿入されていない"
+fi
+
+# assert 2: app-logo の getUrl が /settings/apps/<slug>（Display information）を案内する
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const logo = steps.find((s) => s.id === "app-logo");
+if (typeof logo.getUrl !== "function") { console.error("app-logo.getUrl must be a function"); process.exit(1); }
+const url = logo.getUrl({ credentials: { slug: "vibehawk-for-alice" } });
+if (typeof url !== "string" || !url.includes("https://github.com/settings/apps/vibehawk-for-alice")) {
+  console.error("getUrl must include /settings/apps/<slug>, got:", url);
+  process.exit(1);
+}
+const fallback = logo.getUrl({ credentials: {} });
+if (fallback.includes("undefined")) { console.error("getUrl must not emit undefined when slug missing, got:", fallback); process.exit(1); }
+'; then
+  pass "app-logo の getUrl が /settings/apps/<slug> を案内し slug 欠落時も undefined を混入しない"
+else
+  fail "app-logo の getUrl が /settings/apps/<slug> を案内しない"
+fi
+
+# assert 3: app-logo の getInstructions が同梱画像の場所（assets/vibehawk-logo.png）を明示する
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const logo = steps.find((s) => s.id === "app-logo");
+if (typeof logo.getInstructions !== "function") { console.error("app-logo.getInstructions must be a function"); process.exit(1); }
+const instr = logo.getInstructions({ credentials: { slug: "vibehawk-for-alice" } });
+if (typeof instr !== "string" || instr.length === 0) { console.error("getInstructions must return non-empty string"); process.exit(1); }
+if (!instr.includes("assets") || !instr.includes("vibehawk-logo.png")) {
+  console.error("getInstructions must include bundled image path (assets/vibehawk-logo.png), got:", instr);
+  process.exit(1);
+}
+if (!/ドラッグ|アップロード/.test(instr)) { console.error("getInstructions must guide upload, got:", instr); process.exit(1); }
+'; then
+  pass "app-logo の getInstructions が同梱画像の場所（assets/vibehawk-logo.png）とアップロード手順を明示する"
+else
+  fail "app-logo の getInstructions が同梱画像の場所 / アップロード手順を欠く"
+fi
+
+# assert 4: app-logo の verify が目視確認経路（manual_confirmation）で credential 経路に触れない（挙動不変）
+if node -e '
+const setup = require("./cli/setup");
+const cp = require("child_process");
+let spawnSyncCalled = false;
+const orig = cp.spawnSync;
+cp.spawnSync = function() { spawnSyncCalled = true; return { status: 0, stdout: "{}", stderr: "" }; };
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const logo = steps.find((s) => s.id === "app-logo");
+const v = logo.verify({ credentials: { slug: "vibehawk-for-alice" } });
+cp.spawnSync = orig;
+if (!v || v.ok !== true || v.reason !== "manual_confirmation") { console.error("verify must return manual_confirmation, got:", JSON.stringify(v)); process.exit(1); }
+if (spawnSyncCalled) { console.error("app-logo.verify must NOT call spawnSync (credential/外部通信なし)"); process.exit(1); }
+if (typeof logo.getValue === "function") { console.error("app-logo must NOT define getValue (credential 経路に触れない)"); process.exit(1); }
+'; then
+  pass "app-logo の verify が manual_confirmation で spawnSync / getValue を持たない（挙動不変: credential 経路不変）"
+else
+  fail "app-logo の verify が credential 経路に触れている（挙動不変違反）"
+fi
+
+# assert 5: 同梱ロゴ画像が配布物に存在し PNG / 1MB 未満（完了条件）
+if [[ -f assets/vibehawk-logo.png ]]; then
+  logo_size=$(wc -c < assets/vibehawk-logo.png)
+  logo_head=$(head -c 8 assets/vibehawk-logo.png | od -An -tx1 | tr -d ' \n')
+  if [[ "$logo_head" == "89504e470d0a1a0a" && "$logo_size" -lt 1048576 ]]; then
+    pass "assets/vibehawk-logo.png が PNG シグネチャを持ち 1MB 未満（${logo_size} bytes）"
+  else
+    fail "assets/vibehawk-logo.png が PNG でない or 1MB 以上（head: ${logo_head}, size: ${logo_size}）"
+  fi
+else
+  fail "assets/vibehawk-logo.png が存在しない（同梱ロゴ未配置）"
+fi
+
+# assert 6: package.json の files に assets/ が含まれ npm 配布物に同梱される（完了条件）
+if node -e '
+const pkg = require("./package.json");
+if (!Array.isArray(pkg.files) || !pkg.files.includes("assets/")) { console.error("package.json files must include assets/, got:", JSON.stringify(pkg.files)); process.exit(1); }
+'; then
+  pass "package.json の files に assets/ が含まれる（npm 配布物にロゴが同梱される）"
+else
+  fail "package.json の files に assets/ が含まれない（ロゴが配布物に同梱されない）"
 fi
 
 # Issue #91 dogfooding 計測機能の機械検証
