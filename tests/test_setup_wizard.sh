@@ -686,8 +686,10 @@ if (typeof url !== "string" || !url.includes("https://github.com/settings/apps/v
   console.error("getUrl must include /settings/apps/<slug>, got:", url);
   process.exit(1);
 }
+const fallback = logo.getUrl({ credentials: {} });
+if (fallback.includes("undefined")) { console.error("getUrl must not emit undefined when slug missing, got:", fallback); process.exit(1); }
 '; then
-  pass "app-logo の getUrl が /settings/apps/<slug>（Display information）を案内する"
+  pass "app-logo の getUrl が /settings/apps/<slug> を案内し slug 欠落時も undefined を混入しない"
 else
   fail "app-logo の getUrl が /settings/apps/<slug> を案内しない"
 fi

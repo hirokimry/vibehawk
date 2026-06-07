@@ -234,8 +234,13 @@ function buildSteps({ owner, repo }) {
       // Display information 画面（settings/apps/<slug>）での手動アップロードのみ可能。同梱ロゴへの
       // ドラッグ&ドロップという手動 1 ステップへ導線を縮める。secret-pem と同じ設定 URL を案内する。
       // 認証・認可・credential 経路には一切触れない（getValue / clipboard / isSensitive 値出力なし）。
-      getUrl: (state) =>
-        `https://github.com/settings/apps/${state.credentials && state.credentials.slug}`,
+      // slug 未設定（app-create 失敗等）の場合は URL に 'undefined' を混入させず App 一覧へフォールバックする。
+      getUrl: (state) => {
+        const slug = state.credentials && state.credentials.slug;
+        return slug
+          ? `https://github.com/settings/apps/${slug}`
+          : 'https://github.com/settings/apps';
+      },
       getInstructions: () =>
         [
           'App 設定ページの "Display information" を開き、現在のロゴ（GitHub のデフォルトアイコン）に',
