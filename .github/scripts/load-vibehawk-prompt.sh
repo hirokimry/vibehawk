@@ -5,6 +5,11 @@
 # 制限を超えて startup_failure を起こしていた（PR #235）。長文プロンプトを外部
 # .github/prompts/vibehawk-review.md に切り出し、ここで envsubst による動的値展開を行う。
 #
+# Issue #330: レビュー基準（severity 5 段階・inline フィールド定義等）を単一ソース
+# templates/review-prompt.md に切り出し、CI とローカル CLI（子2 #331）で共有する。CI 側は
+# expand-prompt-includes.sh で include マーカーを展開してから envsubst にパイプする
+# （展開は envsubst の前段。whitelist 展開は不変で sensitive env は非展開を維持）。
+#
 # 入力（環境変数）: prompt 内で参照される値全て（REPO / PR_NUMBER / HEAD_SHA 等、14 種）
 # 出力: GITHUB_OUTPUT に `content<<__VIBEHAWK_PROMPT_EOF__` 形式で展開済みプロンプトを書き出す
 
@@ -12,6 +17,7 @@ set -euo pipefail
 
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROMPT_FILE="${PROMPT_FILE:-.github/prompts/vibehawk-review.md}"
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
@@ -25,8 +31,10 @@ EXPANDED_VARS='${REPO} ${PR_NUMBER} ${HEAD_SHA} ${BASE_REF} ${INCREMENTAL_MODE} 
 
 # GitHub Actions の multi-line output は heredoc delimiter で囲む必要がある。
 # プロンプト本文に偶然出現しない unique な delimiter を使う。
+# include マーカー展開を envsubst の前段にパイプする（Issue #330）。pipefail 下で
+# expand 失敗（include 先不在等）はそのまま非ゼロ終了し、CI を fail させる。
 {
   echo 'content<<__VIBEHAWK_PROMPT_EOF__'
-  envsubst "$EXPANDED_VARS" < "$PROMPT_FILE"
+  "${SCRIPT_DIR}/expand-prompt-includes.sh" "$PROMPT_FILE" | envsubst "$EXPANDED_VARS"
   echo '__VIBEHAWK_PROMPT_EOF__'
 } >> "$GITHUB_OUTPUT"

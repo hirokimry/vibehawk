@@ -2,7 +2,22 @@
 
 vibehawk のリリース履歴。各バージョンの主要変更点を記録する。
 
-## Unreleased
+## v0.2.0 - 2026-06-07
+
+### ✨ 新機能
+
+- ✨ **npx vibehawk review が push 前に手元の diff をレビューできるようになった** (#335 / Epic #329)
+  - 利用者ローカルの `claude -p`（Pro / Max 枠 OAuth）で手元の diff を CI と同一基準（severity 5 段階・観点）でレビューする。
+  - **read-only**（指摘のみ・自動修正なし）・**追加課金ゼロ**（`ANTHROPIC_API_KEY` 設定時は fail-fast）。
+  - `--staged` / `--base <ref>` / `--intent <label>` / `--output text|json` / `--fail-on <severity>` をサポート。既定は exit 0、`--fail-on` で pre-commit / CI にオプトイン。
+
+### 🔄 リファクタリング
+
+- 🔄 **レビュー基準が CI とローカルで共有できる単一ソースになった** (#334 / Epic #329): severity 5 段階・inline フィールド定義・actionable/nitpick 判定を `templates/review-prompt.md` に切り出し、CI とローカル CLI でレビュー基準がブレない構造にした。
+
+### 📖 ドキュメント
+
+- 📖 **README / help が npx vibehawk review の使い方と前提を案内するようになった** (#336 / Epic #329): 主要フラグ・前提（claude インストール&ログイン）・pre-commit / CI 組込み例を追加し、POLICY.md に CLI 経路の Anthropic 送信開示を明記した。
 
 ### 💥 BREAKING CHANGES
 

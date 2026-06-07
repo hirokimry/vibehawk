@@ -75,9 +75,13 @@ PYEOF
 
 # プロンプト本文は .github/prompts/vibehawk-review.md に切り出されたため（PR #235、21000 chars 制限回避）、
 # 展開後 yaml に prompt md を連結して検証対象に含める。これにより prompt 規約検証が切り出し後も維持される。
+# Issue #330: レビュー基準は templates/review-prompt.md に単一ソース化され、CI プロンプトは include
+# マーカーで参照する。実際に claude-code-action へ渡る本文は include 展開後なので、
+# expand-prompt-includes.sh で展開した内容を連結する（基準ブロックの検証を切り出し後も維持）。
 PROMPT_MD="${REPO_ROOT}/.github/prompts/vibehawk-review.md"
+EXPAND_SCRIPT="${REPO_ROOT}/.github/scripts/expand-prompt-includes.sh"
 if [[ -f "$PROMPT_MD" ]]; then
-  cat "$PROMPT_MD" >> "$WORKFLOW_EXPANDED_TMP"
+  "$EXPAND_SCRIPT" "$PROMPT_MD" >> "$WORKFLOW_EXPANDED_TMP" 2>/dev/null
 fi
 
 WORKFLOW="$WORKFLOW_EXPANDED_TMP"

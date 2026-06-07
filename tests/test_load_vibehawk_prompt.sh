@@ -128,60 +128,65 @@ else
   fail "Case 5: exit=$script_exit, output=$log_output"
 fi
 
+# Issue #330: レビュー基準は templates/review-prompt.md に単一ソース化され、CI プロンプトは
+# include マーカーで参照する。Case 6-14 は「展開後の最終プロンプト」（include 展開 + envsubst 済、
+# = claude-code-action に渡る本文）を対象に基準が届いていることを検証し、挙動不変を担保する。
+EXPANDED_OUT="$(run_load)"
+
 echo "Case 6: inline 指摘ガイダンスが CodeRabbit 互換の 3 軸ラベルを要求している（Issue #252）"
-# 3 軸ラベル（カテゴリ | severity | 労力）の指示と実例が prompt に存在することを検証する。
+# 3 軸ラベル（カテゴリ | severity | 労力）の指示と実例が展開後プロンプトに存在することを検証する。
 # severity 絵文字はラベル内に保持されるため、decide-event.sh の件数主軸判定（Issue #171）に影響しない。
-if grep -qF '先頭行を CodeRabbit 互換の 3 軸ラベル' "$DEFAULT_PROMPT" \
-  && grep -qF '_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_' "$DEFAULT_PROMPT" \
-  && grep -qF '⚡ Quick win' "$DEFAULT_PROMPT" \
-  && grep -qF '🏗️ Heavy lift' "$DEFAULT_PROMPT"; then
+if grep -qF '先頭行を CodeRabbit 互換の 3 軸ラベル' "$EXPANDED_OUT" \
+  && grep -qF '_⚠️ Potential issue_ | _🟠 Major_ | _⚡ Quick win_' "$EXPANDED_OUT" \
+  && grep -qF '⚡ Quick win' "$EXPANDED_OUT" \
+  && grep -qF '🏗️ Heavy lift' "$EXPANDED_OUT"; then
   pass "Case 6"
 else
-  fail "Case 6: 3 軸ラベル（カテゴリ/severity/労力）のガイダンスが prompt に無い"
+  fail "Case 6: 3 軸ラベル（カテゴリ/severity/労力）のガイダンスが展開後プロンプトに無い"
 fi
 
 echo "Case 7: 旧 1 軸 severity ガイダンス（先頭に severity 絵文字を 1 つ）が残っていない（Issue #252）"
-if grep -qF '冒頭に必ず該当 severity の絵文字を 1 つ付ける' "$DEFAULT_PROMPT"; then
+if grep -qF '冒頭に必ず該当 severity の絵文字を 1 つ付ける' "$EXPANDED_OUT"; then
   fail "Case 7: 旧 1 軸 severity ガイダンスが残存している"
 else
   pass "Case 7"
 fi
 
 echo "Case 8: inline 指摘が太字タイトル + 説明段落の 2 部構成を要求している（Issue #253）"
-if grep -qF '太字タイトル + 説明段落の 2 部構成' "$DEFAULT_PROMPT" \
-  && grep -qF '太字 1 行タイトル' "$DEFAULT_PROMPT"; then
+if grep -qF '太字タイトル + 説明段落の 2 部構成' "$EXPANDED_OUT" \
+  && grep -qF '太字 1 行タイトル' "$EXPANDED_OUT"; then
   pass "Case 8"
 else
-  fail "Case 8: 2 部構成（太字タイトル + 説明段落）のガイダンスが prompt に無い"
+  fail "Case 8: 2 部構成（太字タイトル + 説明段落）のガイダンスが展開後プロンプトに無い"
 fi
 
 echo "Case 9: inline 指摘に AI 向け修正指示の <details> 折り畳みを要求している（Issue #254）"
-if grep -qF '🤖 AI 向け修正指示' "$DEFAULT_PROMPT" \
-  && grep -qF 'AI エージェントが修正に着手できる指示' "$DEFAULT_PROMPT"; then
+if grep -qF '🤖 AI 向け修正指示' "$EXPANDED_OUT" \
+  && grep -qF 'AI エージェントが修正に着手できる指示' "$EXPANDED_OUT"; then
   pass "Case 9"
 else
-  fail "Case 9: 🤖 AI 向け修正指示の折り畳みガイダンスが prompt に無い"
+  fail "Case 9: 🤖 AI 向け修正指示の折り畳みガイダンスが展開後プロンプトに無い"
 fi
 
 echo "Case 10: suggestion が Committable suggestion 折り畳みで囲まれることを要求している（Issue #255）"
-if grep -qF '📝 Committable suggestion' "$DEFAULT_PROMPT" \
-  && grep -qF 'suggestion_start' "$DEFAULT_PROMPT" \
-  && grep -qF 'suggestion_end' "$DEFAULT_PROMPT"; then
+if grep -qF '📝 Committable suggestion' "$EXPANDED_OUT" \
+  && grep -qF 'suggestion_start' "$EXPANDED_OUT" \
+  && grep -qF 'suggestion_end' "$EXPANDED_OUT"; then
   pass "Case 10"
 else
-  fail "Case 10: Committable suggestion 折り畳みのガイダンスが prompt に無い"
+  fail "Case 10: Committable suggestion 折り畳みのガイダンスが展開後プロンプトに無い"
 fi
 
 echo "Case 11: inline 指摘の末尾に vibehawk 識別フッタを要求している（Issue #256）"
-if grep -qF 'vibehawk 識別フッタ' "$DEFAULT_PROMPT" \
-  && grep -qF 'vibehawk:inline' "$DEFAULT_PROMPT"; then
+if grep -qF 'vibehawk 識別フッタ' "$EXPANDED_OUT" \
+  && grep -qF 'vibehawk:inline' "$EXPANDED_OUT"; then
   pass "Case 11"
 else
-  fail "Case 11: vibehawk 識別フッタのガイダンスが prompt に無い"
+  fail "Case 11: vibehawk 識別フッタのガイダンスが展開後プロンプトに無い"
 fi
 
 echo "Case 12: CodeRabbit フッタ文言の literal コピーを禁止している（Issue #256）"
-if grep -qF 'literal コピーは出所を偽る' "$DEFAULT_PROMPT"; then
+if grep -qF 'literal コピーは出所を偽る' "$EXPANDED_OUT"; then
   pass "Case 12"
 else
   fail "Case 12: CodeRabbit 文言 literal コピー禁止の明記が無い"
@@ -189,21 +194,29 @@ fi
 
 echo "Case 13: inline 指摘を構造化フィールドで出力させ、組み立ては assemble-inline-bodies.sh に委ねている（Issue #263）"
 # 本文焼き込みではなく schema フィールド駆動であること、JSON 例が構造化フィールドを持つことを検証する。
-if grep -qF '構造化フィールド' "$DEFAULT_PROMPT" \
-  && grep -qF 'assemble-inline-bodies.sh' "$DEFAULT_PROMPT" \
-  && grep -qF '"category": "⚠️ Potential issue"' "$DEFAULT_PROMPT" \
-  && grep -qF '"title":' "$DEFAULT_PROMPT" \
-  && grep -qF '"ai_prompt":' "$DEFAULT_PROMPT"; then
+if grep -qF '構造化フィールド' "$EXPANDED_OUT" \
+  && grep -qF 'assemble-inline-bodies.sh' "$EXPANDED_OUT" \
+  && grep -qF '"category": "⚠️ Potential issue"' "$EXPANDED_OUT" \
+  && grep -qF '"title":' "$EXPANDED_OUT" \
+  && grep -qF '"ai_prompt":' "$EXPANDED_OUT"; then
   pass "Case 13"
 else
-  fail "Case 13: 構造化フィールド駆動（category/title/ai_prompt + assemble 委譲）のガイダンスが prompt に無い"
+  fail "Case 13: 構造化フィールド駆動（category/title/ai_prompt + assemble 委譲）のガイダンスが展開後プロンプトに無い"
 fi
 
 echo "Case 14: 旧 body 焼き込みの JSON 例（comments[].body に 3 軸ラベル直書き）が残っていない（Issue #263）"
-if grep -qF '"body": "_⚠️ Potential issue_' "$DEFAULT_PROMPT"; then
+if grep -qF '"body": "_⚠️ Potential issue_' "$EXPANDED_OUT"; then
   fail "Case 14: comments[].body に 3 軸ラベルを直書きする旧 JSON 例が残存している"
 else
   pass "Case 14"
+fi
+
+echo "Case 15: 展開後プロンプトに未展開の include マーカーが残っていない（Issue #330）"
+# include マーカーが展開されず残ると、レビュー基準が claude-code-action に届かない。
+if grep -qF 'vibehawk:include' "$EXPANDED_OUT"; then
+  fail "Case 15: 未展開の include マーカーが残っている（基準が届かない）"
+else
+  pass "Case 15"
 fi
 
 echo "==="

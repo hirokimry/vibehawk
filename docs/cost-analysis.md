@@ -59,6 +59,15 @@ vibehawk の Mission「レビューツールに追加課金が要らない世界
 | MUST | 利用者が既に契約している LLM プロバイダー（Claude Pro / Max 等）の枠内で完結する設計にすること |
 | MUST | 公式 OAuth 経由での認証を前提とし、非公式 API・スクレイピングによるコスト回避策を選ばないこと |
 
+#### push 前ローカルレビュー（`npx vibehawk review`）のクォータ消費
+
+`npx vibehawk review` は利用者ローカルの `claude -p`（Claude Pro / Max 枠 OAuth）でレビューを実行する。
+
+- **vibehawk 開発側・CI のコストには影響しない**（運営サーバー・運営 API キーを使わない）。消費されるのは**利用者自身の Pro / Max 個人クォータ**。
+- **CI 経路（`vibehawk-review.yml`）と CLI 経路を併用すると、両方が利用者のクォータを消費する**。push 前に CLI でレビューし、push 後に CI でも同じ diff がレビューされる構成では消費が二重になる点に留意する。
+- `ANTHROPIC_API_KEY` 設定時は fail-fast し、API 従量課金経路に化けるのを防ぐ（追加課金ゼロ保証）。
+- 巨大 diff は CI と同じ段階的劣化（後述「PR サイズ段階的劣化」のファイル数閾値）に加え、diff サイズが 1.5MB を超えると `summary_only` に強制してトークン消費を抑える。
+
 ### vibehawk 開発側コスト
 
 | 原則 | 内容 |

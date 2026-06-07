@@ -1,7 +1,7 @@
 # トラブルシューティング
 
 > [!NOTE]
-> 本ドキュメントは vibehawk CLI（`npx vibehawk setup` / `install` / `setup-token`）実行時に遭遇しやすいエラーと復旧手順をまとめる。
+> 本ドキュメントは vibehawk CLI（`npx vibehawk setup` / `install` / `setup-token` / `review`）実行時に遭遇しやすいエラーと復旧手順をまとめる。
 > 対象読者: vibehawk を導入する開発者。
 > 各項目には Source of Truth となる関連ドキュメントへの cross-reference を付与している。詳細な設計判断や法務効果はリンク先を参照すること。
 
@@ -231,3 +231,42 @@ branch protection に `vibehawk` を required 追加した後、新規 PR を立
 
 - `secrets-handling.md` — secret 値の正規化と CLI 非保持の方針
 - `README.md § 3. branch protection に vibehawk を required status check 登録（vibehawk 利用の根幹）`
+
+## `npx vibehawk review` が前提不備で中止される
+
+`npx vibehawk review`（push 前ローカルレビュー）の実行時、前提が満たされないと処理が中止される。代表的なエラーは以下の 4 種。
+
+```text
+vibehawk: claude コマンドが見つかりません。
+vibehawk: claude の認証が必要です。'npx vibehawk setup-token' で OAuth トークンを設定してください。
+vibehawk: ANTHROPIC_API_KEY が設定されています。
+vibehawk: git リポジトリ内で実行してください。
+```
+
+### 原因
+
+`npx vibehawk review` は利用者ローカルの **Claude Code（`claude`）を OAuth（Pro / Max 枠）で**呼び出す read-only CLI（追加課金ゼロを守るための設計）。前提が崩れると安全側に倒して中止する。
+
+- **claude 未インストール**: `claude` コマンドが PATH に存在しない。
+- **未ログイン**: `claude` はあるが OAuth ログインが済んでいない（認証エラー）。
+- **`ANTHROPIC_API_KEY` 設定**: 非対話の `claude -p` は `ANTHROPIC_API_KEY` があると API 従量課金経路を優先するため、追加課金を避けて中止する（fail-fast）。
+- **git リポジトリ外**: diff を取得できないため中止する。
+
+### 復旧手順
+
+1. **claude 未インストール**: `npm install -g @anthropic-ai/claude-code` で導入する。
+2. **未ログイン**: `npx vibehawk setup-token` の案内に従って `claude setup-token` でログインし、**その後 `npx vibehawk review` を再実行**する。
+3. **`ANTHROPIC_API_KEY` 設定**: `unset ANTHROPIC_API_KEY` で解除する。解除後は OAuth（Pro / Max 枠）経路に戻り、追加課金なしで実行できる。
+4. **git リポジトリ外**: `cd` で対象リポジトリのルート（または作業ツリー内）へ移動してから再実行する。
+
+### 注意事項
+
+- `review` は **read-only**（指摘のみ・自動修正なし）。`--fix` 等の書き込みフラグは存在しない（MVV Value 2）。
+- 既定の終了コードは **0**（指摘しても止めない、Value 3）。pre-commit / CI のゲートにする場合のみ `--fail-on <severity>` でオプトインする。
+- `review` は手元の git diff を `claude -p` 経由で Anthropic に送信する。機密を含む場合は `--staged` や `.vibehawk.yaml` の `path_filters` で送信範囲を絞る。
+
+### 関連ドキュメント
+
+- `README.md § 🖥️ push 前ローカルレビュー（npx vibehawk review）`
+- `POLICY.md § Anthropic への送信通知` — 送信内容と利用者の責任範囲
+- `cost-analysis.md` — Pro / Max 枠のクォータ消費と段階的劣化
