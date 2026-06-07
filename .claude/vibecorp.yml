@@ -6,9 +6,10 @@ base_branch: main
 protected_files:
   - MVV.md
 coderabbit:
-  enabled: true
+  # Issue #327: CodeRabbit を停止し vibehawk の status check 単独を merge gate にするため無効化
+  enabled: false
 claude_action:
-  # Issue #532 以降、CodeRabbit Bot 単独運用のため無効化（autonomous-restrictions.md §6 参照）
+  # Issue #327 以降、vibehawk レビュー単独運用のため無効化（autonomous-restrictions.md §6 参照）
   enabled: false
   skip_paths:
     - "*.lock"
@@ -19,7 +20,9 @@ claude_action:
     - ".cache/**"
     - "vendor/**"
 branch_protection:
-  required_approvals: 1
+  # Issue #327: merge gate は vibehawk の status check 単独。AI approve が人間レビュー必須要件を
+  # バイパスする構造を避けるため、required_approving_review_count は 0 とする（README §設計思想）。
+  required_approvals: 0
 diagnose:
   enabled: true
   # 1 run あたりの起票上限。課金超過防止のため意図的に抑制（docs/cost-analysis.md 参照）
