@@ -21,7 +21,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: publish 対象の tag（例: v0.2.0）
+        # 値に「例: 」のコロンを含むため、YAML マッピング誤認を避けてクォートする（Issue #333）
+        description: "publish 対象の tag（例: v0.2.0）"
         required: true
         type: string
 
