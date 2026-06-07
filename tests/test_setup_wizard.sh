@@ -635,7 +635,32 @@ else
   fail "secret-pem の getUrl が /settings/apps/<slug> を案内しない（Issue #112: Private key 生成ボタンが存在しない URL を案内している）"
 fi
 
+# assert 5: cli/verify.js の verifyAppInstallation export が維持されている
+# （将来 App JWT 経由で検証復活させる際の拡張余地、計画段階の設計判断）
+if node -e '
+const verify = require("./cli/verify");
+if (typeof verify.verifyAppInstallation !== "function") {
+  console.error("verifyAppInstallation export must be retained for future re-use");
+  process.exit(1);
+}
+'; then
+  pass "cli/verify.js の verifyAppInstallation export が維持されている（将来再利用余地）"
+else
+  fail "cli/verify.js の verifyAppInstallation export が失われた"
+fi
+
+# assert 6: cli/setup.js の実コード（コメント除外）が /user/installations 文字列を参照しない
+# （根本原因の機械保証: setup.js のランタイムから `/user/installations` 呼び出しが完全に消えた）
+# 行頭が // または * のコメント行を除外したうえで grep（既存の CISO 検証パターンと同方式）
+if grep -vE '^\s*(//|\*)' cli/setup.js | grep -F '/user/installations' > /dev/null; then
+  fail "cli/setup.js の実コードが /user/installations を参照（Issue #110 の根本原因が残存）"
+else
+  pass "cli/setup.js の実コードが /user/installations を参照しない（Issue #110 根本原因の機械保証）"
+fi
+
 # Issue #249: app-logo ステップ（bot アイコン用デフォルトロゴ同梱 + アップロード誘導）
+echo "=== app-logo ステップ検証 (Issue #249) ==="
+
 # assert 1: app-logo が app-create の直後に挿入されている（App 作成ステップ直後の案内表示）
 if node -e '
 const setup = require("./cli/setup");
@@ -727,29 +752,6 @@ if (!Array.isArray(pkg.files) || !pkg.files.includes("assets/")) { console.error
   pass "package.json の files に assets/ が含まれる（npm 配布物にロゴが同梱される）"
 else
   fail "package.json の files に assets/ が含まれない（ロゴが配布物に同梱されない）"
-fi
-
-# assert 5: cli/verify.js の verifyAppInstallation export が維持されている
-# （将来 App JWT 経由で検証復活させる際の拡張余地、計画段階の設計判断）
-if node -e '
-const verify = require("./cli/verify");
-if (typeof verify.verifyAppInstallation !== "function") {
-  console.error("verifyAppInstallation export must be retained for future re-use");
-  process.exit(1);
-}
-'; then
-  pass "cli/verify.js の verifyAppInstallation export が維持されている（将来再利用余地）"
-else
-  fail "cli/verify.js の verifyAppInstallation export が失われた"
-fi
-
-# assert 6: cli/setup.js の実コード（コメント除外）が /user/installations 文字列を参照しない
-# （根本原因の機械保証: setup.js のランタイムから `/user/installations` 呼び出しが完全に消えた）
-# 行頭が // または * のコメント行を除外したうえで grep（既存の CISO 検証パターンと同方式）
-if grep -vE '^\s*(//|\*)' cli/setup.js | grep -F '/user/installations' > /dev/null; then
-  fail "cli/setup.js の実コードが /user/installations を参照（Issue #110 の根本原因が残存）"
-else
-  pass "cli/setup.js の実コードが /user/installations を参照しない（Issue #110 根本原因の機械保証）"
 fi
 
 # Issue #91 dogfooding 計測機能の機械検証
