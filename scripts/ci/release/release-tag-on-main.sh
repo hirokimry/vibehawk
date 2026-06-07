@@ -5,7 +5,10 @@
 # 設計:
 #   - branch protection（require_pr + enforce_admins）で main への直接 commit は不可。
 #     本スクリプトは tag と GitHub Release の作成のみ行い、branch ref には一切触れない。
-#   - 作成された Release が release.yml（on: release: published）の npm publish を発火させる。
+#   - Release 作成後、release.yml（npm publish）を workflow_dispatch で起動する（Issue #333）。
+#     GITHUB_TOKEN が作成した Release は release: published を発火させない（GitHub 公式仕様。
+#     GITHUB_TOKEN 由来イベントは workflow_dispatch / repository_dispatch を除き新しい workflow を
+#     起こさない）ため、gh workflow run で明示的に publish を繋ぐ。
 #   - 事故防止: push の前後（BEFORE_SHA → AFTER_SHA）で version が変化した時だけ Release を作る。
 #     version 据え置きの push（通常の機能 PR マージ等）では何もしない。
 #
@@ -86,6 +89,11 @@ main() {
   log_info "Release ${tag} を作成します（${ver_before} → ${ver_after}）"
   gh release create "$tag" --title "$tag" --notes "$notes" --target "$AFTER_SHA"
   log_info "Release ${tag} を作成しました"
+
+  # GITHUB_TOKEN 製 Release は release: published を発火させないため、publish を明示起動する（Issue #333）
+  log_info "release.yml（npm publish）を tag ${tag} で起動します"
+  gh workflow run release.yml -f tag="$tag"
+  log_info "release.yml を起動しました"
 }
 
 main "$@"

@@ -96,6 +96,11 @@ if [[ ! -s "$GH_LOG" ]] || ! grep -q "release create" "$GH_LOG"; then
 else
   fail "version 変化なしなのに release create が呼ばれた: $(cat "$GH_LOG")"
 fi
+if ! grep -q "workflow run" "$GH_LOG"; then
+  pass "version 変化なし → publish（workflow run）も呼ばない"
+else
+  fail "version 変化なしなのに publish が起動された: $(cat "$GH_LOG")"
+fi
 
 # --- case 2: version bump かつ tag 不在 → release create を呼ぶ ---
 R2="${TMP_ROOT}/r2"
@@ -115,6 +120,13 @@ if grep -qE "release create v0\.2\.0" "$GH_LOG"; then
   pass "version bump → gh release create v0.2.0 を呼ぶ"
 else
   fail "version bump で release create が呼ばれない: $(cat "$GH_LOG")"
+fi
+
+# Release 作成後に publish（release.yml）を workflow_dispatch で起動する（Issue #333）
+if grep -qE "workflow run release\.yml .*tag=v0\.2\.0" "$GH_LOG"; then
+  pass "version bump → gh workflow run release.yml -f tag=v0.2.0 を呼ぶ"
+else
+  fail "version bump で release.yml の publish 起動が呼ばれない: $(cat "$GH_LOG")"
 fi
 
 # --- case 3: 既存 tag あり → Release 作成しない ---
@@ -137,6 +149,11 @@ if ! grep -q "release create" "$GH_LOG"; then
 else
   fail "既存 tag があるのに release create が呼ばれた: $(cat "$GH_LOG")"
 fi
+if ! grep -q "workflow run" "$GH_LOG"; then
+  pass "既存 tag あり → publish（workflow run）も呼ばない"
+else
+  fail "既存 tag があるのに publish が起動された: $(cat "$GH_LOG")"
+fi
 
 # --- case 4: head の package.json から version を取得できない → Release 作成しない（graceful skip、Issue #319） ---
 R4="${TMP_ROOT}/r4"
@@ -158,6 +175,11 @@ if [[ "$script_exit" -eq 0 ]] && ! grep -q "release create" "$GH_LOG"; then
   pass "version 取得不能 → set -e で abort せず gh release create も呼ばない（graceful skip）"
 else
   fail "version 取得不能時の挙動が想定外（exit=$script_exit, gh=$(cat "$GH_LOG"))"
+fi
+if ! grep -q "workflow run" "$GH_LOG"; then
+  pass "version 取得不能 → publish（workflow run）も呼ばない"
+else
+  fail "version 取得不能なのに publish が起動された: $(cat "$GH_LOG")"
 fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="

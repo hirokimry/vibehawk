@@ -7,11 +7,23 @@ name: release
 # - npm provenance 署名で改ざん検知（npm publish --provenance）
 # - npm publish アカウントの 2FA 必須（npmjs.com Settings 側で設定）
 #
-# トリガー: GitHub Release 作成時のみ。push / PR では発火しない（誤 publish 防止）。
+# トリガー:
+# - release: published … 人手が GitHub UI 等で作成した Release から発火する経路。
+# - workflow_dispatch … release-tag.yml が自動作成した Release 向けの発火経路（Issue #333）。
+#   GITHUB_TOKEN が作成した Release は release: published を発火させない（GitHub 公式仕様。
+#   GITHUB_TOKEN 由来イベントは workflow_dispatch / repository_dispatch を除き新しい workflow を
+#   起こさない）ため、release-tag.yml 側から本 workflow を workflow_dispatch で明示起動する。
+# push / PR では発火しない（誤 publish 防止）。
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: publish 対象の tag（例: v0.2.0）
+        required: true
+        type: string
 
 # 最小権限（autonomous-restrictions.md §6 例外: id-token: write は npm provenance 用 OIDC token 発行に必須）
 permissions:
@@ -19,7 +31,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  # release: published と workflow_dispatch のどちらの経路でも同一 tag を 1 グループに束ねる
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -30,7 +43,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.release.tag_name }}
+          # release: published 経路は release.tag_name、workflow_dispatch 経路は inputs.tag を使う
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - name: Node.js セットアップ
         uses: actions/setup-node@v4

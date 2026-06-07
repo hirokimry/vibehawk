@@ -6,7 +6,9 @@ name: release-tag
 # - main は require_pr + enforce_admins で CI からの直接 commit が不可。
 # - version の bump はリリース PR 内で prepare-release.sh が行い、本 workflow は
 #   tag と GitHub Release の作成のみ担う（branch ref には触れない）。
-# - 作成された Release が release.yml（on: release: published）の npm publish を発火させる。
+# - Release 作成後、release.yml（npm publish）を workflow_dispatch で明示起動する（Issue #333）。
+#   GITHUB_TOKEN が作成した Release は release: published を発火させない（GitHub 公式仕様）ため、
+#   release-tag-on-main.sh が gh workflow run で publish を繋ぐ。
 # - 事故防止: push 前後で version が変化した時だけ Release を作る（release-tag-on-main.sh 内で判定）。
 
 on:
@@ -15,6 +17,8 @@ on:
 
 permissions:
   contents: write
+  # release.yml を gh workflow run で起動するため（Issue #333）
+  actions: write
 
 concurrency:
   group: release-tag
