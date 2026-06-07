@@ -238,7 +238,7 @@ function buildSteps({ owner, repo }) {
         `https://github.com/settings/apps/${state.credentials && state.credentials.slug}`,
       getInstructions: () =>
         [
-          'App 設定ページの "Display information" を開き、現在のロゴ（花束アイコン）に',
+          'App 設定ページの "Display information" を開き、現在のロゴ（GitHub のデフォルトアイコン）に',
           '同梱の vibehawk ロゴ画像をドラッグ&ドロップしてアップロードしてください。',
           `画像の場所: ${LOGO_PATH}`,
           'ロゴ差し替えは任意です。設定しなくても vibehawk の動作には影響しません。',
