@@ -2,6 +2,16 @@
 
 vibehawk のリリース履歴。各バージョンの主要変更点を記録する。
 
+## v0.2.1 - 2026-06-08
+
+### 🔧 CI
+
+- 🔧 **リリースが Release 作成後に npm publish を自動発火するようになった** (#333 / PR #338)
+  - `release-tag.yml` が GitHub Release 作成後に `release.yml`（npm publish）を `workflow_dispatch` で明示起動するようになった。
+  - `GITHUB_TOKEN` が作成した Release は `release: published` を発火させない GitHub 公式仕様で publish が一度も走っていなかった真因を解消した。
+  - `release.yml` は `release: published`（UI 手動）と `workflow_dispatch`（自動 Release）の両経路で publish できるようになった。
+  - `verify-tag-version.sh` が `RELEASE_TAG` を優先し、`workflow_dispatch` での tag 取り違えを防ぐようになった。
+
 ## v0.2.0 - 2026-06-07
 
 ### ✨ 新機能
