@@ -114,7 +114,7 @@ branch protection は status check の `name`（`vibehawk` 固定）で識別す
 
 #### 推奨経路（`npx vibehawk setup` ウィザード、Issue #91）
 
-Issue #91 で実装された対話型ウィザードを使うと、以下 6 ステップを 1 コマンドで集約できる。
+Issue #91 で実装された対話型ウィザードを使うと、以下 7 ステップを 1 コマンドで集約できる（Issue #249 で bot アイコン差し替え誘導を追加）。
 既存の CISO Critical 条件（CLI が secret を書き込まない方針 Issue #72 / #74）は完全に遵守される。
 
 ```text
@@ -123,12 +123,13 @@ npx vibehawk setup --owner <name> --repo <owner>/<repo>
 
 | ステップ | 内容 | 操作主体 |
 |---|---|---|
-| 1/6 | GitHub App を作成（`vibehawk-for-<owner>`） | CLI が自動実行 |
-| 2/6 | App を対象リポジトリにインストール | 利用者がブラウザで操作 |
-| 3/6 | `VIBEHAWK_APP_ID` を Secrets に登録 | 利用者が GitHub Settings で操作 |
-| 4/6 | `VIBEHAWK_PRIVATE_KEY` を生成・登録 | 利用者が GitHub Settings で操作 |
-| 5/6 | `CLAUDE_CODE_OAUTH_TOKEN` を取得・登録 | 利用者が GitHub Settings で操作 |
-| 6/6 | workflow ファイル PR を作成 | CLI が自動実行 |
+| 1/7 | GitHub App を作成（`vibehawk-for-<owner>`） | CLI が自動実行 |
+| 2/7 | bot アイコン（ロゴ）を差し替え（任意、credential 経路に触れない） | 利用者がブラウザで操作 |
+| 3/7 | App を対象リポジトリにインストール | 利用者がブラウザで操作 |
+| 4/7 | `VIBEHAWK_APP_ID` を Secrets に登録 | 利用者が GitHub Settings で操作 |
+| 5/7 | `VIBEHAWK_PRIVATE_KEY` を生成・登録 | 利用者が GitHub Settings で操作 |
+| 6/7 | `CLAUDE_CODE_OAUTH_TOKEN` を取得・登録 | 利用者が GitHub Settings で操作 |
+| 7/7 | workflow ファイル PR を作成 | CLI が自動実行 |
 
 ウィザードのセキュリティ特性（CISO Critical 条件遵守）の詳細は後述「`npx vibehawk setup` ウィザード経路の追加 Critical 条件（Issue #91）」を参照。
 
@@ -317,7 +318,7 @@ CLI は GitHub Secrets に直接書き込まない。
 
 #### `npx vibehawk setup` ウィザード経路の追加 Critical 条件（Issue #91）
 
-Issue #91 で実装された `cli/setup.js` は、`npx vibehawk setup-token` の設計方針（Issue #74）を踏襲しつつ、6 ステップを 1 コマンドに集約する。
+Issue #91 で実装された `cli/setup.js` は、`npx vibehawk setup-token` の設計方針（Issue #74）を踏襲しつつ、7 ステップを 1 コマンドに集約する（Issue #249 で bot アイコン差し替え誘導を追加）。
 以下の CISO Critical 条件を遵守する。
 
 | 条件 | 実装 |
