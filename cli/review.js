@@ -107,6 +107,23 @@ function stripQuotes(s) {
   return s.replace(/^["']/, '').replace(/["']$/, '');
 }
 
+// YAML 行末コメントを除去する。`#` がコメントになるのは「行頭 or 空白の後」かつ
+// 「クォートの外」のときだけ（RFC 準拠）。クォート内の `#`（path_filters の
+// `"foo bar#baz/**"` 等）やパス内の `#`（`val#ue`）は値として保持する。best-effort。
+function stripYamlComment(raw) {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === '"' && !inSingle) inDouble = !inDouble;
+    else if (c === '#' && !inSingle && !inDouble && (i === 0 || /\s/.test(raw[i - 1]))) {
+      return raw.slice(0, i);
+    }
+  }
+  return raw;
+}
+
 // .vibehawk.yaml を best-effort で簡易パースする（node に yaml 依存を増やさない）。
 // CI 側（python yaml.safe_load）と完全一致は保証しない。失敗時は空設定を返し、呼出側が既定で継続する。
 function readReviewConfig(cwd) {
@@ -123,9 +140,7 @@ function readReviewConfig(cwd) {
     let section = null;
     let sub = null;
     for (const raw of text.split(/\r?\n/)) {
-      // YAML のコメント `#` は行頭または空白の後だけがコメント。パス内の `#`
-      // （例: path_filters の `"foo#bar"`）を誤って切らないよう、直前が行頭/空白の時のみ除去する。
-      const line = raw.replace(/(^|\s)#.*$/, '$1');
+      const line = stripYamlComment(raw);
       if (!line.trim()) continue;
       const indent = line.length - line.trimStart().length;
       const body = line.trim();

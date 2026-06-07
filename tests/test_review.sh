@@ -131,10 +131,10 @@ a.deepStrictEqual(c.pathFilters,["node_modules/**"]);
 a.strictEqual(c.sizeLimits.full_review_files,40);
 // 不在
 a.deepStrictEqual(r.readReviewConfig(path.join(os.tmpdir(),"vh-absent-"+Date.now())),{language:null,pathFilters:[],sizeLimits:{}});
-// パス内の # を YAML コメントと誤認しない（行頭/空白後のみコメント）
-fs.writeFileSync(path.join(d,".vibehawk.yaml"),"reviews:\n  path_filters:\n    - \"foo#bar/**\"\n  size_limits:\n    full_review_files: 30  # コメント\n");
+// パス内/クォート内の # を YAML コメントと誤認しない（行頭/空白後かつクォート外のみコメント）
+fs.writeFileSync(path.join(d,".vibehawk.yaml"),"reviews:\n  path_filters:\n    - \"foo#bar/**\"\n    - \"foo bar#baz/**\"\n  size_limits:\n    full_review_files: 30  # コメント\n");
 const c2=r.readReviewConfig(d);
-a.deepStrictEqual(c2.pathFilters,["foo#bar/**"]);
+a.deepStrictEqual(c2.pathFilters,["foo#bar/**","foo bar#baz/**"]);
 a.strictEqual(c2.sizeLimits.full_review_files,30);
 // 不正 yaml は best-effort で throw しない
 fs.writeFileSync(path.join(d,".vibehawk.yaml"),":\n: : :\n\tbad");
