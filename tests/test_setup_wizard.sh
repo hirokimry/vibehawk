@@ -746,6 +746,20 @@ else
   fail "assets/vibehawk-logo.png が存在しない（同梱ロゴ未配置）"
 fi
 
+# assert 5b: 同梱ロゴが正方形かつ 512px 以上（Issue #325: high-DPI 向け高解像度化）
+# PNG の IHDR から幅/高さを読む（node 経由でクロスプラットフォーム）
+if node -e '
+const fs = require("fs");
+const b = fs.readFileSync("assets/vibehawk-logo.png");
+const w = b.readUInt32BE(16), h = b.readUInt32BE(20);
+if (w !== h) { console.error("logo must be square, got:", w, "x", h); process.exit(1); }
+if (w < 512) { console.error("logo must be >= 512px, got:", w); process.exit(1); }
+'; then
+  pass "assets/vibehawk-logo.png が正方形かつ 512px 以上（high-DPI 向け、Issue #325）"
+else
+  fail "assets/vibehawk-logo.png が正方形でない or 512px 未満（Issue #325 完了条件違反）"
+fi
+
 # assert 6: package.json の files に assets/ が含まれ npm 配布物に同梱される（完了条件）
 if node -e '
 const pkg = require("./package.json");
