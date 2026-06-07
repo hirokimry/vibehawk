@@ -38,8 +38,8 @@ fi
 
 # YAML としてパース可能か検証する（Issue #333: description 値内の「例: 」のコロンで
 # YAML マッピング誤認が起き、grep ベースの検証をすり抜けて main の release.yml が壊れた再発防止）。
-# python3 が無い環境では検証をスキップする（CI runner には存在する）。
-if command -v python3 > /dev/null 2>&1; then
+# pyyaml は macos/windows runner には同梱されないため、不在時はスキップする（CI ubuntu / ローカルで検証）。
+if command -v python3 > /dev/null 2>&1 && python3 -c "import yaml" 2> /dev/null; then
   for wf in "$WORKFLOW" "${REPO_ROOT}/.github/workflows/release-tag.yml"; do
     if python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$wf" 2> /dev/null; then
       pass "YAML としてパース可能: $(basename "$wf")"
@@ -48,7 +48,7 @@ if command -v python3 > /dev/null 2>&1; then
     fi
   done
 else
-  echo "  - python3 不在のため YAML パース検証をスキップ"
+  echo "  ⚠ pyyaml が見つからない → YAML パース検証をスキップ（CI ubuntu では利用可）"
 fi
 
 body="$(awk '!/^[[:space:]]*#/' "$WORKFLOW")"
