@@ -69,6 +69,9 @@ jobs:
         run: bash scripts/ci/release/run-tests.sh
 
       - name: tag と package.json version の整合確認
+        # workflow_dispatch 経路では GITHUB_REF_NAME が main になるため tag を明示渡しする（Issue #333）
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: bash scripts/ci/release/verify-tag-version.sh
 
       - name: npm publish (provenance 付き、OIDC 経由)
