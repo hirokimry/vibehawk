@@ -17,6 +17,7 @@
   "files": [
     "cli/",
     "templates/",
+    "assets/",
     "README.md",
     "MVV.md",
     "LICENSE"

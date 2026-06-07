@@ -54,7 +54,7 @@ GitHub の仕様上、`vibehawk` check が一度発火していないと branch 
 
 ### 1. App / secrets / workflow を準備（前提準備）
 
-対話型ウィザード `npx vibehawk setup` が全 6 ステップ（App 作成 → リポジトリインストール → 3 secrets 登録 → workflow PR）を 1 コマンドに集約する（Issue #91）:
+対話型ウィザード `npx vibehawk setup` が全 7 ステップ（App 作成 → bot アイコン差し替え〔任意〕 → リポジトリインストール → 3 secrets 登録 → workflow PR）を 1 コマンドに集約する（Issue #91 / #249）:
 
 ```bash
 npx vibehawk setup --owner <your-github-username> --repo <owner>/<repo>
@@ -72,6 +72,10 @@ npx vibehawk setup --owner alice --repo alice/my-app --dry-run
 
 App ID / OAuth Token は **OS ネイティブのクリップボードに stdin 経由でコピー**（Cmd+V / Ctrl+V で貼付可能）。
 OAuth Token の値はクリップボードコピー失敗時でも stdout に出さない（CISO Critical 条件、[`docs/SECURITY.md`](docs/SECURITY.md) 参照）。
+
+bot アイコン（🦅）は **App 作成直後のステップで差し替えできる**（任意）。
+GitHub App のロゴは Web UI（Display information）でのみ設定できる仕様のため、ウィザードが設定ページ URL と同梱ロゴ画像（`assets/vibehawk-logo.png`）の場所を表示する。
+利用者はその画像を 1 回ドラッグ&ドロップするだけで、デフォルトの花束アイコンから vibehawk ブランドアイコンに差し替えられる（差し替えなくても動作には影響しない、Issue #249）。
 
 ### 2. 初回 PR で `vibehawk` check を発火
 
