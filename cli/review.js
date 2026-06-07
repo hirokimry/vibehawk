@@ -123,7 +123,9 @@ function readReviewConfig(cwd) {
     let section = null;
     let sub = null;
     for (const raw of text.split(/\r?\n/)) {
-      const line = raw.replace(/#.*$/, '');
+      // YAML のコメント `#` は行頭または空白の後だけがコメント。パス内の `#`
+      // （例: path_filters の `"foo#bar"`）を誤って切らないよう、直前が行頭/空白の時のみ除去する。
+      const line = raw.replace(/(^|\s)#.*$/, '$1');
       if (!line.trim()) continue;
       const indent = line.length - line.trimStart().length;
       const body = line.trim();

@@ -1,0 +1,8 @@
+# レビュー基準プロンプトと golden fixture は全プラットフォームで改行を LF に固定する。
+# Windows runner（core.autocrlf=true）で CRLF にチェックアウトされると、
+# expand-prompt-includes.sh の展開出力と golden fixture のバイト一致テスト（Issue #330）が
+# 改行差で全行不一致になるため。これらは shell スクリプトと claude へ渡すプロンプトの
+# 入力でもあり、LF 固定が挙動上も正しい。
+.github/prompts/vibehawk-review.md text eol=lf
+templates/review-prompt.md text eol=lf
+tests/fixtures/vibehawk-review-prompt.golden.md text eol=lf
