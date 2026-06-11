@@ -639,6 +639,9 @@ CLI による secret 自動書込はせず、3 secrets すべて利用者が Git
 - リリースは 2 段階で回る。
   - main は PR 必須 + enforce_admins のため、CI から main へ直接 commit しない設計。
   - 1. リリース PR 内で `scripts/ci/release/prepare-release.sh` が動く。
+    - リリース PR は `/release` skill が作成する（版上げ係、Issue #341）。
+      - 📍 実体: `.claude/skills/release/SKILL.md`。
+      - ローカル実行専用。`GITHUB_TOKEN` が作る PR は required checks が発火せずマージ不能になるため、GHA workflow 化はしない。
     - Conventional Commits からバージョンを決定する。
     - `package.json` + `CHANGELOG.md` を PR 差分として更新する。
   - 2. main マージ時に `release-tag.yml` が動く。
