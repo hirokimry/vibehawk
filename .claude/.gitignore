@@ -1,6 +1,11 @@
 # テンプレート管理ファイル（templates/ が source of truth）
 hooks/
-skills/
+# skills はディレクトリ単位ではなく中身単位で ignore する
+# （リポジトリ授権のローカル skill を !skills/release/ で再包含するため。
+#   親ディレクトリごと除外すると git 仕様で再包含できない）
+skills/*
+# 版上げ係スキル（Issue #341、リポジトリが Source of Truth、インストーラ生成物ではない）
+!skills/release/
 agents/
 settings.json
 vibecorp.lock
