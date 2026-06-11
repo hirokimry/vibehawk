@@ -116,10 +116,16 @@ fi
 
 # --- git 追跡対象であること（.claude/.gitignore の skills/* 一括 ignore に飲まれていないか）---
 
-if git -C "$REPO_ROOT" check-ignore -q .claude/skills/release/SKILL.md; then
+# check-ignore の exit 128（リポジトリ外実行等の git エラー）を「ignore されていない」と
+# 誤判定しないよう、exit code を 0 / 1 / その他で分岐する
+ignore_status=0
+git -C "$REPO_ROOT" check-ignore -q .claude/skills/release/SKILL.md || ignore_status=$?
+if [[ "$ignore_status" -eq 0 ]]; then
   fail "SKILL.md が gitignore されている（.claude/.gitignore の !skills/release/ 例外が消えた）"
-else
+elif [[ "$ignore_status" -eq 1 ]]; then
   pass "SKILL.md は gitignore されていない（追跡可能）"
+else
+  fail "git check-ignore が異常終了した（exit ${ignore_status}）"
 fi
 
 # --- markdown.md: 言語指定なしフェンス禁止 ---
