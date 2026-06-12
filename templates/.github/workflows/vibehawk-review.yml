@@ -61,6 +61,30 @@ jobs:
           # チェックアウト内容が同一 commit を指すようにし、prev_summary の SHA 比較が正しく動くようにする
           ref: ${{ github.event.pull_request.head.sha }}
 
+      # === 外部リポジトリでの自己完結化（Issue #346） ===
+      # 本 workflow が参照するスクリプト・プロンプトは vibehawk リポジトリ本体にのみ存在する。
+      # 外部リポジトリ（npx vibehawk setup で配布された利用者リポジトリ）では、下の 2 step が
+      # リリースタグ pin 付きで vibehawk 本体を .vibehawk-runtime/ に checkout し、以降の全 step は
+      # ${VIBEHAWK_RUNTIME} prefix 経由でスクリプトを実行する。
+      # - ref は配布時に cli/install.js が v<バージョン>（リリースタグ）へ置換するプレースホルダ。
+      #   vibehawk 自リポジトリのコピー（dogfooding）では hashFiles guard により本 step が skip される
+      #   ため、未置換のまま残っているのが正しい状態（実タグへ「修正」しないこと）。
+      # - persist-credentials: false: runtime checkout は読み取り専用で後続の git 操作を伴わないため、
+      #   token を .vibehawk-runtime/.git/config に永続化しない（CISO 承認条件、Issue #346）。
+      - name: vibehawk ランタイムを取得（外部リポジトリのみ）
+        if: hashFiles('scripts/ci/vibehawk-review/check-secrets.sh') == ''
+        uses: actions/checkout@v4
+        with:
+          repository: hirokimry/vibehawk
+          ref: __VIBEHAWK_REF__
+          path: .vibehawk-runtime
+          persist-credentials: false
+
+      # 自リポジトリ（スクリプトが手元に存在）では「.」、外部リポジトリでは「.vibehawk-runtime」を
+      # 以降の step が ${VIBEHAWK_RUNTIME} として参照する（GitHub 式の三項演算、shell 分岐なし）。
+      - name: vibehawk ランタイムディレクトリを決定
+        run: echo "VIBEHAWK_RUNTIME=${{ hashFiles('scripts/ci/vibehawk-review/check-secrets.sh') != '' && '.' || '.vibehawk-runtime' }}" >> "$GITHUB_ENV"
+
       - name: secrets 検証
         id: check_secrets
         env:
@@ -68,7 +92,7 @@ jobs:
           PRIVATE_KEY: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
           OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         # 詳細: scripts/ci/vibehawk-review/check-secrets.sh（エピック #174 / Issue #176）
-        run: bash scripts/ci/vibehawk-review/check-secrets.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/check-secrets.sh"
 
       - name: secrets 未設定時のプレースホルダ投稿
         if: steps.check_secrets.outputs.ready != 'true'
@@ -77,7 +101,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MISSING: ${{ steps.check_secrets.outputs.missing }}
         # 詳細: scripts/ci/vibehawk-review/post-placeholder-comment.sh（エピック #174 / Issue #176）
-        run: bash scripts/ci/vibehawk-review/post-placeholder-comment.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/post-placeholder-comment.sh"
 
       - name: vibehawk-for-<owner> App Installation Token を取得
         id: app-token
@@ -98,7 +122,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           OWNER: ${{ github.repository_owner }}
-        run: bash scripts/ci/vibehawk-review/check-autoreview-state.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/check-autoreview-state.sh"
 
       - name: 前回サマリコメントを取得（Issue #8 インクリメンタルレビュー判定）
         id: prev_summary
@@ -110,7 +134,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           BASE_REF: ${{ github.base_ref }}
         # 詳細: scripts/ci/vibehawk-review/find-prev-summary.sh（エピック #174 / Issue #176）
-        run: bash scripts/ci/vibehawk-review/find-prev-summary.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/find-prev-summary.sh"
 
       - name: vibehawk 設定読み込み（Issue #10 / #172 .vibehawk.yaml）
         id: vibehawk_config
@@ -118,7 +142,7 @@ jobs:
         env:
           FILES_COUNT: ${{ github.event.pull_request.changed_files }}
         # 詳細: scripts/ci/vibehawk-review/load-config.sh（エピック #174 / Issue #176）
-        run: bash scripts/ci/vibehawk-review/load-config.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/load-config.sh"
 
       - name: vibehawk prompt を外部 .md から読み込み + envsubst で展開
         # GitHub Actions の expression length 21000 chars 制限を回避するため、
@@ -141,7 +165,7 @@ jobs:
           DEPTH: ${{ steps.vibehawk_config.outputs.depth }}
           PATH_FILTERS_JSON: ${{ steps.vibehawk_config.outputs.path_filters }}
           PATH_INSTRUCTIONS_JSON: ${{ steps.vibehawk_config.outputs.path_instructions }}
-        run: bash .github/scripts/load-vibehawk-prompt.sh
+        run: bash "${VIBEHAWK_RUNTIME}/.github/scripts/load-vibehawk-prompt.sh"
 
       - name: claude-code-action でレビュー実行
         # Issue #164 fix: Claude のファイル書き出し（$GITHUB_WORKSPACE/vibehawk-review.json）依存を廃止し、
@@ -193,7 +217,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           STRUCTURED_OUTPUT: ${{ steps.claude_review.outputs.structured_output }}
         # 詳細: scripts/ci/vibehawk-review/auto-resolve.sh
-        run: bash scripts/ci/vibehawk-review/auto-resolve.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/auto-resolve.sh"
 
       - name: vibehawk event を決定（Issue #166）
         # Issue #166: event 判定ロジックを Claude prompt から workflow step に移管。
@@ -220,7 +244,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           STRUCTURED_OUTPUT: ${{ steps.claude_review.outputs.structured_output }}
         # 詳細: scripts/ci/vibehawk-review/decide-event.sh（エピック #174 / Issue #176）
-        run: bash scripts/ci/vibehawk-review/decide-event.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/decide-event.sh"
 
       - name: vibehawk Recent review info 用データ取得（Issue #226）
         # sticky walkthrough コメントの ℹ️ Recent review info セクション用に、
@@ -235,7 +259,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PATH_FILTERS_JSON: ${{ steps.vibehawk_config.outputs.path_filters }}
         # 詳細: .github/scripts/fetch-recent-review-info.sh（Issue #226）
-        run: bash .github/scripts/fetch-recent-review-info.sh
+        run: bash "${VIBEHAWK_RUNTIME}/.github/scripts/fetch-recent-review-info.sh"
 
       - name: vibehawk Possibly related PRs 取得（Issue #228）
         # sticky walkthrough コメントの ## Possibly related PRs セクション用に
@@ -247,7 +271,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: bash .github/scripts/fetch-related-prs.sh
+        run: bash "${VIBEHAWK_RUNTIME}/.github/scripts/fetch-related-prs.sh"
 
       - name: vibehawk Suggested reviewers 取得（Issue #228）
         # sticky walkthrough コメントの ## Suggested reviewers セクション用に
@@ -259,7 +283,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: bash .github/scripts/fetch-suggested-reviewers.sh
+        run: bash "${VIBEHAWK_RUNTIME}/.github/scripts/fetch-suggested-reviewers.sh"
 
       - name: vibehawk Pre-merge Title check（Issue #229）
         # sticky walkthrough コメントの 🚥 Pre-merge checks セクション用に
@@ -268,7 +292,7 @@ jobs:
         if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: bash .github/scripts/check-pr-title.sh
+        run: bash "${VIBEHAWK_RUNTIME}/.github/scripts/check-pr-title.sh"
 
       - name: vibehawk Pre-merge Description check（Issue #229）
         # sticky walkthrough コメントの 🚥 Pre-merge checks セクション用に
@@ -277,13 +301,13 @@ jobs:
         if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: bash .github/scripts/check-pr-description.sh
+        run: bash "${VIBEHAWK_RUNTIME}/.github/scripts/check-pr-description.sh"
 
       - name: vibehawk Pre-merge Docstring coverage check（Issue #229）
         # v1 は言語不問で skipped を出力。言語別ツール統合は別 Issue で。
         id: pre_merge_docstring
         if: steps.check_secrets.outputs.ready == 'true' && steps.claude_review.outputs.structured_output != ''
-        run: bash .github/scripts/check-docstring-coverage.sh
+        run: bash "${VIBEHAWK_RUNTIME}/.github/scripts/check-docstring-coverage.sh"
 
       - name: vibehawk sticky walkthrough コメント upsert（Issue #219 / #226）
         # PR ごとに 1 個固定の issue-comment sticky を維持する（CodeRabbit 模倣）。
@@ -317,7 +341,7 @@ jobs:
           PRE_MERGE_DOCSTRING_STATUS: ${{ steps.pre_merge_docstring.outputs.docstring_check_status }}
           PRE_MERGE_DOCSTRING_EXPLANATION: ${{ steps.pre_merge_docstring.outputs.docstring_check_explanation }}
         # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219 / #226 / #228 / #229）
-        run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/build-sticky-body.sh" | bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/post-sticky-comment.sh"
 
       - name: vibehawk bundled review を post（Issue #164 fix / Issue #166）
         # Issue #164 fix: 旧設計（Issue #152）では Claude が $GITHUB_WORKSPACE/vibehawk-review.json
@@ -344,7 +368,7 @@ jobs:
           COMMITS_JSON: ${{ steps.recent_info.outputs.commits_json }}
           FILES_SELECTED_JSON: ${{ steps.recent_info.outputs.files_selected_json }}
         # 詳細: scripts/ci/vibehawk-review/post-bundled-review.sh（エピック #174 / Issue #176）
-        run: bash scripts/ci/vibehawk-review/post-bundled-review.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/post-bundled-review.sh"
 
       - name: vibehawk status check を post（Issue #121-C1 fix）
         # Claude prompt 内 check-runs POST は claude-code-action の permission model で
@@ -360,7 +384,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           OWNER: ${{ github.repository_owner }}
         # 詳細: scripts/ci/vibehawk-review/post-status-check.sh（エピック #174 / Issue #176）
-        run: bash scripts/ci/vibehawk-review/post-status-check.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/post-status-check.sh"
 
       # Issue #295: 自動レビューが paused / ignored の PR では auto-review を skip した上で、
       # required check `vibehawk` を success「一時停止中」で post して merge ブロックを防ぐ。
@@ -373,4 +397,4 @@ jobs:
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           AUTOREVIEW_STATE: ${{ steps.autoreview_state.outputs.state }}
-        run: bash scripts/ci/vibehawk-review/post-autoreview-paused-status.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/post-autoreview-paused-status.sh"

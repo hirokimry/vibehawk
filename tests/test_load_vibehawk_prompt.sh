@@ -29,8 +29,9 @@ fi
 
 TMP_OUTPUTS=()
 cleanup() {
+  # Case 16 がディレクトリ（SIM_ROOT）も登録するため -rf で解放する
   for f in "${TMP_OUTPUTS[@]+"${TMP_OUTPUTS[@]}"}"; do
-    rm -f "$f" || true
+    rm -rf "$f" || true
   done
 }
 trap cleanup EXIT
@@ -217,6 +218,35 @@ if grep -qF 'vibehawk:include' "$EXPANDED_OUT"; then
   fail "Case 15: 未展開の include マーカーが残っている（基準が届かない）"
 else
   pass "Case 15"
+fi
+
+echo "Case 16: 外部リポジトリ相当（runtime checkout + 別 CWD）でも PROMPT_FILE デフォルトが解決される（Issue #346）"
+# 外部リポジトリでは .vibehawk-runtime/ に checkout された vibehawk 一式の中のスクリプトが、
+# 対象リポジトリ root を CWD として実行される。CWD に .github/prompts/ が無くても
+# SCRIPT_DIR 相対デフォルトで prompt が解決されることを検証する。
+SIM_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/vibehawk-runtime-sim.XXXXXX")"
+mkdir -p "${SIM_ROOT}/target-repo/.vibehawk-runtime"
+cp -R "${REPO_ROOT}/.github" "${SIM_ROOT}/target-repo/.vibehawk-runtime/.github"
+cp -R "${REPO_ROOT}/templates" "${SIM_ROOT}/target-repo/.vibehawk-runtime/templates"
+out16="$(mktemp)"
+TMP_OUTPUTS+=("$out16" "$SIM_ROOT")
+set +e
+(
+  cd "${SIM_ROOT}/target-repo"
+  GITHUB_OUTPUT="$out16" \
+    REPO="test/repo" PR_NUMBER="235" HEAD_SHA="abc1234" BASE_REF="main" \
+    INCREMENTAL_MODE="false" EXISTING_COMMENT_ID="" PREV_SHA="" REVIEW_RANGE="" \
+    CONFIG_SOURCE="default" LANGUAGE="en" FILES_COUNT="10" DEPTH="full" \
+    PATH_FILTERS_JSON="[]" PATH_INSTRUCTIONS_JSON="[]" \
+    bash ".vibehawk-runtime/.github/scripts/load-vibehawk-prompt.sh"
+) >/dev/null 2>&1
+ec16=$?
+set -e
+if [[ $ec16 -eq 0 ]] && head -1 "$out16" | grep -qF 'content<<__VIBEHAWK_PROMPT_EOF__' \
+  && ! grep -qF 'vibehawk:include' "$out16"; then
+  pass "Case 16"
+else
+  fail "Case 16: 外部リポジトリ相当の実行で prompt 解決に失敗（ec=$ec16）"
 fi
 
 echo "==="

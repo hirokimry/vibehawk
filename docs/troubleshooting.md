@@ -270,3 +270,41 @@ vibehawk: git リポジトリ内で実行してください。
 - `README.md § 🖥️ push 前ローカルレビュー（npx vibehawk review）`
 - `POLICY.md § Anthropic への送信通知` — 送信内容と利用者の責任範囲
 - `cost-analysis.md` — Pro / Max 枠のクォータ消費と段階的劣化
+
+## v0.2.2 以前に配布した workflow が外部リポジトリで file not found になり全滅する
+
+v0.2.2 以前の `npx vibehawk setup` / `npx vibehawk install` で配置した workflow（`vibehawk-review.yml` / `vibehawk-chat.yml`）が、vibehawk 導入先（外部リポジトリ）の PR で最初の step から失敗する場合。
+
+```text
+bash: scripts/ci/vibehawk-review/check-secrets.sh: No such file or directory
+```
+
+### 原因
+
+v0.2.2 以前の配布 workflow は vibehawk リポジトリ本体にしか存在しないスクリプト群を相対パスで参照していた（Issue #346）。vibehawk 自身のリポジトリでは手元にスクリプトが存在するため顕在化せず、外部リポジトリでのみ check-secrets step の時点で必ず失敗し、レビューも `vibehawk` status check も投稿されない。
+
+v0.2.3 以降の配布 workflow は、外部リポジトリではリリースタグ pin 付きで vibehawk 本体を `.vibehawk-runtime/` に checkout してスクリプトを実行する（自己完結化）。詳細は `specification.md § 外部リポジトリでのランタイム取得` を参照。
+
+### 復旧手順
+
+1. 最新版で workflow を再配布する（既存ファイルがあるため `--overwrite` が必要）。
+
+   ```bash
+   npx vibehawk@latest install --repo <owner>/<repo> --overwrite
+   ```
+
+   注意: `setup` サブコマンドに `--overwrite` は存在しない。既配布の上書きは `install` の `--overwrite` で行う。
+
+2. 作成された workflow PR を確認してマージする（App / 3 secrets は登録済みのため再設定不要）。
+3. 任意の PR で `vibehawk` check が post されることを確認する。
+
+### 注意事項
+
+- 配布された workflow の `ref:` はリリースタグに pin されており、自動では更新されない。新機能・修正を取り込むには上記の再配布を行う。
+- 導入先リポジトリに `.vibehawk-runtime/` という名前のディレクトリが既に存在する場合、runtime checkout と衝突する。該当ディレクトリを改名するか、workflow 内の `path:` を変更する。
+- runtime checkout が `couldn't find remote ref` で失敗する場合、workflow を手動コピーした等の理由で `ref:` がプレースホルダ（`__VIBEHAWK_REF__`）のまま残っている可能性がある。`npx vibehawk install` 経由で再配布すると実タグに置換される。
+
+### 関連ドキュメント
+
+- `specification.md § 外部リポジトリでのランタイム取得（pin 付き 2nd checkout、Issue #346）`
+- `README.md § ⚡ クイックスタート`

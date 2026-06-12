@@ -18,7 +18,10 @@ set -euo pipefail
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROMPT_FILE="${PROMPT_FILE:-.github/prompts/vibehawk-review.md}"
+# デフォルトは本スクリプトと同じリポジトリ内の prompts/ を指す（SCRIPT_DIR 相対）。
+# 外部リポジトリでは runtime checkout（.vibehawk-runtime/）内の本スクリプトが実行されるため、
+# CWD（対象リポジトリ root）相対だと prompt が見つからず破綻する（Issue #346）。
+PROMPT_FILE="${PROMPT_FILE:-${SCRIPT_DIR}/../prompts/vibehawk-review.md}"
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
   echo "::error::vibehawk: プロンプトファイルが見つかりません: $PROMPT_FILE" >&2

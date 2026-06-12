@@ -879,5 +879,32 @@ else
   fail "troubleshooting.md に「永続 pending」項目がない（Issue #134）"
 fi
 
+# Issue #346: renderWorkflowTemplate が __VIBEHAWK_REF__ を v<package.json version> に置換する
+if node -e '
+const i = require("./cli/install.js");
+const { version } = require("./package.json");
+for (const wf of i.WORKFLOWS) {
+  const rendered = i.renderWorkflowTemplate(wf);
+  if (rendered.includes(i.RUNTIME_REF_PLACEHOLDER)) process.exit(1);
+  if (!rendered.includes("ref: v" + version)) process.exit(1);
+}
+process.exit(0);
+'; then
+  pass "renderWorkflowTemplate がプレースホルダを v$(node -p 'require("./package.json").version') へ置換する（Issue #346）"
+else
+  fail "renderWorkflowTemplate のプレースホルダ置換が機能していない（Issue #346）"
+fi
+
+# Issue #346: 配布テンプレート側にはプレースホルダが必ず 1 箇所（ref 行）存在する
+# （置換し忘れ・テンプレート側への実タグ焼き込みの双方を防ぐ）
+for wf in templates/.github/workflows/vibehawk-review.yml templates/.github/workflows/vibehawk-chat.yml; do
+  count="$(grep -c -F '__VIBEHAWK_REF__' "$wf" || true)"
+  if [[ "$count" -eq 1 ]] && grep -q -F 'ref: __VIBEHAWK_REF__' "$wf"; then
+    pass "${wf} に ref プレースホルダが 1 箇所存在する（Issue #346）"
+  else
+    fail "${wf} の ref プレースホルダが不正（count=${count}）（Issue #346）"
+  fi
+done
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

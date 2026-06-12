@@ -53,7 +53,7 @@ repo_root = sys.argv[2]
 with open(src_path, encoding='utf-8') as f:
     yaml_text = f.read()
 
-pattern = re.compile(r'^(\s+)run:\s+bash\s+(scripts/ci/\S+\.sh)\s*$', re.MULTILINE)
+pattern = re.compile(r'^(\s+)run:\s+bash\s+"\$\{VIBEHAWK_RUNTIME\}/(scripts/ci/\S+\.sh)"\s*$', re.MULTILINE)
 
 def replace(match):
     indent = match.group(1)

@@ -6,7 +6,7 @@
 # 同じファイルを参照してレビュー基準のブレを防ぐ。CI 側は本スクリプトでマーカーを展開してから
 # load-vibehawk-prompt.sh が envsubst にパイプする（展開は envsubst の前段、whitelist は不変）。
 #
-# マーカー形式: 行全体が `<!-- vibehawk:include <path> -->`（path は repo root 相対）
+# マーカー形式: 行全体が `<!-- vibehawk:include <path> -->`（path は vibehawk リポジトリ root 相対）
 # 展開は 1 段のみ（展開後の内容は再スキャンしない＝ネスト include 無限ループ防止）
 #
 # 入力: $1 = 展開対象ファイル
@@ -22,12 +22,12 @@ if [[ ! -f "$SRC" ]]; then
   exit 1
 fi
 
-# include パスの解決基点は repo root に固定する（呼び出し元の cwd 依存を排除）。
-# CI は checkout 直後 repo root が cwd だが、git で明示解決し、取得失敗時のみ PWD にフォールバックする。
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [[ -z "$REPO_ROOT" ]]; then
-  REPO_ROOT="$PWD"
-fi
+# include パスの解決基点は本スクリプトが属する vibehawk リポジトリ root（.github/scripts/ の
+# 2 階層上）に固定する（呼び出し元の cwd / git 環境への依存を排除）。
+# 外部リポジトリでは runtime checkout（.vibehawk-runtime/）内の本スクリプトが実行されるため、
+# git toplevel 基点だと include 解決先が対象リポジトリ側（= PR 著者支配下）になり、
+# include 先不在で破綻する上にプロンプトへの内容注入面にもなる（Issue #346）。
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # awk 一本でマーカー検出・パス検証・参照先読み出しを行う（shell.md: grep -e/sed -i を避ける、
 # パス文字列を shell に渡さずインジェクション余地を排除）。BSD/GNU 両対応のため sub/getline/~ のみ使用。

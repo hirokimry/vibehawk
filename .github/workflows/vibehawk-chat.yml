@@ -31,13 +31,37 @@ jobs:
         with:
           fetch-depth: 0
 
+      # === 外部リポジトリでの自己完結化（Issue #346） ===
+      # 本 workflow が参照するスクリプトは vibehawk リポジトリ本体にのみ存在する。
+      # 外部リポジトリ（npx vibehawk setup で配布された利用者リポジトリ）では、下の 2 step が
+      # リリースタグ pin 付きで vibehawk 本体を .vibehawk-runtime/ に checkout し、以降の全 step は
+      # ${VIBEHAWK_RUNTIME} prefix 経由でスクリプトを実行する。
+      # - ref は配布時に cli/install.js が v<バージョン>（リリースタグ）へ置換するプレースホルダ。
+      #   vibehawk 自リポジトリのコピー（dogfooding）では hashFiles guard により本 step が skip される
+      #   ため、未置換のまま残っているのが正しい状態（実タグへ「修正」しないこと）。
+      # - persist-credentials: false: runtime checkout は読み取り専用で後続の git 操作を伴わないため、
+      #   token を .vibehawk-runtime/.git/config に永続化しない（CISO 承認条件、Issue #346）。
+      - name: vibehawk ランタイムを取得（外部リポジトリのみ）
+        if: hashFiles('scripts/ci/vibehawk-chat/check-secrets.sh') == ''
+        uses: actions/checkout@v4
+        with:
+          repository: hirokimry/vibehawk
+          ref: __VIBEHAWK_REF__
+          path: .vibehawk-runtime
+          persist-credentials: false
+
+      # 自リポジトリ（スクリプトが手元に存在）では「.」、外部リポジトリでは「.vibehawk-runtime」を
+      # 以降の step が ${VIBEHAWK_RUNTIME} として参照する（GitHub 式の三項演算、shell 分岐なし）。
+      - name: vibehawk ランタイムディレクトリを決定
+        run: echo "VIBEHAWK_RUNTIME=${{ hashFiles('scripts/ci/vibehawk-chat/check-secrets.sh') != '' && '.' || '.vibehawk-runtime' }}" >> "$GITHUB_ENV"
+
       - name: secrets 検証
         id: check_secrets
         env:
           APP_ID: ${{ secrets.VIBEHAWK_APP_ID }}
           PRIVATE_KEY: ${{ secrets.VIBEHAWK_PRIVATE_KEY }}
           OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: bash scripts/ci/vibehawk-chat/check-secrets.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/check-secrets.sh"
 
       - name: secrets 未設定時のプレースホルダ投稿
         if: steps.check_secrets.outputs.ready != 'true'
@@ -45,7 +69,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           MISSING: ${{ steps.check_secrets.outputs.missing }}
-        run: bash scripts/ci/vibehawk-chat/post-placeholder.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-placeholder.sh"
 
       - name: vibehawk-for-<owner> App Installation Token を取得
         id: app-token
@@ -62,12 +86,12 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: bash scripts/ci/vibehawk-chat/fetch-thread-history.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/fetch-thread-history.sh"
 
       - name: vibehawk 設定読み込み（locale 等）
         id: vibehawk_config
         if: steps.check_secrets.outputs.ready == 'true'
-        run: bash scripts/ci/vibehawk-chat/load-config.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/load-config.sh"
 
       # CodeRabbit 指摘対応（Issue #289）: コマンドを 1 度だけ厳密 parse し、単一の command 出力で
       # 全 step を分岐させる。contains() の部分一致による会話文の誤発火を排除する。
@@ -76,7 +100,7 @@ jobs:
         if: steps.check_secrets.outputs.ready == 'true'
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
-        run: bash scripts/ci/vibehawk-chat/parse-command.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/parse-command.sh"
 
       # Issue #135: `@vibehawk review` 経路で必要な PR HEAD SHA を workflow step で取得する。
       # Claude prompt 内で `gh pr view` / `gh api` を呼ぶ必要をなくすことで、
@@ -95,7 +119,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
-        run: bash scripts/ci/vibehawk-chat/fetch-pr-head.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/fetch-pr-head.sh"
 
       # Issue #290（epic #289 子1）: `@vibehawk review` で前回レビュー以降のコミット差分の
       # 有無を判定する。差分なし（diff_exists=false）なら LLM 非実行の verdict 再評価経路へ、
@@ -112,7 +136,7 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
           OWNER: ${{ github.repository_owner }}
-        run: bash scripts/ci/vibehawk-chat/detect-review-diff.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/detect-review-diff.sh"
 
       # Issue #292（epic #289 子3）: `@vibehawk resolve` で vibehawk 自身の未解決 review thread を
       # 一括 resolved 化する（決定論的・LLM 非依存）。後続の reverdict が全解決→APPROVE に再評価する。
@@ -128,7 +152,7 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           OWNER: ${{ github.repository_owner }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: bash scripts/ci/vibehawk-chat/resolve-own-threads.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/resolve-own-threads.sh"
 
       # Issue #293（epic #289 子4）: `@vibehawk summary` で sticky walkthrough を LLM 非依存で
       # 再生成する。既存インライン指摘 + PR メタから build-sticky-body.sh | post-sticky-comment.sh
@@ -145,7 +169,7 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
           OWNER: ${{ github.repository_owner }}
-        run: bash scripts/ci/vibehawk-chat/regenerate-sticky.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/regenerate-sticky.sh"
 
       # Issue #294（epic #289 子5）: `@vibehawk help` で利用可能コマンド一覧を返す（表示のみ・LLM 不要）。
       # Issue でも PR でも動く（PR 限定にしない）。
@@ -157,7 +181,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: bash scripts/ci/vibehawk-chat/post-help.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-help.sh"
 
       # Issue #294: `@vibehawk configuration` で現在の vibehawk 設定（.vibehawk.yaml or default）を表示する。
       - name: 現在の設定を表示（@vibehawk configuration 経路、Issue #294）
@@ -168,7 +192,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: bash scripts/ci/vibehawk-chat/post-configuration.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-configuration.sh"
 
       # Issue #295（epic #289 子6）: `@vibehawk pause` / `resume` / `ignore` で自動レビュー状態を
       # GitHub マーカーコメントに保持する（外部 DB なし）。PR 限定（review thread を持つのは PR）。
@@ -186,7 +210,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           OWNER: ${{ github.repository_owner }}
           COMMENT_BODY: ${{ github.event.comment.body }}
-        run: bash scripts/ci/vibehawk-chat/set-autoreview-state.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/set-autoreview-state.sh"
 
       # Issue #290: 差分なしの再レビューでは claude-code-action（LLM）を実行しない（API コスト 0）。
       # chat モード（@vibehawk review でない通常メンション）は review_diff が未実行で
@@ -365,7 +389,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
-        run: bash scripts/ci/vibehawk-chat/post-bundled-review.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-bundled-review.sh"
 
       # Issue #290（epic #289 子1）: 差分なし経路の verdict 再評価。LLM を一切呼ばず、
       # vibehawk 自 Bot の未解決スレッド数だけで APPROVE / REQUEST_CHANGES を再 post する。
@@ -386,7 +410,7 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ steps.pr_head.outputs.head_sha }}
           OWNER: ${{ github.repository_owner }}
-        run: bash scripts/ci/vibehawk-chat/re-evaluate-verdict.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/re-evaluate-verdict.sh"
 
       # Issue #290: 差分なし経路で「指摘の再チェックのみ実施した」ことを利用者に通知する。
       - name: 差分なし → 再チェック通知コメント（@vibehawk review 経路、Issue #290）
@@ -400,7 +424,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           DECIDED_EVENT: ${{ steps.reverdict.outputs.decided_event }}
           UNRESOLVED_COUNT: ${{ steps.reverdict.outputs.unresolved_count }}
-        run: bash scripts/ci/vibehawk-chat/post-recheck-notice.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-recheck-notice.sh"
 
       # Issue #135: `@vibehawk review` コマンド経路で bundled review POST 後に
       # status check `vibehawk` を決定論的に更新する。vibehawk-review.yml の
@@ -423,4 +447,4 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
           OWNER: ${{ github.repository_owner }}
-        run: bash scripts/ci/vibehawk-chat/post-status-check.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-status-check.sh"
