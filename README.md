@@ -1,92 +1,50 @@
 # 🦅 vibehawk
 
-> 鷹のように観察し、追加課金ゼロで PR レビューを届ける OSS プロダクト
+> 追加課金ゼロで動く、merge gate 型の AI PR レビュアー
 
-**vibehawk** は **branch protection の required status check として動く AI PR レビュアー**であり、**追加課金ゼロの OSS**。
-GitHub の branch protection で `vibehawk` を required status check に追加するだけで、「AI レビューが OK を出さないと merge できない」merge gate を構築できる。
+branch protection の required status check として動き、「AI レビューが OK を出さないと merge できない」状態を作る OSS。
+利用者が既に契約している Claude Pro / Max の枠内だけで動作する。
 
 - 🛠️ **対象**: GitHub + Claude Pro / Max を利用する開発者・チーム
-- 🎯 **解く課題**: AI レビュー専用 SaaS の月額や LLM API の従量課金を払わずに merge gate を構築したい
-- ⚡ **最短導入**: `npx vibehawk setup` の 1 コマンドで App 作成から workflow PR まで完了
-
-利用者が既に契約している LLM サブスクリプション枠（Claude Pro / Max）の **内側だけ** で動作し、AI レビュー専用 SaaS の月額や LLM API の従量課金を発生させない。
-vibe シリーズ（vibecorp / vibemux / vibehawk）の一員として、CodeRabbit の「うさぎ（速さ・量）」に対し「鷹（精度・観察力・全体俯瞰）」のメタファーで対置する。
+- 🎯 **解く課題**: レビュー SaaS の月額や LLM API の従量課金なしで merge gate を作りたい
+- ⚡ **最短導入**: `npx vibehawk setup` の 1 コマンド
 
 > [!IMPORTANT]
-> このドキュメントは **外部 OSS 読者・導入開発者** 向けの入口ガイドです。
-> Mission / Vision / Value は [`MVV.md`](MVV.md)、詳細仕様は [`docs/specification.md`](docs/specification.md)、プロダクト方針は [`docs/POLICY.md`](docs/POLICY.md) を参照してください。
+> このドキュメントは導入開発者向けの入口ガイド。
+> 詳細は [`MVV.md`](MVV.md) / [`docs/specification.md`](docs/specification.md) / [`docs/POLICY.md`](docs/POLICY.md) を参照。
 
 ---
 
 ## ⚡ クイックスタート
 
-vibehawk は **利用者ごとに独立した GitHub App（`vibehawk-for-<owner>`）** を利用者本人が作成・運用する構造。
-投稿者は `vibehawk-for-<owner>[bot]` 名義になる。
-命名統制と非対称性の開示は [`docs/design-philosophy.md § 命名統制`](docs/design-philosophy.md) を参照。
-
 > **対応 OS**: macOS / Linux / Windows（PowerShell / CMD / Git Bash）
 
-### 使い方の全体像
+ゴールは **branch protection に `vibehawk` を required status check として追加すること**。
+`vibehawk` check は一度発火しないと branch protection の検索候補に出ないため、手順は次の 3 ステップになる。
 
-**vibehawk を使う = リポジトリの branch protection に `vibehawk` を required status check として追加すること** がゴール。
-これにより「AI レビューの conclusion が `success` でない PR は merge できない」merge gate が成立する。
-
-```text
-[ステップ 1]                  [ステップ 2]                  [ステップ 3 ← ゴール]
-App / secrets / workflow    →   初回 PR 発火で           →   branch protection に
-を準備（前提準備）              `vibehawk` check 発火           `vibehawk` を required 登録
-                                                              （vibehawk 利用の根幹）
-```
-
-GitHub の仕様上、`vibehawk` check が一度発火していないと branch protection の検索候補に出ない。
-そのためステップ 3 は初回 PR 発火後に実施する手順順序になる。
-
-### 1. App / secrets / workflow を準備（前提準備）
-
-対話型ウィザード `npx vibehawk setup` が全 7 ステップ（App 作成 → bot アイコン差し替え〔任意〕 → リポジトリインストール → 3 secrets 登録 → workflow PR）を 1 コマンドに集約する（Issue #91 / #249）:
+### 1. App / secrets / workflow を準備
 
 ```bash
 npx vibehawk setup --owner <your-github-username> --repo <owner>/<repo>
 ```
 
-各ステップで「指示表示 → ブラウザで操作 → Enter → CLI が `gh api` 検証 → OK で次 / NG なら原因表示してリトライ」の Enter ゲートで進行する。
-実行内容を事前確認したい場合は `--dry-run`:
+対話型ウィザードが App 作成 → リポジトリインストール → 3 secrets 登録 → workflow PR までを案内する（`--dry-run` で事前確認可）。
+vibehawk は利用者ごとに独立した GitHub App（`vibehawk-for-<owner>`）を利用者本人が作成・運用する構造で、投稿者は `vibehawk-for-<owner>[bot]` 名義になる。
 
-```bash
-npx vibehawk setup --owner alice --repo alice/my-app --dry-run
-```
-
-個別実行手順（`install` / `setup-token` サブコマンド、後方互換）は [`docs/specification.md § CLI 仕様 § CLI 利用フロー`](docs/specification.md) を参照。
-手順は App 作成 → App ID / Private Key 登録 → `claude setup-token` → OAuth Token 登録 → workflow 配置 → PR 提出 の 6 ステップ。
-
-App ID / OAuth Token は **OS ネイティブのクリップボードに stdin 経由でコピー**（Cmd+V / Ctrl+V で貼付可能）。
-OAuth Token の値はクリップボードコピー失敗時でも stdout に出さない（CISO Critical 条件、[`docs/SECURITY.md`](docs/SECURITY.md) 参照）。
-
-bot アイコン（🦅）は **App 作成直後のステップで差し替えできる**（任意）。
-GitHub App のロゴは Web UI（Display information）でのみ設定できる仕様のため、ウィザードが設定ページ URL と同梱ロゴ画像（`assets/vibehawk-logo.png`）の場所を表示する。
-利用者はその画像を 1 回ドラッグ&ドロップするだけで、GitHub のデフォルトアイコンから vibehawk ブランドアイコンに差し替えられる（差し替えなくても動作には影響しない、Issue #249）。
+App ID / OAuth Token は OS のクリップボード経由で受け渡し、OAuth Token の値はクリップボードコピー失敗時でも stdout に出さない（CISO Critical 条件、[`docs/SECURITY.md`](docs/SECURITY.md) 参照）。
+個別実行手順（`install` / `setup-token`）や bot アイコン差し替えは [`docs/specification.md § CLI 仕様`](docs/specification.md) を参照。
 
 ### 2. 初回 PR で `vibehawk` check を発火
 
-`.github/workflows/vibehawk-review.yml` 配置後、リポジトリに初回 PR を立てると workflow が起動し `vibehawk-for-<owner>[bot]` 名義でレビューを post する。
-同時に `check-runs` API で `vibehawk` という status check も post される（投稿者表示は `github-actions[bot]`、check の `name` は `vibehawk` 固定のため branch protection 設定上の識別性は維持される）。
+workflow 配置後に PR を立てると、`vibehawk-for-<owner>[bot]` 名義のレビューと `vibehawk` status check が post される。
 
-### 3. branch protection に `vibehawk` を required status check 登録（vibehawk 利用の根幹）
+### 3. branch protection に `vibehawk` を required 登録
 
-**このステップが vibehawk 利用の根幹**。
-前のステップはこのステップを機能させるための前提準備にすぎない。
-
-vibehawk は `POST /repos/X/Y/check-runs` API で `vibehawk` という名前の status check を post する（**merge gate の主軸**）。
-これに加えて approve / request_changes を **補助情報** として post するが、GitHub の構造仕様により bot review は branch protection の `required_approving_review_count` に count されない。
-merge gating を確実に効かせるには status check 側で required 指定が必須（CodeRabbit が `["CodeRabbit", "test"]` で行っているのと同じ仕組み、Issue #121-C1 / #138）。
-
-設定手順は `Settings → Branches → Branch protection rules` から `Require status checks to pass before merging` を ON にし、検索ボックスに `vibehawk` を入力して required に追加する。
-詳細: [`docs/specification.md § status check 仕様`](docs/specification.md)。
+`Settings → Branches → Branch protection rules` で `Require status checks to pass before merging` を ON にし、`vibehawk` を required に追加する。
 
 **この登録を行わない場合**、vibehawk は補助情報を post するのみで merge gate として機能しない（bot review は required reviewers に count されないため）。
-vibehawk を導入したら必ず本ステップまで完了させること。
 
-導入時のトラブル（連番衝突 / ポート占有 / secret 登録ミス / Private Key 取扱）は [`docs/troubleshooting.md`](docs/troubleshooting.md) を参照。
+導入時のトラブルは [`docs/troubleshooting.md`](docs/troubleshooting.md) を参照。
 
 ---
 
@@ -94,23 +52,22 @@ vibehawk を導入したら必ず本ステップまで完了させること。
 
 | できること | 動線 |
 |------------|------|
-| 🦅 AI レビューが通らないと merge できない merge gate | branch protection に `vibehawk` を required status check 登録 |
-| 💰 追加課金ゼロの AI PR レビュー | 利用者の Claude Pro / Max OAuth トークン内で完結（運営側サーバー・専用 DB なし） |
-| 🖥️ push 前に手元で CI と同一基準のレビュー | `npx vibehawk review` の 1 コマンド |
-| 🔄 指摘対応後の再レビュー | PR の "Re-request review" ボタン or `@vibehawk review` コメント |
-| 🤖 PR コメントでの対話 | `@vibehawk-for-<owner>` メンションで応答 |
+| ✅ AI レビューが通らないと merge できない merge gate | branch protection に `vibehawk` を required 登録 |
+| 💰 追加課金ゼロの AI PR レビュー | 利用者の Claude Pro / Max OAuth トークン内で完結 |
+| 🖥️ push 前に手元で CI と同一基準のレビュー | `npx vibehawk review` |
+| 🔄 指摘対応後の再レビュー | "Re-request review" ボタン or `@vibehawk review` コメント |
+| 💬 PR コメントでの対話 | `@vibehawk-for-<owner>` メンション |
 
 ---
 
 ## ✨ 何がユニークか
 
-- 🦅 **merge gate の主軸は status check**: approve / request_changes は補助情報として post するが、merge gating には使わない（Issue #138 / #121-C1）
-- 🧭 **人間 review 必須要件をバイパスしない**: GitHub の `required_approving_review_count`（人間レビュー必須件数）を AI で満たす設計を **意図的に避ける**。AI が approve を発行できる設計だと「人間レビュー必須要件のバイパス」と見なされる構造的リスクがあり、業界 4 社（Copilot / Gemini / Claude Code Review / Cursor BugBot）の AI レビューも同じ理由で APPROVE 経路を回避している
-- 🦅 **観察に徹する**: PR メタデータ（label / milestone 等）は書き換えず、レビュー & 修正提案のみを届ける（MVV Value 2「観察する、書き換えない」）
-- 🦅 **公式の道だけ歩く**: 裏 API・スクレイピングなし、claude-code-action 経由の OAuth 経路のみサポート
-- 🦅 **利用者ごと独立 App**: 集中 SaaS App の「1 鍵漏洩で全利用者波及」リスクを構造的に回避（経路 2 必須化）
+- **merge gate の主軸は status check**: approve / request_changes は補助情報として post し、merge gating には使わない
+- **人間 review 必須要件をバイパスしない**: `required_approving_review_count` を AI で満たす設計を意図的に避ける（主要な AI レビュー製品も同じ理由で APPROVE 経路を回避している）
+- **観察に徹する**: PR の label / milestone 等のメタデータは書き換えない（MVV Value 2「観察する、書き換えない」）
+- **利用者ごと独立 App**: 集中型 App の「1 鍵漏洩で全利用者波及」リスクを構造的に回避
 
-vibehawk は Anthropic が公式ドキュメントで案内している「自前 CI で gate する」設計思想（`claude-code-review` workflow）を OSS としてパッケージ化したもの（Anthropic 提携・公認製品ではない）。
+Anthropic が公式に案内する「自前 CI で gate する」設計思想を OSS としてパッケージ化したもの（Anthropic 提携・公認製品ではない）。
 詳細: [`docs/specification.md § status check 仕様`](docs/specification.md) / [`docs/design-philosophy.md`](docs/design-philosophy.md)。
 
 ---
@@ -119,139 +76,86 @@ vibehawk は Anthropic が公式ドキュメントで案内している「自前
 
 ### 💰 追加課金ゼロの条件
 
-vibehawk 開発者は GitHub Actions / Anthropic 双方の料金体系を制御できない。「追加課金ゼロ」は以下の条件下で成立する。
-
-#### 対象（追加課金ゼロが成立）
-
-| 条件 | 内容 |
+| 対象（成立する） | 対象外 |
 |------|------|
-| ✅ リポジトリ種別 | **Public リポジトリ** |
-| ✅ Anthropic 契約 | **Claude Pro / Max（既存サブスクリプション枠内）** |
-| ✅ GitHub Actions | **Public リポは無制限の無料枠** |
-
-#### 対象外
-
-| ケース | 内容 |
-|---|---|
-| ⚠️ Private リポジトリ | GitHub Actions minutes が従量課金（個人プラン: 月 2,000 分まで無料、超過時 GitHub の公式料金表に従って課金） |
-| ⚠️ Anthropic API Key（従量制）| vibehawk **側の運用ポリシー判断** として OAuth 経路（Claude Pro / Max）のみをサポート対象とし、API Key 経路は **サポート対象外**（claude-code-action 自体の仕様ではなく vibehawk 側の設計判断）|
-| ⚠️ Pro/Max の解約・値上げ | Anthropic 契約内容に従う |
+| ✅ Public リポジトリ | ⚠️ Private リポジトリ（GitHub Actions minutes が従量課金） |
+| ✅ Claude Pro / Max（既存サブスクリプション枠内） | ⚠️ Anthropic API Key 経路（**サポート対象外**、vibehawk 側の設計判断） |
+| ✅ GitHub Actions（Public リポは無料枠無制限） | ⚠️ Pro/Max の解約・値上げ（Anthropic 契約内容に従う） |
 
 「追加課金が発生する」（Private リポ / Pro/Max 値上げ）と「サポート対象外」（API Key 経路）は区別する。
-料金体系変更時の免責詳細は [`docs/POLICY.md § 免責条項（Issue #32）`](docs/POLICY.md) を参照。
+免責の詳細は [`docs/POLICY.md § 免責条項`](docs/POLICY.md) を参照。
 
 ### 🔐 利用者ごと独立 App（経路 2 必須化）
 
-vibehawk は経路 2（利用者ごとに独立した `vibehawk-for-<owner>` App + 3 secrets 手動登録）のみを OSS 利用者の標準導入経路として認める（Issue #61 / #72 / #74）。
-Private Key 漏洩影響を利用者本人のリポジトリ群に限定する構造で、集中 SaaS App の「1 鍵漏洩で全利用者波及」リスクを構造的に回避する。
-設計根拠と命名統制非対称性の率直開示は [`docs/design-philosophy.md § 認証経路の設計`](docs/design-philosophy.md) を参照。
+経路 2（独立 App + 3 secrets 手動登録）のみを OSS 利用者の標準導入経路として認める。
+Private Key 漏洩の影響を利用者本人のリポジトリ群に限定するための構造。設計根拠は [`docs/design-philosophy.md § 認証経路の設計`](docs/design-philosophy.md) を参照。
 
-### 📡 claude-code-action 経由の Anthropic 送信
+### 📡 Anthropic への送信
 
-利用者リポジトリの workflow は `anthropics/claude-code-action`（MIT、Anthropic 提供）を呼び出し、PR diff・コメント・コントリビューター情報を Anthropic の処理基盤に送信する。
-**セットアップ系 CLI（`install` / `setup` / `setup-token`）は Anthropic に通信しない**（localhost のみで完結）。
-ただし **`npx vibehawk review`（push 前ローカルレビュー）は手元の git diff を `claude -p` 経由で Anthropic に送信する**（利用者の Claude Pro / Max OAuth 契約内、後述「🖥️ push 前ローカルレビュー」参照）。
+workflow は `anthropics/claude-code-action` を呼び出し、PR diff・コメント・コントリビューター情報を Anthropic の処理基盤に送信する。
+セットアップ系 CLI（`install` / `setup` / `setup-token`）は Anthropic に通信しない。`npx vibehawk review` は手元の git diff を Anthropic に送信する。
 GDPR / 個人情報保護法対応の責任分界（利用者がデータ管理者、Anthropic がデータ処理者、vibehawk 開発者は処理者ではない）は [`docs/POLICY.md § PII 取扱い方針`](docs/POLICY.md) を参照。
 
 ---
 
 ## 🛠️ 機能一覧
 
-vibehawk は PR が作成・更新されるたびに以下を実行する:
-
 | 機能 | 何ができるか |
 |------|------------|
-| ✅ **required status check** | `vibehawk` 名で check run を post（**merge gate の主軸**、Issue #121-C1 / #138。投稿者: `github-actions[bot]`、認証: workflow デフォルト `GITHUB_TOKEN` + `permissions.checks: write`） |
-| 📝 **PR レビューサマリ** | PR 単位の総評コメントを review summary として `vibehawk-for-<owner>[bot]` 名義で投稿 |
-| 📌 **sticky walkthrough コメント** | PR ごとに 1 個固定の issue-comment を `<!-- vibehawk:sticky -->` マーカーで識別し、push のたびに `PATCH` で同じコメントを更新（Issue #219、CodeRabbit 模倣）。最新の検出結果（severity 集計表 + 主要指摘 + Walkthrough）を 1 箇所で掴める。**skip-mark で paths-ignore マッチ時も「⏭️ レビュー対象なし」サマリで sticky を更新する**（案 B 採用、古い状態の sticky 残置を防ぐ） |
-| 💬 **インライン指摘** | 行レベルの severity 付きコメント（CodeRabbit 互換 5 段階: 🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info） |
-| ℹ️ **approve / request_changes** | **補助情報** として post（merge gating には使わない、`required_approving_review_count` バイパス回避のため） |
-| 🤖 **@mention チャット応答** | PR コメントで `@vibehawk-for-<owner>` メンションすると応答 |
-| 🚫 **メタデータ非操作** | PR の label / milestone / description / assignee 等は変更しない（MVV Value 2「観察する、書き換えない」） |
-| 🤝 **指摘・強制しない設計** | severity を付けるが、直すか流すかの裁量は利用者に委ねる（MVV Value 3「指摘する、強制しない」） |
-| 🔐 **CLI が secret を書き込まない設計** | 利用者が GitHub Settings UI で 3 secrets（`VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`）を手動登録（Issue #72、判断根拠は [`docs/secrets-handling.md`](docs/secrets-handling.md) 参照） |
+| ✅ required status check | `vibehawk` 名で check run を post（**merge gate の主軸**） |
+| 📝 PR レビューサマリ | PR 単位の総評を `vibehawk-for-<owner>[bot]` 名義で投稿 |
+| 📌 sticky walkthrough | PR ごとに 1 個固定のサマリコメントを push のたびに更新 |
+| 💬 インライン指摘 | 行レベルの severity 付きコメント（🔴 Critical / 🟠 Major / 🟡 Minor / 🔵 Trivial / ⚪ Info の 5 段階） |
+| ℹ️ approve / request_changes | 補助情報として post（merge gating には使わない） |
+| 🤖 @mention チャット応答 | PR コメントでのメンションに応答 |
+| 🚫 メタデータ非操作 | label / milestone / description / assignee 等は変更しない |
+| 🤝 指摘・強制しない | severity は付けるが、直すか流すかは利用者の裁量（MVV Value 3） |
+| 🔐 CLI が secret を書き込まない | 3 secrets（`VIBEHAWK_APP_ID` / `VIBEHAWK_PRIVATE_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`）は利用者が GitHub Settings UI で手動登録（[`docs/secrets-handling.md`](docs/secrets-handling.md)） |
 
-機能仕様の詳細は [`docs/specification.md`](docs/specification.md)、PR レビュー設計の根拠と vibecorp との関係は [`docs/design-philosophy.md`](docs/design-philosophy.md) を参照。
+機能仕様の詳細は [`docs/specification.md`](docs/specification.md) を参照。
 
-### 🔄 再レビューを依頼する（Issue #135）
+### 🔄 再レビューを依頼する
 
-vibehawk が一度 `failure` を post すると、利用者が指摘に対応しても再レビュー無しに status check の conclusion を更新できない。
-その結果、merge が永久にブロックされる UX 欠陥がある（Issue #135 / PR #133）。
-これを解消する正規導線として、以下 2 経路で vibehawk を再発火できる:
+status check が `failure` のまま止まったら、以下のどちらかで最新差分の再レビューを発火できる（空コミット push は不要）。
 
 | 経路 | 操作 |
 |------|------|
-| 1. **"Re-request review" ボタン** | PR ページの Reviewers セクションから vibehawk-for-\<owner\> 横の 🔄 ボタンを押す → `pull_request: review_requested` トリガーで `vibehawk-review.yml` が再発火し、最新差分でレビュー＋status check を更新する |
-| 2. **`@vibehawk review` コメント** | PR コメントで `@vibehawk review` と書いて投稿 → `vibehawk-chat.yml` が検知し、bundled review POST と status check 更新を実行する |
+| "Re-request review" ボタン | PR の Reviewers セクションで vibehawk-for-\<owner\> 横の 🔄 を押す |
+| `@vibehawk review` コメント | PR コメントに `@vibehawk review` と書く |
 
-どちらの経路でも status check `vibehawk` の conclusion が最新差分に基づいて再評価される。空コミット push という workaround は不要。
+> **利用者向けアップデート手順**: 導入済みリポジトリは `templates/.github/workflows/` 配下の最新 workflow を `.github/workflows/` に上書きコピーして PR を出す（再 install・追加 secret 不要）。
 
-> **なぜ resolve 自動反応ではなくコマンド駆動か**: GitHub Actions は resolve イベント（`pull_request_review_thread`）を `on:` トリガーにできないため、`@vibehawk` コマンド駆動で再現している。設計判断の詳細は [`docs/design-philosophy.md`](docs/design-philosophy.md)「@vibehawk コマンド体系の設計（epic #289 で確定）」を参照。
-
-> **利用者向けアップデート手順**: 既に vibehawk を導入済みのリポジトリは、`templates/.github/workflows/vibehawk-review.yml` および `templates/.github/workflows/vibehawk-chat.yml` の最新版を `.github/workflows/` に上書きコピーして PR を出すこと（再 install は不要、追加 secret 設定も不要）。
-
-### 👤 メンテナー向け運用
-
-利用者がリポジトリのメンテナー（OWNER）として vibehawk を運用する場合、自身の PR ごとに claude-code-action が起動して Claude Pro / Max 枠を消費する dogfooding 構造となる。
-OSS 開発活発化時に個人契約枠がボトルネック化する懸念がある。
-`if:` 条件による PR 除外等の推奨設定は [`docs/maintainer-quota-policy.md`](docs/maintainer-quota-policy.md) を参照。
+メンテナー自身の PR でも Claude Pro / Max 枠を消費するため、契約枠の保護設定は [`docs/maintainer-quota-policy.md`](docs/maintainer-quota-policy.md) を参照。
 
 ### 🖥️ push 前ローカルレビュー（`npx vibehawk review`）
 
-push する前に、手元の git diff を **CI と同一基準**（severity 5 段階・観点）でレビューできる。
-**read-only**（指摘のみ・自動修正なし）で、利用者の **Claude Pro / Max 枠**で完結するため**追加課金ゼロ**。
+push 前に手元の git diff を CI と同一基準でレビューできる。read-only（指摘のみ・自動修正なし）で、Claude Pro / Max 枠内で完結する。
 
 ```bash
-npx vibehawk review                       # working tree（staged + unstaged）をレビュー
-npx vibehawk review --staged              # staged の変更だけをレビュー
-npx vibehawk review --base main           # main からの差分（main...HEAD）をレビュー
-npx vibehawk review --output json         # JSON で出力（CI / スクリプト連携用）
-npx vibehawk review --fail-on major       # Major 以上の指摘があれば終了コード 1（pre-commit / CI 用）
+npx vibehawk review                       # working tree をレビュー
+npx vibehawk review --staged              # staged の変更だけ
+npx vibehawk review --base main           # main からの差分
+npx vibehawk review --output json         # JSON 出力
+npx vibehawk review --fail-on major       # Major 以上で終了コード 1（pre-commit / CI 用）
 ```
-
-#### 主要フラグ
 
 | フラグ | 動作 |
 |---|---|
-| （なし） | working tree（staged + unstaged）の diff をレビュー |
 | `--staged` | staged の変更だけをレビュー |
-| `--base <ref>` | `<ref>...HEAD` の差分をレビュー（CI の PR 差分と同義） |
-| `--intent <label>` | 重視軸を指定（`feature` / `bugfix` / `performance` / `security` / `refactor` / `infra` / `docs`。未指定は Critical / Major 主眼） |
+| `--base <ref>` | `<ref>...HEAD` の差分をレビュー |
+| `--intent <label>` | 重視軸を指定（`feature` / `bugfix` / `security` 等 7 種） |
 | `--output text\|json` | 出力形式（既定 `text`） |
-| `--fail-on <severity>` | 該当 severity 以上の指摘で終了コード 1（既定は **常に 0 = 止めない**） |
+| `--fail-on <severity>` | 該当 severity 以上で終了コード 1（既定は常に 0 = 止めない） |
 
-#### 前提（初回のみ）
-
-`npx vibehawk review` は利用者ローカルの **Claude Code（`claude`）** を使う。
-
-1. **Claude Code をインストール**: `npm install -g @anthropic-ai/claude-code`
-2. **ログイン（OAuth）**: `npx vibehawk setup-token` の案内に従って `claude setup-token` でログインする
-3. **レビュー実行**: `npx vibehawk review` を実行する
+初回のみ Claude Code のインストールと OAuth ログイン（`npx vibehawk setup-token` の案内に従う）が必要。
 
 > [!NOTE]
 > `ANTHROPIC_API_KEY` が設定されていると、追加課金（API 従量）を避けるため **review は実行を中止**する。
-> `unset ANTHROPIC_API_KEY` で解除すると OAuth（Pro / Max 枠）経路に戻る。
-> 詳細は [`docs/troubleshooting.md`](docs/troubleshooting.md) を参照。
-
-#### pre-commit / CI に組み込む
-
-既定では指摘を出しても**終了コード 0**（Value 3「指摘する、強制しない」）。
-ゲートにしたい場合だけ `--fail-on` でオプトインする。
-
-```yaml
-# .pre-commit-config.yaml の例（Major 以上を検出したらコミットを止める）
-- repo: local
-  hooks:
-    - id: vibehawk-review
-      name: vibehawk review (staged)
-      entry: npx vibehawk review --staged --fail-on major
-      language: system
-      pass_filenames: false
-```
+> `unset ANTHROPIC_API_KEY` で OAuth 経路に戻る（[`docs/troubleshooting.md`](docs/troubleshooting.md)）。
 
 > [!IMPORTANT]
-> `npx vibehawk review` は手元の git diff を `claude -p` 経由で Anthropic に送信する。
-> 機密を含む場合は `--staged` や `.vibehawk.yaml` の `path_filters` で送信範囲を絞ること（[`docs/POLICY.md`](docs/POLICY.md) 参照）。
+> `npx vibehawk review` は手元の git diff を Anthropic に送信する。
+> 機密を含む場合は `--staged` や `.vibehawk.yaml` の `path_filters` で送信範囲を絞ること（[`docs/POLICY.md`](docs/POLICY.md)）。
 
 ---
 
@@ -260,26 +164,22 @@ npx vibehawk review --fail-on major       # Major 以上の指摘があれば終
 | 知りたいこと | 参照先 |
 |------------|-------|
 | 🌟 Mission / Vision / Value（編集禁止） | [`MVV.md`](MVV.md) |
-| 🧩 機能仕様 / CLI 仕様 / アーキテクチャ / status check 仕様（Issue #121-C1） | [`docs/specification.md`](docs/specification.md) |
-| 📜 プロダクト方針 / 法務・コンプライアンス / 免責条項（Issue #32）/ PII / 商標使用許諾（Issue #33） | [`docs/POLICY.md`](docs/POLICY.md) |
-| 🎨 設計哲学 / 認証経路の設計（経路 2 必須化）/ 命名統制（Issue #25） | [`docs/design-philosophy.md`](docs/design-philosophy.md) |
-| 🔒 認証・認可 / Private Key の CISO Critical 条件 / Manifest Flow セキュリティ対策（Issue #59） | [`docs/SECURITY.md`](docs/SECURITY.md) |
-| 🔑 認証情報配布方式の判断履歴（CLI が secret を一切 touch しない設計、Issue #7 / #60 関連） | [`docs/secrets-handling.md`](docs/secrets-handling.md) |
-| 🛟 命名統制衝突 / ポート占有 / secret 登録ミス / Private Key 取扱 | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
-| 👤 メンテナー個人契約枠の保護ポリシー | [`docs/maintainer-quota-policy.md`](docs/maintainer-quota-policy.md) |
-| 💰 コスト設計 / PR サイズ段階的劣化 | [`docs/cost-analysis.md`](docs/cost-analysis.md) |
-| 🔍 外部依存（claude-code-action 等）の規約整合監査 | [`docs/external-dependency-audit.md`](docs/external-dependency-audit.md) |
-| 🤖 vibehawk が呼び出す Anthropic 公式 Action（MIT） | [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) |
+| 🧩 機能仕様 / CLI 仕様 / status check 仕様 | [`docs/specification.md`](docs/specification.md) |
+| 📜 プロダクト方針 / 免責 / PII / 商標 | [`docs/POLICY.md`](docs/POLICY.md) |
+| 🎨 設計哲学 / 認証経路 / 命名統制 | [`docs/design-philosophy.md`](docs/design-philosophy.md) |
+| 🔒 認証・認可 / Private Key の取扱 | [`docs/SECURITY.md`](docs/SECURITY.md) |
+| 🔑 認証情報配布方式の判断履歴 | [`docs/secrets-handling.md`](docs/secrets-handling.md) |
+| 🛟 トラブルシューティング | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
+| 👤 メンテナー契約枠の保護 | [`docs/maintainer-quota-policy.md`](docs/maintainer-quota-policy.md) |
+| 💰 コスト設計 | [`docs/cost-analysis.md`](docs/cost-analysis.md) |
+| 🔍 外部依存の規約整合監査 | [`docs/external-dependency-audit.md`](docs/external-dependency-audit.md) |
+| 🤖 呼び出す Anthropic 公式 Action（MIT） | [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) |
 
 ---
 
 ## 🎨 設計思想
 
-詳細は [`docs/design-philosophy.md`](docs/design-philosophy.md) を参照。主要な設計判断:
-
-- **人間 review 必須要件をバイパスしない** — merge gate の主軸を status check に置き、AI approve を merge gating に使わない理由（「✨ 何がユニークか」参照、Issue #138 / #121-C1）
-- **認証経路の設計（経路 2 必須化）** — 利用者ごと独立 App を標準導入経路とする判断根拠（[`docs/design-philosophy.md § 認証経路の設計`](docs/design-philosophy.md)）
-- **命名統制** — `vibehawk-for-<owner>` 命名と非対称性の率直開示（[`docs/design-philosophy.md § 命名統制`](docs/design-philosophy.md)）
+merge gate を status check に置く理由、AI approve を使わない理由、認証経路・命名統制の判断根拠は [`docs/design-philosophy.md`](docs/design-philosophy.md) にまとめている。
 
 ---
 
@@ -288,5 +188,5 @@ npx vibehawk review --fail-on major       # Major 以上の指摘があれば終
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 - **ライセンス**: [MIT](LICENSE)
-- **ステータス**: 開発中（npm で [`vibehawk`](https://www.npmjs.com/package/vibehawk) として公開中、リリースは OIDC trusted publisher 経由で自動 publish）。Issue #7 実行基盤、#22 OSS 配布可能化、#24 `npx vibehawk install` 基盤、#91 `setup` ウィザード（1 コマンド導入）、#121-C1 required status check、#138 status check 主軸 positioning、#329 push 前ローカルレビュー CLI、#333 リリースパイプライン自動化を順次積み上げ
-- **免責**: vibehawk は MIT のもと **無保証** で提供。CLI 配布物の利用は **すべてご利用者の自己責任**。免責範囲（スクリプト誤動作 / GitHub App 作成失敗 / クリップボード経由のトークン受け渡し / secrets 登録運用 / GitHub・Anthropic 側の障害）の詳細は [`docs/POLICY.md § 免責条項（Issue #32）`](docs/POLICY.md) を参照
+- **ステータス**: 開発中。npm で [`vibehawk`](https://www.npmjs.com/package/vibehawk) として公開中（リリースは OIDC trusted publisher 経由で自動 publish）
+- **免責**: MIT のもと **無保証** で提供。CLI 配布物の利用はすべてご利用者の自己責任。免責範囲の詳細は [`docs/POLICY.md § 免責条項`](docs/POLICY.md) を参照
