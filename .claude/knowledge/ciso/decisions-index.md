@@ -4,6 +4,7 @@ CISO の判断記録の目次。詳細は各アーカイブファイル（`decis
 
 ## エントリ
 
+- 2026-06-13 — Issue #346 / PR #348 配布 workflow 自己完結化（runtime checkout） — mutable タグ pin は Major（3/3 一致）→ v* タグ保護 ruleset（CEO 操作）＋ SHA pin 恒久対応（#347）。persist-credentials: false 必須。hashFiles guard は増分リスクゼロ。条件付き承認。運用知見: リポジトリ設定変更はエージェント自律対象外
 - 2026-06-12 — プレイブック新設: playbooks/docs-restructure-review.md — docs 再構成レビュー定石（grep 保全検証・偽陽性判定フロー）を汎用化。PR #345 実績から抽出
 - 2026-06-12 — Issue #344 README.md 再構成（intent/docs・挙動不変） — analyst 分裂だが M-1 は Minor 相当（既存配置の問題・今回差分で局所化進まず）。CISO Critical 条件 5 項目全保全確認。脆弱性なし・無条件承認
 - 2026-06-12 — Issue #341 .claude/.gitignore skills 例外化 + release SKILL.md 新規 — 両 Major を COO 実機確認（diagnose-guard パスパターン deny）で棄却。脆弱性なし・承認。git check-ignore exit 128 ガード追加を Minor 推奨

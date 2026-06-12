@@ -122,6 +122,23 @@ id="$(printf '%s' "$(basename "$root")" | tr -cs 'A-Za-z0-9._-' '_')"
 
 ファイル名サニタイズや ID 生成など、コマンド置換の出力を `tr` に渡すパターン全般に適用する。
 
+## 📍 同梱ファイルの参照はスクリプト自身の位置（`BASH_SOURCE`）基点にする
+
+スクリプトが自リポジトリ内の同梱ファイル（プロンプト・テンプレート・include 先等）を参照する場合、CWD 相対や `git rev-parse --show-toplevel` 基点で解決しない。
+
+- 配布先リポジトリでサブディレクトリ checkout（例: `.vibehawk-runtime/`）として実行されると、CWD / git toplevel は **対象リポジトリ側** を指し、参照先不在で破綻する
+- さらに解決先が PR 著者支配下のリポジトリになるため、プロンプト等への内容注入面にもなる（Issue #346）
+
+```bash
+# 🔴 NG: CWD / git toplevel 基点（実行場所・git 環境に依存）
+PROMPT_FILE="${PROMPT_FILE:-.github/prompts/review.md}"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# 🟢 OK: スクリプト自身の位置を基点に解決（実行場所に非依存）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROMPT_FILE="${PROMPT_FILE:-${SCRIPT_DIR}/../prompts/review.md}"
+```
+
 ## 🔗 関連ルール
 
 - workflow yaml のインラインシェル切り出しルール: `workflow-shell.md`

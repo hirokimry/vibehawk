@@ -5,6 +5,7 @@
 
 ## エントリ
 
+- 2026-06-13 — Issue #346 / PR #348: 配布 workflow 自己完結化 — hashFiles guard + pin 付き runtime checkout + GITHUB_ENV 三項演算の標準パターン確定・スクリプト内参照は SCRIPT_DIR 基点（shell.md 追記）・完全一致 dogfooding は外部破綻を隠す
 - 2026-06-12 — PR #345: README 大規模再構成 — 重要フレーズ grep 検証の標準化・内部リンク外部URL除外パターン・見出し順序機械検証を docs 再構成 PR の標準観点として確定
 - 2026-06-07 — ローカルレビュー CLI 設計議論 — `claude -p` 呼び出し推奨（MVV整合）・プロンプト共通化先行が必須・CPO/CISO/CFO委任点3件特定
 - 2026-05-24 — Issue #222 / PR #223: APPROVE 時レビュー抑制 — validation 通過後の後段 payload 上書きパターン採用・jq+mv の && 連結で payload 破損防止

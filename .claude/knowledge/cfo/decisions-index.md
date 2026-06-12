@@ -4,6 +4,7 @@ CFO の判断記録の目次。詳細は `decisions/{YYYY-QN}.md` を参照。
 
 ## エントリ（新しい順）
 
+- 2026-06-13 — Issue #346 / PR #348 配布 workflow 自己完結化 — pin 付き 2nd checkout をコスト中立で承認（LLM 経路不変・追加は checkout 数秒の Actions minutes のみ）。v0.2.3 のクォータ消費正常化とタグ pin によるコスト予測可能性改善を記録。新アーキテクチャ PR は cost-analysis.md への CFO レビュー記録をセットにする MUST を確立。
 - 2026-06-12 — Issue #344 README.md 再構成 — 経理チーム全員一致・コスト面で問題なし。課金記述 6 件の同義保全を確認。Low 観察 2 件は多数決不成立で却下。承認。
 - 2026-05-08 — ship #6 知見の CFO 管轄反映 — docs/cost-analysis.md は既反映のため追加不要と判断。CFO ナレッジ初回作成。
 
