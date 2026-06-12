@@ -5,6 +5,8 @@
 
 ## エントリ
 
+- 2026-06-12 — PR #345: README 大規模再構成 — 重要フレーズ grep 検証の標準化・内部リンク外部URL除外パターン・見出し順序機械検証を docs 再構成 PR の標準観点として確定
+- 2026-06-07 — ローカルレビュー CLI 設計議論 — `claude -p` 呼び出し推奨（MVV整合）・プロンプト共通化先行が必須・CPO/CISO/CFO委任点3件特定
 - 2026-05-24 — Issue #222 / PR #223: APPROVE 時レビュー抑制 — validation 通過後の後段 payload 上書きパターン採用・jq+mv の && 連結で payload 破損防止
 - 2026-05-14 — PR #113: formatDuration 境界値処理と型チェックテスト — toFixed("60.0")繰り上げパターン・境界値3値必須・dry-run戻り値の型チェックアサーション追加
 - 2026-05-08 — Issue #6 / PR #16: ship #6 知見 — specification.md(What)/design-philosophy.md(Why) 責務確定・ai-organization.md 配置は CEO 意図優先（技術的負債として負債記録）・shallow clone 対策は利用者側要件として specification に明示
