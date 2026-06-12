@@ -131,6 +131,17 @@ reviews:
 
 ツール側が持つのは「PR サイズ閾値」のみ。残りは外部委譲する。
 
+### 🏗️ pin 付き 2nd checkout ランタイム取得（Issue #346 / v0.2.3、CFO レビュー記録）
+
+外部リポジトリ向け配布 workflow が実行時に vibehawk 本体をリリースタグ pin 付きで checkout する新規アーキテクチャの CFO レビュー記録（「新規アーキテクチャ採用時は CFO レビューを通すこと」MUST 準拠）。
+
+- **LLM 経路不変**: claude-code-action の呼び出し回数・プロンプト構成は不変。認証は既契約の OAuth（`CLAUDE_CODE_OAUTH_TOKEN`）維持 → 「利用者側コスト増加ゼロ」MUST を充足する。
+- **追加コストは runtime checkout 1 step の Actions minutes のみ**: shallow clone 数秒。Public リポジトリは無料、Private でも秒単位で実質無視できる。
+- **v0.2.3 で外部リポジトリのクォータ消費が本来動作として開始される**: v0.2.2 以前は file not found で全 run 失敗 = 消費ゼロだったため見かけ上の消費増が起きるが、これは不具合修正による正常消費の開始でありコスト増ではない。
+- **dogfooding は hashFiles guard で checkout skip**: vibehawk 自リポジトリのコストは完全に不変。
+
+CFO 結論: pin 付き 2nd checkout は**コスト中立**（むしろプロンプト取得元がバージョン固定になり消費が予測可能になる改善）。**承認**。
+
 ### PR ごとの追加トークン消費（Issue #229: pre_merge_checks 追加）
 
 Issue #229 で Claude prompt schema に `pre_merge_checks: {linked_issues_check, out_of_scope_check}` を必須フィールドとして追加した。出力側のトークン増分は **約 60〜120 トークン / PR**（2 オブジェクト × explanation 30-60 トークン）で軽微。Title / Description / Docstring の 3 項目は workflow step (grep + 言語ツール) で取得するため Claude API への影響はゼロ。

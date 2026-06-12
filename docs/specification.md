@@ -128,7 +128,7 @@ CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから
 #### 🔖 タグ運用の前提（残余リスクの記録）
 
 - 既配布の外部リポジトリ workflow は `v<X.Y.Z>` タグと `hirokimry/vibehawk` というリポジトリ名に依存する。**リリースタグの削除・force-update・リポジトリ rename は既配布の全外部リポジトリのレビューを停止または改変する**ため行わない（タグ不変・リポジトリ名維持の運用方針）。
-- タグは git の仕様上 force-update 可能であり、vibehawk リポジトリの write 権限が侵害された場合に既配布 workflow へ波及し得る（残余リスク）。`v*` タグの tag protection ruleset 設定と commit SHA pin 化は別 Issue で扱う。
+- タグは git の仕様上 force-update 可能であり、vibehawk リポジトリの write 権限が侵害された場合に既配布 workflow へ波及し得る（残余リスク）。`v*` タグの update / delete 禁止 ruleset 設定（リポジトリ設定、CEO 操作）と commit SHA pin 化（恒久対応）は #347 で扱う。詳細な信頼境界の記録は `SECURITY.md § 配布 workflow のランタイム取得の信頼境界` を参照。
 
 ### メタデータ仕様
 
