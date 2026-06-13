@@ -16,9 +16,13 @@ const TIMEOUT_MS = 5 * 60 * 1000;
 const WORKFLOW_BRANCH = 'vibehawk/install-workflow';
 const WORKFLOW_PATH = '.github/workflows/vibehawk-review.yml';
 // Issue #11: チャット応答 workflow も同時配置
+// Issue #350: skip-mark も配置。paths-ignore 該当 PR（lockfile のみ変更等）で required status
+//   check `vibehawk` を success post する役割。未配布だと外部リポジトリの lockfile-only PR が
+//   `vibehawk` 永久未投稿で BLOCKED になるため、配布対象に含める。
 const WORKFLOWS = [
   '.github/workflows/vibehawk-review.yml',
   '.github/workflows/vibehawk-chat.yml',
+  '.github/workflows/vibehawk-review-skip-mark.yml',
 ];
 
 // Issue #346: テンプレート内のランタイム pin プレースホルダ。配布時に自パッケージの

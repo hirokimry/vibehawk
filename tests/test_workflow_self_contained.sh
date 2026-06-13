@@ -28,6 +28,7 @@ fail() {
 TEMPLATES=(
   "templates/.github/workflows/vibehawk-review.yml"
   "templates/.github/workflows/vibehawk-chat.yml"
+  "templates/.github/workflows/vibehawk-review-skip-mark.yml"
 )
 
 for wf in "${TEMPLATES[@]}"; do
@@ -53,7 +54,9 @@ for wf in "${TEMPLATES[@]}"; do
   fi
 
   # (d) hashFiles guard と GITHUB_ENV へのランタイムディレクトリ書込 step が存在する
-  if grep -q -E "hashFiles\('scripts/ci/vibehawk-(review|chat)/check-secrets\.sh'\) == ''" "$wf" \
+  # guard ファイルは workflow ごとに異なる（review/chat は check-secrets.sh、
+  # skip-mark は classify-paths-ignore.sh、Issue #350）。
+  if grep -q -E "hashFiles\('scripts/ci/vibehawk-(review|chat|review-skip-mark)/(check-secrets|classify-paths-ignore)\.sh'\) == ''" "$wf" \
     && grep -q -F 'VIBEHAWK_RUNTIME=' "$wf" \
     && grep -q -F '>> "$GITHUB_ENV"' "$wf"; then
     pass "${wf}: hashFiles guard と VIBEHAWK_RUNTIME 解決 step が存在する"
@@ -117,7 +120,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for guard in "scripts/ci/vibehawk-review/check-secrets.sh" "scripts/ci/vibehawk-chat/check-secrets.sh"; do
+for guard in "scripts/ci/vibehawk-review/check-secrets.sh" "scripts/ci/vibehawk-chat/check-secrets.sh" "scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh"; do
   external_resolved="$(resolve_runtime "$EXTERNAL_ROOT" "$guard")"
   self_resolved="$(resolve_runtime "$REPO_ROOT" "$guard")"
   if [[ "$external_resolved" == ".vibehawk-runtime" ]] && [[ "$self_resolved" == "." ]]; then

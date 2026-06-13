@@ -26,9 +26,15 @@
 # セキュリティ境界（CISO 承認済み）:
 #   - Fork PR 除外（`head.repo.full_name == github.repository`）
 #   - draft skip（`draft == false`）
-#   - 最小権限（`checks: write` / `pull-requests: read` / `contents: read` のみ）
+#   - 最小権限（`checks: write` / `issues: write`（Issue #219 sticky upsert 用） / `pull-requests: read` / `contents: read`）
 #   - 禁止権限不在（autonomous-restrictions §6）
 #   - GITHUB_TOKEN のみ使用（App Installation Token 不要）
+#
+# 外部リポジトリでの自己完結化（Issue #350、#346 と同方式）:
+#   本 workflow が参照するスクリプトは vibehawk リポジトリ本体にのみ存在する。npx vibehawk setup で
+#   配布された外部リポジトリでは、リリースタグ pin 付きで vibehawk 本体を .vibehawk-runtime/ に
+#   checkout し、以降の全 step は ${VIBEHAWK_RUNTIME} prefix 経由でスクリプトを実行する。
+#   未配布だと外部リポジトリの lockfile-only PR が `vibehawk` 永久未投稿で BLOCKED になる。
 
 name: vibehawk PR skip mark
 
@@ -51,13 +57,35 @@ jobs:
     if: ${{ github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
-      - name: リポジトリチェックアウト（scripts/ci/ 配下を runner に展開する）
+      - name: リポジトリチェックアウト（自リポジトリでは scripts/ci/ を runner に展開する）
         uses: actions/checkout@v4
         with:
           # persist-credentials: false: checkout の token を workspace の .git/config に残さない。
-          #   skip-mark は scripts/ci/ 配下のスクリプトを展開するだけで git push/fetch を行わず、
-          #   gh は GH_TOKEN env を使うため永続 credential に依存しない（Issue #349）。
+          #   skip-mark は git push/fetch を行わず gh は GH_TOKEN env を使うため永続 credential に
+          #   依存しない（Issue #349）。外部リポジトリではこの checkout に scripts/ci/ は含まれず、
+          #   直後の runtime checkout が .vibehawk-runtime/ に展開する。
           persist-credentials: false
+
+      # === 外部リポジトリでの自己完結化（Issue #350、#346 と同方式） ===
+      # - guard は skip-mark 固有の classify-paths-ignore.sh の存在で自リポジトリ / 外部を判定する。
+      # - ref は配布時に cli/install.js が v<バージョン>（リリースタグ）へ置換するプレースホルダ。
+      #   vibehawk 自リポジトリのコピー（dogfooding）では hashFiles guard により本 step が skip される
+      #   ため、未置換のまま残っているのが正しい状態（実タグへ「修正」しないこと）。
+      # - persist-credentials: false: runtime checkout は読み取り専用で後続の git 操作を伴わないため、
+      #   token を .vibehawk-runtime/.git/config に永続化しない（CISO 承認条件、Issue #346）。
+      - name: vibehawk ランタイムを取得（外部リポジトリのみ）
+        if: hashFiles('scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh') == ''
+        uses: actions/checkout@v4
+        with:
+          repository: hirokimry/vibehawk
+          ref: __VIBEHAWK_REF__
+          path: .vibehawk-runtime
+          persist-credentials: false
+
+      # 自リポジトリ（スクリプトが手元に存在）では「.」、外部リポジトリでは「.vibehawk-runtime」を
+      # 以降の step が ${VIBEHAWK_RUNTIME} として参照する（GitHub 式の三項演算、shell 分岐なし）。
+      - name: vibehawk ランタイムディレクトリを決定
+        run: echo "VIBEHAWK_RUNTIME=${{ hashFiles('scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh') != '' && '.' || '.vibehawk-runtime' }}" >> "$GITHUB_ENV"
 
       - name: 変更ファイル一覧の取得
         id: files
@@ -65,13 +93,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-        run: bash scripts/ci/vibehawk-review-skip-mark/list-changed-files.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review-skip-mark/list-changed-files.sh"
 
       - name: paths-ignore 全マッチ判定
         id: classify
         env:
           FILE_COUNT: ${{ steps.files.outputs.count }}
-        run: bash scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh"
 
       - name: vibehawk status check を success で post（paths-ignore 全マッチ時のみ）
         if: steps.classify.outputs.is_skip == 'true'
@@ -79,7 +107,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
-        run: bash scripts/ci/vibehawk-review-skip-mark/post-skip-check-run.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review-skip-mark/post-skip-check-run.sh"
 
       - name: vibehawk sticky walkthrough コメント upsert（skip 時「レビュー対象なし」表示、Issue #219）
         # 案 B 採用: skip 時も sticky を「レビュー対象なし」サマリで更新する。
@@ -99,4 +127,4 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_STATUS: skipped
         # 詳細: scripts/ci/vibehawk-review/build-sticky-body.sh + post-sticky-comment.sh（Issue #219）
-        run: bash scripts/ci/vibehawk-review/build-sticky-body.sh | bash scripts/ci/vibehawk-review/post-sticky-comment.sh
+        run: bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/build-sticky-body.sh" | bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review/post-sticky-comment.sh"

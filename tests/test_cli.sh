@@ -634,10 +634,11 @@ if echo "$dry_run_repo_output" | grep -F "workflow PR 作成先: alice/test-repo
   && echo "$dry_run_repo_output" | grep -F "workflow ファイル配置 PR を作成" > /dev/null \
   && echo "$dry_run_repo_output" | grep -F "vibehawk-review.yml" > /dev/null \
   && echo "$dry_run_repo_output" | grep -F "vibehawk-chat.yml" > /dev/null \
+  && echo "$dry_run_repo_output" | grep -F "vibehawk-review-skip-mark.yml" > /dev/null \
   && echo "$dry_run_repo_output" | grep -F "GitHub Secrets への書き込み: なし" > /dev/null; then
-  pass "--dry-run で --repo 指定時に 2 つの workflow PR 作成計画 (review + chat) と Secrets 非書込が表示される"
+  pass "--dry-run で --repo 指定時に 3 つの workflow PR 作成計画 (review + chat + skip-mark) と Secrets 非書込が表示される（Issue #350）"
 else
-  fail "--dry-run + --repo の出力に必須要件（review + chat 両方 / Secrets 非書込み宣言）が含まれない"
+  fail "--dry-run + --repo の出力に必須要件（review + chat + skip-mark / Secrets 非書込み宣言）が含まれない"
 fi
 
 # Issue #58: --repo 指定時の --dry-run でも実際の workflow PR 作成（gh CLI 呼出）が起きない
@@ -897,14 +898,26 @@ fi
 
 # Issue #346: 配布テンプレート側にはプレースホルダが必ず 1 箇所（ref 行）存在する
 # （置換し忘れ・テンプレート側への実タグ焼き込みの双方を防ぐ）
-for wf in templates/.github/workflows/vibehawk-review.yml templates/.github/workflows/vibehawk-chat.yml; do
+# Issue #350: skip-mark も配布対象 + 自己完結化されたため同じ検証対象に含める
+for wf in templates/.github/workflows/vibehawk-review.yml templates/.github/workflows/vibehawk-chat.yml templates/.github/workflows/vibehawk-review-skip-mark.yml; do
   count="$(grep -c -F '__VIBEHAWK_REF__' "$wf" || true)"
   if [[ "$count" -eq 1 ]] && grep -q -F 'ref: __VIBEHAWK_REF__' "$wf"; then
-    pass "${wf} に ref プレースホルダが 1 箇所存在する（Issue #346）"
+    pass "${wf} に ref プレースホルダが 1 箇所存在する（Issue #346 / #350）"
   else
-    fail "${wf} の ref プレースホルダが不正（count=${count}）（Issue #346）"
+    fail "${wf} の ref プレースホルダが不正（count=${count}）（Issue #346 / #350）"
   fi
 done
+
+# Issue #350: WORKFLOWS 配布リストに skip-mark が含まれる
+if node -e '
+const i = require("./cli/install.js");
+if (!i.WORKFLOWS.includes(".github/workflows/vibehawk-review-skip-mark.yml")) process.exit(1);
+process.exit(0);
+'; then
+  pass "WORKFLOWS 配布リストに vibehawk-review-skip-mark.yml が含まれる（Issue #350）"
+else
+  fail "WORKFLOWS 配布リストに vibehawk-review-skip-mark.yml が含まれない（Issue #350）"
+fi
 
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
