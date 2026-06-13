@@ -53,6 +53,11 @@ jobs:
     steps:
       - name: リポジトリチェックアウト（scripts/ci/ 配下を runner に展開する）
         uses: actions/checkout@v4
+        with:
+          # persist-credentials: false: checkout の token を workspace の .git/config に残さない。
+          #   skip-mark は scripts/ci/ 配下のスクリプトを展開するだけで git push/fetch を行わず、
+          #   gh は GH_TOKEN env を使うため永続 credential に依存しない（Issue #349）。
+          persist-credentials: false
 
       - name: 変更ファイル一覧の取得
         id: files
