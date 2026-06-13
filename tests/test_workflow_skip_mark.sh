@@ -151,11 +151,13 @@ else
 fi
 
 # Issue #178: yml 側の run: ブロックがラッパー呼び出しのみ（5 行以下）
-# 各 step の `run:` 行が `bash scripts/ci/vibehawk-review-skip-mark/<name>.sh` 形式であることを確認
+# Issue #350: 自己完結化により各 run: は ${VIBEHAWK_RUNTIME}/ prefix 経由になった。
+# 各 step の `run:` 行が `bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review-skip-mark/<name>.sh"`
+# 形式であることを確認する。
 declare -a wrapper_calls=(
-  "bash scripts/ci/vibehawk-review-skip-mark/list-changed-files.sh"
-  "bash scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh"
-  "bash scripts/ci/vibehawk-review-skip-mark/post-skip-check-run.sh"
+  'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review-skip-mark/list-changed-files.sh"'
+  'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh"'
+  'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-review-skip-mark/post-skip-check-run.sh"'
 )
 for call in "${wrapper_calls[@]}"; do
   # ${call} を明示することで、後続の日本語ブラケット「」を bash 3.2 が識別子の
@@ -177,18 +179,40 @@ else
   pass "yml に 'run: |' 複数行インラインシェルが残っていない"
 fi
 
-# 全 run: 行がラッパー呼び出しであること
-# 許容パス:
-#   - scripts/ci/vibehawk-review-skip-mark/: skip-mark 専用ステップ
-#   - scripts/ci/vibehawk-review/: vibehawk-review.yml と共有のステップ（Issue #219 sticky upsert で導入）
+# 全 run: 行がラッパー呼び出し（prefix 経由）または VIBEHAWK_RUNTIME 解決 step であること
+# Issue #350: 自己完結化により run: は次の 2 種類のみになる:
+#   - bash "${VIBEHAWK_RUNTIME}/scripts/ci/(vibehawk-review|vibehawk-review-skip-mark)/...": prefix 経由のラッパー呼び出し
+#   - echo "VIBEHAWK_RUNTIME=...": ランタイムディレクトリ解決 step（1 行のみ）
 # 'run: |' 不在チェックだけだと 'run: echo ...' のような単行 inline shell が混入しても
-# 通ってしまうので、run: 行総数とラッパー呼び出し行数の一致を担保する
+# 通ってしまうので、run: 行総数 == prefix ラッパー行数 + 解決 step 1 行 の一致を担保する。
 total_runs=$(grep -cE "^[[:space:]]+run:[[:space:]]" "$WORKFLOW" || true)
-wrapper_runs=$(grep -cE "^[[:space:]]+run:[[:space:]]+bash[[:space:]]+scripts/ci/(vibehawk-review|vibehawk-review-skip-mark)/" "$WORKFLOW" || true)
-if [[ "$total_runs" -eq "$wrapper_runs" ]] && [[ "$total_runs" -gt 0 ]]; then
-  pass "全 run: ($total_runs 件) がラッパー呼び出し (bash scripts/ci/vibehawk-review/ または vibehawk-review-skip-mark/) のみ"
+# prefix 経由のラッパー呼び出し（${VIBEHAWK_RUNTIME}/ を経由する run: 行。pipe で 2 回出現しても 1 行 1 カウント）
+wrapper_runs=$(grep -cE '^[[:space:]]+run:[[:space:]]+bash[[:space:]]+"\$\{VIBEHAWK_RUNTIME\}/scripts/ci/(vibehawk-review|vibehawk-review-skip-mark)/' "$WORKFLOW" || true)
+# VIBEHAWK_RUNTIME 解決 step（GITHUB_ENV へ書き込む 1 行）
+runtime_resolve_runs=$(grep -cE '^[[:space:]]+run:[[:space:]]+echo[[:space:]]+"VIBEHAWK_RUNTIME=' "$WORKFLOW" || true)
+if [[ "$total_runs" -eq "$((wrapper_runs + runtime_resolve_runs))" ]] \
+  && [[ "$wrapper_runs" -gt 0 ]] && [[ "$runtime_resolve_runs" -eq 1 ]]; then
+  pass "全 run: ($total_runs 件) が prefix 経由ラッパー ($wrapper_runs) + VIBEHAWK_RUNTIME 解決 step ($runtime_resolve_runs) のみ（Issue #350）"
 else
-  fail "run: 行の総数 ($total_runs) とラッパー呼び出し行数 ($wrapper_runs) が一致しない（単行 inline shell が混入の疑い）"
+  fail "run: 行の総数 ($total_runs) が prefix ラッパー ($wrapper_runs) + 解決 step ($runtime_resolve_runs) と一致しない（単行 inline shell が混入の疑い、または prefix 化漏れ）"
+fi
+
+# Issue #350: 自己完結化の runtime checkout step が存在する（#346 と同方式）
+if grep -q -F 'repository: hirokimry/vibehawk' "$WORKFLOW" \
+  && grep -q -F 'ref: __VIBEHAWK_REF__' "$WORKFLOW" \
+  && grep -q -F 'path: .vibehawk-runtime' "$WORKFLOW" \
+  && grep -q -E "hashFiles\('scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore\.sh'\) == ''" "$WORKFLOW"; then
+  pass "runtime checkout step（repository / ref プレースホルダ / path / hashFiles guard）が存在する（Issue #350）"
+else
+  fail "runtime checkout step の必須属性が欠けている（Issue #350）"
+fi
+
+# Issue #350: ref プレースホルダが 1 箇所だけ存在する（配布時に cli/install.js が置換）
+ref_placeholder_count=$(grep -c -F '__VIBEHAWK_REF__' "$WORKFLOW" || true)
+if [[ "$ref_placeholder_count" -eq 1 ]]; then
+  pass "ref プレースホルダ __VIBEHAWK_REF__ が 1 箇所存在する（Issue #350）"
+else
+  fail "ref プレースホルダ __VIBEHAWK_REF__ の数が不正（count=${ref_placeholder_count}）（Issue #350）"
 fi
 
 declare -a required_case_patterns=(
