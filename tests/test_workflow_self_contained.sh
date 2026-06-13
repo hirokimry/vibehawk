@@ -92,9 +92,11 @@ done
 echo "=== 静的検証: 配布時置換 ==="
 
 # (e) cli/install.js が配布時にプレースホルダ置換を行う
+# Issue #347: 配布時に commit SHA へ解決して置換する（renderWorkflowTemplate(wf, {...}) 呼び出し）
 if grep -q -F "RUNTIME_REF_PLACEHOLDER = '__VIBEHAWK_REF__'" cli/install.js \
-  && grep -q -F 'renderWorkflowTemplate(wf)' cli/install.js; then
-  pass "cli/install.js が配布時に __VIBEHAWK_REF__ を置換する経路を持つ"
+  && grep -q -E 'renderWorkflowTemplate\(wf' cli/install.js \
+  && grep -q -F 'resolveRuntimeRefSha' cli/install.js; then
+  pass "cli/install.js が配布時に __VIBEHAWK_REF__ を commit SHA へ置換する経路を持つ（Issue #347）"
 else
   fail "cli/install.js のプレースホルダ置換経路が見つからない"
 fi

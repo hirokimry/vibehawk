@@ -25,17 +25,106 @@ const WORKFLOWS = [
   '.github/workflows/vibehawk-review-skip-mark.yml',
 ];
 
-// Issue #346: テンプレート内のランタイム pin プレースホルダ。配布時に自パッケージの
-// version 由来のリリースタグ（v<X.Y.Z>）へ置換する。リリースフローは「version bump →
-// main マージで tag 作成 → npm publish」の順のため、npm 配布物が指すタグは必ず実在する。
+// Issue #346: テンプレート内のランタイム pin プレースホルダ。配布時に commit SHA へ置換する。
 const RUNTIME_REF_PLACEHOLDER = '__VIBEHAWK_REF__';
 
-// 配布用 workflow テンプレートを読み込み、ランタイム pin プレースホルダを実タグへ置換して返す
-function renderWorkflowTemplate(wf) {
+// Issue #347: runtime checkout の解決元 upstream。テンプレートの `repository: hirokimry/vibehawk`
+// と一致させる。SHA は必ずこの upstream から解決し、利用者リポジトリ（fork 改ざんタグ）からは
+// 解決しない。
+const RUNTIME_REPO = 'hirokimry/vibehawk';
+
+// Issue #347: リリースタグ（v<X.Y.Z>）を immutable な commit SHA へ解決する。
+//   #346 では runtime checkout の ref を mutable なリリースタグ（git タグは force-update 可能）に
+//   していたため、タグ差し替えで既配布の全外部リポジトリ CI へ任意コードが波及する攻撃面が残った。
+//   本関数は配布時にタグを commit SHA へ固定し、その攻撃面を構造的に断つ（CISO Major 指摘の根治）。
+// 検証は peel 後の最終 commit SHA に対してのみ行う（annotated タグの中間 SHA を commit と誤認しない）。
+function resolveRuntimeRefSha(tag, { spawn = spawnSync } = {}) {
+  // tag は v<version> 由来（version は package.json）。package.json 改ざん時に YAML 行を分断する
+  // 改行・`:` 等が焼き込み先（`# ${tag}`）へ混入する余地を塞ぐ（semver 文字種のみ許可）。
+  if (!/^v[0-9A-Za-z.\-+]+$/.test(tag)) {
+    throw new Error(`vibehawk: 不正なリリースタグ形式です（${tag}）。配布を中止します。`);
+  }
+
+  const fail = (result) => {
+    // stderr には GitHub API のエラー詳細（認証状態等）が乗りうるため先頭 200 文字に切り詰めて
+    // 過剰な情報露出を避ける（npx 実行者本人のローカル表示のため上限は緩めの 200 文字）。
+    const stderr = (result && result.stderr ? String(result.stderr) : '').slice(0, 200);
+    throw new Error(
+      `vibehawk: リリースタグ ${tag} の commit SHA 解決に失敗しました`
+        + '（オフライン / GitHub API 障害 / タグ不在の可能性）。'
+        + '不正な ref のまま配布しないため中止します。詳細: '
+        + stderr
+    );
+  };
+
+  const SHA_RE = /^[0-9a-f]{40}$/;
+  const parseTypeSha = (result) => {
+    // `.object.type + " " + .object.sha` の出力を分解。GitHub API が想定外応答（null / 空 /
+    // 形式崩れ）を返した場合は undefined 経路を作らず明示的に throw する（fail-fast の診断品質確保）。
+    const parts = String(result.stdout || '').trim().split(' ');
+    const objType = parts[0];
+    const objSha = parts[1];
+    if (!objType || !SHA_RE.test(objSha || '')) {
+      throw new Error(
+        `vibehawk: リリースタグ ${tag} の解決結果が想定形式ではありません（GitHub API 応答が不正）。配布を中止します。`
+      );
+    }
+    return { objType, objSha };
+  };
+
+  const refResult = spawn(
+    'gh',
+    ['api', `repos/${RUNTIME_REPO}/git/refs/tags/${tag}`, '--jq', '.object.type + " " + .object.sha'],
+    { encoding: 'utf8' }
+  );
+  if (refResult.status !== 0) fail(refResult);
+  const { objType: refType, objSha: refSha } = parseTypeSha(refResult);
+
+  let commitSha;
+  if (refType === 'commit') {
+    // lightweight タグ（gh release create 既定）は commit を直接指す。
+    commitSha = refSha;
+  } else if (refType === 'tag') {
+    // annotated タグはタグオブジェクトを指すため commit へ peel する。
+    // nested annotated タグ（タグがタグを指す）でも誤った SHA を pin しないよう、peel 後の
+    // オブジェクト型が commit であることを検証し、commit でなければ fail-fast する（根治の担保）。
+    const peelResult = spawn(
+      'gh',
+      ['api', `repos/${RUNTIME_REPO}/git/tags/${refSha}`, '--jq', '.object.type + " " + .object.sha'],
+      { encoding: 'utf8' }
+    );
+    if (peelResult.status !== 0) fail(peelResult);
+    const { objType: peelType, objSha: peelSha } = parseTypeSha(peelResult);
+    if (peelType !== 'commit') {
+      throw new Error(
+        `vibehawk: リリースタグ ${tag} が commit を直接指していません（peel 後 type=${peelType}）。`
+          + '不正な ref のまま配布しないため中止します。'
+      );
+    }
+    commitSha = peelSha;
+  } else {
+    throw new Error(
+      `vibehawk: リリースタグ ${tag} の参照先オブジェクト型が想定外です（type=${refType}）。配布を中止します。`
+    );
+  }
+
+  if (!SHA_RE.test(commitSha)) {
+    throw new Error(
+      `vibehawk: リリースタグ ${tag} から取得した値が commit SHA 形式（40 桁 hex）ではありません（${commitSha}）。配布を中止します。`
+    );
+  }
+  return commitSha;
+}
+
+// 配布用 workflow テンプレートを読み込み、ランタイム pin プレースホルダを commit SHA へ置換して返す。
+// sha / tag を渡さない直接呼び出し時は内部で resolveRuntimeRefSha を呼ぶ（配布側は解決済み値を渡す）。
+function renderWorkflowTemplate(wf, { sha, tag } = {}) {
   const tp = path.join(__dirname, '..', 'templates', wf);
   const content = fs.readFileSync(tp, 'utf8');
-  const { version } = require('../package.json');
-  return content.split(RUNTIME_REF_PLACEHOLDER).join(`v${version}`);
+  const refTag = tag || `v${require('../package.json').version}`;
+  const refSha = sha || resolveRuntimeRefSha(refTag);
+  // 可読性のため対応タグ名を YAML 行末コメントで併記する（ref: <sha>  # v<X.Y.Z>）。
+  return content.split(RUNTIME_REF_PLACEHOLDER).join(`${refSha}  # ${refTag}`);
 }
 
 function parseDryRun(argv) {
@@ -516,6 +605,12 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
     throw new Error('vibehawk: gh CLI が認証されていません。`gh auth login` を実行してから再試行してください。');
   }
 
+  // Issue #347: runtime checkout の ref を commit SHA へ固定するため、配布前に 1 回だけ解決する。
+  // ブランチ作成より前に解決して fail-fast することで、解決失敗時に孤立ブランチを作らない。
+  // 全 workflow で同一 SHA を共有し、3 回解決による SHA 不一致（TOCTOU）も防ぐ。
+  const runtimeTag = `v${require('../package.json').version}`;
+  const runtimeRefSha = resolveRuntimeRefSha(runtimeTag);
+
   const existingFiles = [];
   for (const wf of WORKFLOWS) {
     const r = spawnSync('gh', ['api', `repos/${repo}/contents/${wf}`, '--silent'], { encoding: 'utf8' });
@@ -573,8 +668,9 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
   };
 
   for (const wf of WORKFLOWS) {
-    // Issue #346: プレースホルダをリリースタグへ置換してから配布する（pin 付き runtime checkout）
-    const content = renderWorkflowTemplate(wf);
+    // Issue #346/#347: プレースホルダを commit SHA へ置換してから配布する（pin 付き runtime checkout）。
+    // SHA は上で 1 回だけ解決済み（ブランチ作成前に fail-fast 済み）。
+    const content = renderWorkflowTemplate(wf, { sha: runtimeRefSha, tag: runtimeTag });
     const contentBase64 = Buffer.from(content, 'utf8').toString('base64');
 
     let existingFileSha = null;
@@ -711,7 +807,9 @@ module.exports = {
   createWorkflowPr,
   assertCanonicalAppName,
   renderWorkflowTemplate,
+  resolveRuntimeRefSha,
   RUNTIME_REF_PLACEHOLDER,
+  RUNTIME_REPO,
   DEFAULT_PORT,
   WORKFLOW_BRANCH,
   WORKFLOW_PATH,
