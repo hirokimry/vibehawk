@@ -905,15 +905,15 @@ const i = require("./cli/install.js");
 const COMMIT = "b".repeat(40);
 const ANNO_OBJ = "c".repeat(40);
 const PEELED = "d".repeat(40);
-// lightweight: 1 段で commit SHA
+// lightweight: refs/tags が type=commit を返し 1 段で commit SHA
 const lw = i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 0, stdout: "commit " + COMMIT + "\n" }) });
 if (lw !== COMMIT) process.exit(1);
-// annotated: refs/tags が tag を返し、git/tags で commit へ peel
+// annotated: refs/tags が type=tag を返し、git/tags で type=commit へ peel
 let calls = 0;
 const an = i.resolveRuntimeRefSha("v1.2.3", { spawn: (cmd, args) => {
   calls++;
   if (args.join(" ").indexOf("git/refs/tags") !== -1) return { status: 0, stdout: "tag " + ANNO_OBJ + "\n" };
-  return { status: 0, stdout: PEELED + "\n" };
+  return { status: 0, stdout: "commit " + PEELED + "\n" };
 } });
 if (an !== PEELED || calls !== 2) process.exit(1);
 process.exit(0);
@@ -921,6 +921,30 @@ process.exit(0);
   pass "resolveRuntimeRefSha が lightweight / annotated タグを commit SHA へ解決する（Issue #347）"
 else
   fail "resolveRuntimeRefSha のタグ解決（peel 含む）が機能していない（Issue #347）"
+fi
+
+# Issue #347: nested annotated タグ（peel 後も type != commit）/ 想定外応答で fail-fast する
+if node -e '
+const i = require("./cli/install.js");
+const A = "c".repeat(40);
+const B = "e".repeat(40);
+function throws(fn, needle) {
+  try { fn(); return false; } catch (e) { return e.message.indexOf(needle) !== -1; }
+}
+// nested annotated: peel しても type=tag のまま → commit を直接指していない → throw
+if (!throws(() => i.resolveRuntimeRefSha("v1.2.3", { spawn: (cmd, args) => {
+  if (args.join(" ").indexOf("git/refs/tags") !== -1) return { status: 0, stdout: "tag " + A + "\n" };
+  return { status: 0, stdout: "tag " + B + "\n" };
+} }), "commit を直接指していません")) process.exit(1);
+// 想定外応答（type のみで SHA 欠落）→ undefined を作らず明示 throw
+if (!throws(() => i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 0, stdout: "commit\n" }) }), "想定形式ではありません")) process.exit(1);
+// 想定外の参照先 type → throw
+if (!throws(() => i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 0, stdout: "blob " + A + "\n" }) }), "参照先オブジェクト型が想定外")) process.exit(1);
+process.exit(0);
+'; then
+  pass "resolveRuntimeRefSha が nested annotated / 想定外応答で fail-fast する（Issue #347）"
+else
+  fail "resolveRuntimeRefSha の nested annotated / 想定外応答の fail-fast が機能していない（Issue #347）"
 fi
 
 # Issue #347: resolveRuntimeRefSha が fail-fast する（API 失敗 / 不正 SHA / 不正 tag）
@@ -931,8 +955,8 @@ function throws(fn, needle) {
 }
 // gh api status !== 0（オフライン / 404）
 if (!throws(() => i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 1, stderr: "not found" }) }), "解決に失敗")) process.exit(1);
-// 非 40hex の戻り値
-if (!throws(() => i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 0, stdout: "commit notasha\n" }) }), "40 桁 hex")) process.exit(1);
+// 非 40hex の戻り値（parseTypeSha の guard が捕捉して fail-fast する）
+if (!throws(() => i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 0, stdout: "commit notasha\n" }) }), "想定形式ではありません")) process.exit(1);
 // 不正 tag（改行混入 → YAML インジェクション防御）
 if (!throws(() => i.resolveRuntimeRefSha("v1.2.3\nevil: x", { spawn: () => ({ status: 0, stdout: "" }) }), "不正なリリースタグ")) process.exit(1);
 process.exit(0);

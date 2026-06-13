@@ -46,6 +46,8 @@ function resolveRuntimeRefSha(tag, { spawn = spawnSync } = {}) {
   }
 
   const fail = (result) => {
+    // stderr には GitHub API のエラー詳細（認証状態等）が乗りうるため先頭 200 文字に切り詰めて
+    // 過剰な情報露出を避ける（npx 実行者本人のローカル表示のため上限は緩めの 200 文字）。
     const stderr = (result && result.stderr ? String(result.stderr) : '').slice(0, 200);
     throw new Error(
       `vibehawk: リリースタグ ${tag} の commit SHA 解決に失敗しました`
@@ -55,28 +57,58 @@ function resolveRuntimeRefSha(tag, { spawn = spawnSync } = {}) {
     );
   };
 
+  const SHA_RE = /^[0-9a-f]{40}$/;
+  const parseTypeSha = (result) => {
+    // `.object.type + " " + .object.sha` の出力を分解。GitHub API が想定外応答（null / 空 /
+    // 形式崩れ）を返した場合は undefined 経路を作らず明示的に throw する（fail-fast の診断品質確保）。
+    const parts = String(result.stdout || '').trim().split(' ');
+    const objType = parts[0];
+    const objSha = parts[1];
+    if (!objType || !SHA_RE.test(objSha || '')) {
+      throw new Error(
+        `vibehawk: リリースタグ ${tag} の解決結果が想定形式ではありません（GitHub API 応答が不正）。配布を中止します。`
+      );
+    }
+    return { objType, objSha };
+  };
+
   const refResult = spawn(
     'gh',
     ['api', `repos/${RUNTIME_REPO}/git/refs/tags/${tag}`, '--jq', '.object.type + " " + .object.sha'],
     { encoding: 'utf8' }
   );
   if (refResult.status !== 0) fail(refResult);
-  const [refType, refSha] = String(refResult.stdout || '').trim().split(' ');
+  const { objType: refType, objSha: refSha } = parseTypeSha(refResult);
 
-  let commitSha = refSha;
-  // annotated タグはタグオブジェクトを指すため、commit へ 1 段 peel する。
-  // lightweight タグ（gh release create 既定）は type=commit でそのまま commit SHA。
-  if (refType === 'tag') {
+  let commitSha;
+  if (refType === 'commit') {
+    // lightweight タグ（gh release create 既定）は commit を直接指す。
+    commitSha = refSha;
+  } else if (refType === 'tag') {
+    // annotated タグはタグオブジェクトを指すため commit へ peel する。
+    // nested annotated タグ（タグがタグを指す）でも誤った SHA を pin しないよう、peel 後の
+    // オブジェクト型が commit であることを検証し、commit でなければ fail-fast する（根治の担保）。
     const peelResult = spawn(
       'gh',
-      ['api', `repos/${RUNTIME_REPO}/git/tags/${refSha}`, '--jq', '.object.sha'],
+      ['api', `repos/${RUNTIME_REPO}/git/tags/${refSha}`, '--jq', '.object.type + " " + .object.sha'],
       { encoding: 'utf8' }
     );
     if (peelResult.status !== 0) fail(peelResult);
-    commitSha = String(peelResult.stdout || '').trim();
+    const { objType: peelType, objSha: peelSha } = parseTypeSha(peelResult);
+    if (peelType !== 'commit') {
+      throw new Error(
+        `vibehawk: リリースタグ ${tag} が commit を直接指していません（peel 後 type=${peelType}）。`
+          + '不正な ref のまま配布しないため中止します。'
+      );
+    }
+    commitSha = peelSha;
+  } else {
+    throw new Error(
+      `vibehawk: リリースタグ ${tag} の参照先オブジェクト型が想定外です（type=${refType}）。配布を中止します。`
+    );
   }
 
-  if (!/^[0-9a-f]{40}$/.test(commitSha)) {
+  if (!SHA_RE.test(commitSha)) {
     throw new Error(
       `vibehawk: リリースタグ ${tag} から取得した値が commit SHA 形式（40 桁 hex）ではありません（${commitSha}）。配布を中止します。`
     );
