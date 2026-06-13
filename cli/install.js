@@ -21,6 +21,19 @@ const WORKFLOWS = [
   '.github/workflows/vibehawk-chat.yml',
 ];
 
+// Issue #346: テンプレート内のランタイム pin プレースホルダ。配布時に自パッケージの
+// version 由来のリリースタグ（v<X.Y.Z>）へ置換する。リリースフローは「version bump →
+// main マージで tag 作成 → npm publish」の順のため、npm 配布物が指すタグは必ず実在する。
+const RUNTIME_REF_PLACEHOLDER = '__VIBEHAWK_REF__';
+
+// 配布用 workflow テンプレートを読み込み、ランタイム pin プレースホルダを実タグへ置換して返す
+function renderWorkflowTemplate(wf) {
+  const tp = path.join(__dirname, '..', 'templates', wf);
+  const content = fs.readFileSync(tp, 'utf8');
+  const { version } = require('../package.json');
+  return content.split(RUNTIME_REF_PLACEHOLDER).join(`v${version}`);
+}
+
 function parseDryRun(argv) {
   return Array.isArray(argv) && argv.some((a) => a === '--dry-run');
 }
@@ -556,8 +569,8 @@ async function createWorkflowPr({ repo, overwrite = false } = {}) {
   };
 
   for (const wf of WORKFLOWS) {
-    const tp = path.join(__dirname, '..', 'templates', wf);
-    const content = fs.readFileSync(tp, 'utf8');
+    // Issue #346: プレースホルダをリリースタグへ置換してから配布する（pin 付き runtime checkout）
+    const content = renderWorkflowTemplate(wf);
     const contentBase64 = Buffer.from(content, 'utf8').toString('base64');
 
     let existingFileSha = null;
@@ -693,6 +706,8 @@ module.exports = {
   printPlan,
   createWorkflowPr,
   assertCanonicalAppName,
+  renderWorkflowTemplate,
+  RUNTIME_REF_PLACEHOLDER,
   DEFAULT_PORT,
   WORKFLOW_BRANCH,
   WORKFLOW_PATH,

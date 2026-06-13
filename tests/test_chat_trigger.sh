@@ -93,11 +93,13 @@ CHAT_SURFACE="$(cat "$CHAT_WORKFLOW"; printf '\n'; printf '%s\n' "$CHAT_SCRIPTS_
 # 1 行になっていれば OK。
 run_lines="$(grep -E '^[[:space:]]+run:[[:space:]]' "$CHAT_WORKFLOW" || true)"
 run_total="$(printf '%s\n' "$run_lines" | grep -c -v '^$' || true)"
-run_wrappers="$(printf '%s\n' "$run_lines" | grep -c 'bash scripts/ci/vibehawk-chat/' || true)"
-if [[ "$run_total" -gt 0 ]] && [[ "$run_total" == "$run_wrappers" ]]; then
-  pass "yaml の全 run: が scripts/ci/vibehawk-chat/ への 1 行ラッパー（Issue #177、${run_wrappers}/${run_total} 件）"
+run_wrappers="$(printf '%s\n' "$run_lines" | grep -c -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/' || true)"
+# Issue #346: ランタイムディレクトリ決定 step（GITHUB_ENV への 1 行書込）はラッパー外の正当な run:
+run_runtime="$(printf '%s\n' "$run_lines" | grep -c -F 'VIBEHAWK_RUNTIME=' || true)"
+if [[ "$run_total" -gt 0 ]] && [[ "$run_runtime" -eq 1 ]] && [[ "$run_total" == "$((run_wrappers + run_runtime))" ]]; then
+  pass "yaml の全 run: がラッパー + ランタイム決定 step のみ（Issue #177 / #346、${run_wrappers}+${run_runtime}/${run_total} 件）"
 else
-  fail "yaml に scripts/ci/vibehawk-chat/ 以外の run: が残っている（${run_wrappers}/${run_total} 件のみラッパー）"
+  fail "yaml にラッパー / ランタイム決定以外の run: が残っている（${run_wrappers}+${run_runtime}/${run_total} 件）"
 fi
 
 # トリガー: issue_comment created のみ
@@ -730,7 +732,7 @@ echo "=== Issue #290: @vibehawk review diff-aware 分岐 検証 ==="
 
 # 差分判定 step（review_diff）が存在し detect-review-diff.sh を呼ぶ
 if grep -F 'id: review_diff' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'bash scripts/ci/vibehawk-chat/detect-review-diff.sh' "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/detect-review-diff.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "差分判定 step (review_diff) が detect-review-diff.sh を呼ぶ（Issue #290）"
 else
   fail "差分判定 step (review_diff) が存在しない（Issue #290）"
@@ -752,14 +754,14 @@ fi
 
 # 差分なし経路の verdict 再評価 step（reverdict）が re-evaluate-verdict.sh を呼ぶ
 if grep -F 'id: reverdict' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'bash scripts/ci/vibehawk-chat/re-evaluate-verdict.sh' "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/re-evaluate-verdict.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "差分なし経路の verdict 再評価 step (reverdict) が re-evaluate-verdict.sh を呼ぶ（Issue #290）"
 else
   fail "差分なし経路の verdict 再評価 step が存在しない（Issue #290）"
 fi
 
 # 差分なし経路の再チェック通知 step が post-recheck-notice.sh を呼ぶ
-if grep -F 'bash scripts/ci/vibehawk-chat/post-recheck-notice.sh' "$CHAT_WORKFLOW" > /dev/null; then
+if grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-recheck-notice.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "差分なし経路の再チェック通知 step が post-recheck-notice.sh を呼ぶ（Issue #290）"
 else
   fail "差分なし経路の再チェック通知 step が存在しない（Issue #290）"
@@ -833,7 +835,7 @@ echo "=== Issue #292: @vibehawk resolve 検証 ==="
 
 # resolve step が resolve-own-threads.sh を呼ぶ
 if grep -F 'id: resolve_threads' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'bash scripts/ci/vibehawk-chat/resolve-own-threads.sh' "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/resolve-own-threads.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "resolve step (resolve_threads) が resolve-own-threads.sh を呼ぶ（Issue #292）"
 else
   fail "resolve step が存在しない（Issue #292）"
@@ -888,7 +890,7 @@ echo "=== Issue #293: @vibehawk summary 検証 ==="
 
 # summary step が regenerate-sticky.sh を呼ぶ
 if grep -F 'id: regenerate_sticky' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'bash scripts/ci/vibehawk-chat/regenerate-sticky.sh' "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/regenerate-sticky.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "summary step (regenerate_sticky) が regenerate-sticky.sh を呼ぶ（Issue #293）"
 else
   fail "summary step が存在しない（Issue #293）"
@@ -932,7 +934,7 @@ echo "=== Issue #294: @vibehawk help / configuration 検証 ==="
 
 # help step が post-help.sh を呼ぶ
 if grep -F 'id: post_help' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'bash scripts/ci/vibehawk-chat/post-help.sh' "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-help.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "help step (post_help) が post-help.sh を呼ぶ（Issue #294）"
 else
   fail "help step が存在しない（Issue #294）"
@@ -940,7 +942,7 @@ fi
 
 # configuration step が post-configuration.sh を呼ぶ
 if grep -F 'id: post_configuration' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'bash scripts/ci/vibehawk-chat/post-configuration.sh' "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/post-configuration.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "configuration step (post_configuration) が post-configuration.sh を呼ぶ（Issue #294）"
 else
   fail "configuration step が存在しない（Issue #294）"
@@ -983,7 +985,7 @@ echo "=== Issue #295: @vibehawk pause / resume / ignore 検証 ==="
 
 # 状態設定 step が set-autoreview-state.sh を呼ぶ
 if grep -F 'id: set_autoreview_state' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'bash scripts/ci/vibehawk-chat/set-autoreview-state.sh' "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/set-autoreview-state.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "状態設定 step (set_autoreview_state) が set-autoreview-state.sh を呼ぶ（Issue #295）"
 else
   fail "状態設定 step が存在しない（Issue #295）"
@@ -1020,7 +1022,7 @@ fi
 echo "=== コマンド厳密 parse（contains 部分一致の排除）検証 ==="
 
 if grep -F 'id: parse_command' "$CHAT_WORKFLOW" > /dev/null && \
-   grep -F 'bash scripts/ci/vibehawk-chat/parse-command.sh' "$CHAT_WORKFLOW" > /dev/null; then
+   grep -F 'bash "${VIBEHAWK_RUNTIME}/scripts/ci/vibehawk-chat/parse-command.sh"' "$CHAT_WORKFLOW" > /dev/null; then
   pass "parse_command step が parse-command.sh を呼ぶ（Issue #289、厳密 parse）"
 else
   fail "parse_command step が存在しない（Issue #289）"

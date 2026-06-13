@@ -68,7 +68,7 @@ with open(src_path, encoding='utf-8') as f:
 # ラッパー呼び出し行（例: `        run: bash scripts/ci/vibehawk-review/check-secrets.sh`）を
 # 当該 .sh の中身 inline 展開した `run: |` ブロックに置き換える。インデントは run: 行と同じ
 # leading whitespace の +2 スペース（GitHub Actions の標準）に揃える。
-pattern = re.compile(r'^(\s+)run:\s+bash\s+(scripts/ci/\S+\.sh)\s*$', re.MULTILINE)
+pattern = re.compile(r'^(\s+)run:\s+bash\s+"\$\{VIBEHAWK_RUNTIME\}/(scripts/ci/\S+\.sh)"\s*$', re.MULTILINE)
 
 def replace(match):
     indent = match.group(1)

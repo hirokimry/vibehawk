@@ -114,6 +114,22 @@ CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから
 | @mention チャット文脈 | 内部 DB | GitHub の comment スレッドを直接読む |
 | PR 間の学習 | ベクタ DB | ❌ 持たない・実装しない |
 
+### 外部リポジトリでのランタイム取得（pin 付き 2nd checkout、Issue #346）
+
+配布 workflow（`vibehawk-review.yml` / `vibehawk-chat.yml`）が参照するスクリプト・プロンプトは vibehawk リポジトリ本体にのみ存在する。外部リポジトリでは workflow 冒頭の 2 step が自己完結化を担う。
+
+| 観点 | 仕様 |
+|---|---|
+| 判定 | `hashFiles('scripts/ci/vibehawk-{review,chat}/check-secrets.sh') == ''` で「外部リポジトリ」と判定する（vibehawk 自リポジトリ・fork では手元スクリプトを使い dogfooding が成立する） |
+| 取得 | `actions/checkout@v4` で `repository: hirokimry/vibehawk` を `path: .vibehawk-runtime` に checkout する。`persist-credentials: false` で token を `.git/config` に永続化しない |
+| pin | `ref` はリリースタグ（`v<X.Y.Z>`）。テンプレートのプレースホルダ `__VIBEHAWK_REF__` を配布時に `cli/install.js` が自パッケージの version から置換する。リリースフロー（version bump → tag 作成 → npm publish）の順序により、配布物が指すタグは配布時点で必ず実在する |
+| 実行 | 以降の全 step は `${VIBEHAWK_RUNTIME}`（自リポジトリ = `.` / 外部 = `.vibehawk-runtime`）prefix 経由でスクリプトを実行する。スクリプト内部のファイル参照（prompt / include 基点）はスクリプト自身の位置から解決する |
+
+#### 🔖 タグ運用の前提（残余リスクの記録）
+
+- 既配布の外部リポジトリ workflow は `v<X.Y.Z>` タグと `hirokimry/vibehawk` というリポジトリ名に依存する。**リリースタグの削除・force-update・リポジトリ rename は既配布の全外部リポジトリのレビューを停止または改変する**ため行わない（タグ不変・リポジトリ名維持の運用方針）。
+- タグは git の仕様上 force-update 可能であり、vibehawk リポジトリの write 権限が侵害された場合に既配布 workflow へ波及し得る（残余リスク）。`v*` タグの update / delete 禁止 ruleset 設定（リポジトリ設定、CEO 操作）と commit SHA pin 化（恒久対応）は #347 で扱う。詳細な信頼境界の記録は `SECURITY.md § 配布 workflow のランタイム取得の信頼境界` を参照。
+
 ### メタデータ仕様
 
 サマリコメントに識別マーカーと SHA マーカーを HTML コメントとして埋め込む。
