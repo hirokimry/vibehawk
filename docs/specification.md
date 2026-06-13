@@ -114,13 +114,13 @@ CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから
 | @mention チャット文脈 | 内部 DB | GitHub の comment スレッドを直接読む |
 | PR 間の学習 | ベクタ DB | ❌ 持たない・実装しない |
 
-### 外部リポジトリでのランタイム取得（pin 付き 2nd checkout、Issue #346）
+### 外部リポジトリでのランタイム取得（pin 付き 2nd checkout、Issue #346 / Issue #350）
 
-配布 workflow（`vibehawk-review.yml` / `vibehawk-chat.yml`）が参照するスクリプト・プロンプトは vibehawk リポジトリ本体にのみ存在する。外部リポジトリでは workflow 冒頭の 2 step が自己完結化を担う。
+配布 workflow（`vibehawk-review.yml` / `vibehawk-chat.yml` / `vibehawk-review-skip-mark.yml`）が参照するスクリプト・プロンプトは vibehawk リポジトリ本体にのみ存在する。外部リポジトリでは workflow 冒頭の 2 step が自己完結化を担う（3 workflow 全件が本方式を採用する）。
 
 | 観点 | 仕様 |
 |---|---|
-| 判定 | `hashFiles('scripts/ci/vibehawk-{review,chat}/check-secrets.sh') == ''` で「外部リポジトリ」と判定する（vibehawk 自リポジトリ・fork では手元スクリプトを使い dogfooding が成立する） |
+| 判定 | guard ファイルの存在を `hashFiles()` で確認し、空の場合を「外部リポジトリ」と判定する（vibehawk 自リポジトリ・fork では手元スクリプトを使い dogfooding が成立する）。guard ファイルは workflow ごとに異なる: `vibehawk-review.yml` / `vibehawk-chat.yml` は `scripts/ci/vibehawk-{review,chat}/check-secrets.sh`、`vibehawk-review-skip-mark.yml` は `scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh` |
 | 取得 | `actions/checkout@v4` で `repository: hirokimry/vibehawk` を `path: .vibehawk-runtime` に checkout する。`persist-credentials: false` で token を `.git/config` に永続化しない |
 | pin | `ref` はリリースタグ（`v<X.Y.Z>`）。テンプレートのプレースホルダ `__VIBEHAWK_REF__` を配布時に `cli/install.js` が自パッケージの version から置換する。リリースフロー（version bump → tag 作成 → npm publish）の順序により、配布物が指すタグは配布時点で必ず実在する |
 | 実行 | 以降の全 step は `${VIBEHAWK_RUNTIME}`（自リポジトリ = `.` / 外部 = `.vibehawk-runtime`）prefix 経由でスクリプトを実行する。スクリプト内部のファイル参照（prompt / include 基点）はスクリプト自身の位置から解決する |
@@ -455,6 +455,12 @@ skip-mark workflow の判定 case 文と `vibehawk-review.yml` の `paths-ignore
 
 同期忘れの失敗モードは常に「PR が BLOCKED」方向のみで、merge gate 誤通過は構造上発生しない。
 
+> **Issue #350（2026-06-13）で外部リポジトリへ配布**: `vibehawk-review-skip-mark.yml` が `cli/install.js` の `WORKFLOWS` に追加され、`npx vibehawk setup` 経由で外部リポジトリへも配布されるようになった。
+> Issue #346 と同方式の自己完結化（hashFiles guard + pin 付き 2nd checkout + `${VIBEHAWK_RUNTIME}/` prefix 化）が適用されている。
+> guard ファイルは skip-mark 固有の `scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh`。
+> skip-mark は `GITHUB_TOKEN` のみ使用（App Installation Token・claude-code-action は使わない）。
+> 外部リポジトリでの 2nd checkout の仕様詳細は「外部リポジトリでのランタイム取得」節を参照。
+
 #### 利用者側オペ（branch protection への登録）
 
 `vibehawk` を required status check として branch protection に登録することは、vibehawk 利用の根幹である（merge gate 主軸を成立させる唯一の経路）。
@@ -741,7 +747,7 @@ CLI 自体は Anthropic に通信せず、secret を書き込まない。
 | 2 | GitHub Settings UI で `VIBEHAWK_APP_ID` を手動登録 | 利用者が CLI 表示の URL を開いてコピペ |
 | 3 | GitHub App Settings で Private Key を `.pem` ダウンロード → Settings UI で `VIBEHAWK_PRIVATE_KEY` を手動登録 | 利用者が GitHub UI 内で完結（CLI 経由しない） |
 | 4 | `npx vibehawk setup-token --repo <owner>/<repo>` → GitHub Settings UI で `CLAUDE_CODE_OAUTH_TOKEN` を手動登録 | CLI が `claude setup-token` 実行を案内 → 取得した token を明示同意の上クリップボードにコピー（stdin 経由） → 利用者が Settings UI で貼付 |
-| 5 | `vibehawk-review.yml` を `.github/workflows/` に配置 | App Installation Token 認証で workflow が動作 |
+| 5 | 配布 workflow 3 件（`vibehawk-review.yml` / `vibehawk-chat.yml` / `vibehawk-review-skip-mark.yml`）を `.github/workflows/` に配置 | review / chat は App Installation Token 認証で動作。skip-mark は `GITHUB_TOKEN` のみで lockfile のみ変更 PR の merge gate を通過させる |
 | 6 | PR を作成 | `vibehawk-for-<owner>[bot]` 名義でレビューサマリ投稿 |
 
 経路 1（`secrets.GITHUB_TOKEN` + `github-actions[bot]` 投稿）は Issue #22 修正時点の妥協経路だが、Issue #61 で OSS 利用者の標準経路として認めない方針に確定した（理由: ブランド統制 / 商標保護 / 利用者可視化）。

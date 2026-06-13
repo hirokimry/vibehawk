@@ -159,6 +159,9 @@ status check が `failure` のまま止まることがある。
 > コピー元は `templates/.github/workflows/`。
 > コピー先は `.github/workflows/`。
 > 再 install・追加 secret は不要。
+>
+> **v0.2.2 以前の既存導入**: v0.2.3 で `vibehawk-review-skip-mark.yml` が新規追加された。
+> 上記の上書きコピーで取得できる。lockfile のみ変更の PR が required check で BLOCKED にならなくなる。
 
 メンテナー自身の PR でも Claude Pro / Max 枠を消費する。
 契約枠の保護設定は [`docs/maintainer-quota-policy.md`](docs/maintainer-quota-policy.md) を参照。
