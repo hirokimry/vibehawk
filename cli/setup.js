@@ -17,7 +17,7 @@ const oauth = require('./oauth');
 // Issue #110: verifyAppInstallation の import は削除（Step 2 を目視確認経路に切替）。
 // cli/verify.js での export は将来 App JWT 経由で検証復活させる際の拡張余地として維持する。
 const { verifySecret, verifyWorkflow } = require('./verify');
-const { parseOwnerArg, validateOwner } = require('./naming');
+const { parseOwnerArg, validateOwner, buildAppName } = require('./naming');
 const { parseRepoArg } = require('./oauth');
 
 const MAX_RETRY = 5;
@@ -184,6 +184,38 @@ function parseDryRun(argv) {
   return Array.isArray(argv) && argv.some((a) => a === '--dry-run');
 }
 
+// Issue #356: 既存 App 再利用フロー。App ID は GitHub App の正の整数 id。
+// フラグ経由（parseAppId）と対話入力（promptExistingAppId）の両方が本述語を共有し、
+// 検証ロジックの二重実装による緩み（片方だけ正規表現が甘い）を防ぐ（CISO M-1）。
+function isValidAppId(str) {
+  return typeof str === 'string' && /^[1-9][0-9]*$/.test(str);
+}
+
+// Issue #356: `--reuse-app` フラグ検出。owner が既に vibehawk-for-<owner> App を
+// 作成済みの場合に Manifest Flow（新規作成）をスキップして既存 App を再利用する。
+function parseReuseApp(argv) {
+  return Array.isArray(argv) && argv.some((a) => a === '--reuse-app');
+}
+
+// Issue #356: `--app-id <n>` / `--app-id=<n>` を取得する。isValidAppId を満たさない値は
+// null を返し、run() 側で対話プロンプトにフォールバックさせる（"null" 文字列を state に
+// 混入させないため、ここでは検証通過した文字列のみ返す、CISO M-1）。
+function parseAppId(argv) {
+  if (!Array.isArray(argv)) return null;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--app-id' && i + 1 < argv.length) {
+      const v = String(argv[i + 1]).trim();
+      return isValidAppId(v) ? v : null;
+    }
+    if (typeof arg === 'string' && arg.startsWith('--app-id=')) {
+      const v = arg.slice('--app-id='.length).trim();
+      return isValidAppId(v) ? v : null;
+    }
+  }
+  return null;
+}
+
 function checkGhAuth() {
   // ウィザード開始前の早期失敗: gh CLI 未認証なら全ステップが 401 で失敗するので先に止める
   const r = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' });
@@ -208,25 +240,47 @@ function clearState(state) {
   }
 }
 
-function buildSteps({ owner, repo }) {
+function buildSteps({ owner, repo, reuseApp = false }) {
+  // Issue #356: 第 1 ステップは新規作成（app-create）か既存再利用（app-reuse）かで分岐する。
+  // 第 2 ステップ以降（app-logo / app-install / secret-* / workflow）は両モード共通で、
+  // どちらも 7 ステップを返す（後続ステップは state を読むだけなので変更不要）。
+  const firstStep = reuseApp
+    ? {
+        id: 'app-reuse',
+        label: '既存 GitHub App を再利用',
+        // run() が実行パスで state.credentials / state.appIdString を事前充足する。
+        // 本 run は事前充足済み state の検証のみを行い、clack プロンプト・Manifest Flow を
+        // 一切呼ばない（spinner 内インタラクション禁止の既存パターン維持、architect #3 / CISO L-2）。
+        // 未充足は通常到達しないが、フェイルセーフとして { ok: false } を返す。
+        run: async (state) => {
+          if (!state.appIdString || !state.credentials || !Number.isInteger(state.credentials.id)) {
+            return { ok: false, hint: '既存 App の App ID が取得できていません（再利用フローの state 未充足）' };
+          }
+          return {
+            ok: true,
+            info: `既存 App を再利用: ${state.credentials.name} / App ID: ${state.appIdString}`,
+          };
+        },
+      }
+    : {
+        id: 'app-create',
+        label: 'GitHub App を作成',
+        run: async (state) => {
+          const result = await install.run({
+            argv: ['--owner', owner, '--yes'],
+            skipConsent: true,
+            skipPrintResult: true,
+          });
+          if (!result || !Number.isInteger(result.id)) {
+            return { ok: false, hint: 'App 作成結果に id（数値）が含まれていません' };
+          }
+          state.credentials = result;
+          state.appIdString = String(result.id);
+          return { ok: true, info: `App 名: ${result.name || `vibehawk-for-${owner}`} / App ID: ${result.id}` };
+        },
+      };
   return [
-    {
-      id: 'app-create',
-      label: 'GitHub App を作成',
-      run: async (state) => {
-        const result = await install.run({
-          argv: ['--owner', owner, '--yes'],
-          skipConsent: true,
-          skipPrintResult: true,
-        });
-        if (!result || !Number.isInteger(result.id)) {
-          return { ok: false, hint: 'App 作成結果に id（数値）が含まれていません' };
-        }
-        state.credentials = result;
-        state.appIdString = String(result.id);
-        return { ok: true, info: `App 名: ${result.name || `vibehawk-for-${owner}`} / App ID: ${result.id}` };
-      },
-    },
+    firstStep,
     {
       id: 'app-logo',
       label: 'bot アイコン（ロゴ）を差し替え',
@@ -598,6 +652,37 @@ async function promptRepoInteractive() {
   return typeof v === 'string' ? v.trim() : v;
 }
 
+// Issue #356: App 作成モード（新規 / 既存再利用）を選ばせる。
+// 既存 App 検出 API が無いため明示的選択にする（設計判断、docs/troubleshooting.md 参照）。
+async function promptAppMode() {
+  return clack.select({
+    message: 'GitHub App をどうしますか？',
+    options: [
+      { value: 'new', label: '🆕 新規作成（この owner で初めて vibehawk を導入する）' },
+      {
+        value: 'reuse',
+        label: '♻️ 既存 App を再利用（2 つ目以降のリポジトリ導入。vibehawk-for-<owner> 作成済み）',
+      },
+    ],
+    initialValue: 'new',
+  });
+}
+
+// Issue #356: 既存 App の App ID を入力させる。App ID は所有者の App 設定ページで確認できる。
+// isValidAppId を共有し（CISO M-1）、案内文で App ID の在処と URL 目視確認を促す（CISO M-2）。
+async function promptExistingAppId(owner) {
+  const appName = buildAppName(owner);
+  return clack.text({
+    message: `既存 App「${appName}」の App ID（数値）を入力してください（https://github.com/settings/apps/${appName} の "About" で確認できます。URL が自分の App と一致するか目視確認してください）`,
+    placeholder: 'example: 1234567',
+    validate: (val) => {
+      const t = (val || '').trim();
+      if (!t) return 'App ID を入力してください';
+      if (!isValidAppId(t)) return 'App ID は正の整数で入力してください';
+    },
+  });
+}
+
 async function run({ argv = process.argv.slice(3) } = {}) {
   const dryRun = parseDryRun(argv);
   const state = buildState();
@@ -646,15 +731,47 @@ async function run({ argv = process.argv.slice(3) } = {}) {
     repo = 'dry-run-owner/dry-run-repo';
   }
 
+  // Issue #356: App 作成モード（新規 / 既存再利用）の決定。
+  // フラグ（--reuse-app / --app-id）優先、未指定かつ非 dry-run なら対話選択。
+  // reuseApp / reuseAppId は run() ローカル変数に留め state には書き込まない（clearState 同期不要、CISO L-1）。
+  let reuseApp = parseReuseApp(argv);
+  let reuseAppId = parseAppId(argv);
+  if (reuseAppId) reuseApp = true; // --app-id 指定は reuse を含意
+  if (!dryRun) {
+    if (!reuseApp) {
+      const mode = await promptAppMode();
+      if (clack.isCancel(mode)) {
+        clack.cancel('セットアップを中止しました');
+        clearState(state);
+        process.exit(0);
+      }
+      reuseApp = mode === 'reuse';
+    }
+    // 再利用かつ App ID 未取得（フラグ無し or フラグ不正で null）なら対話入力する。
+    // parseAppId が null を返した値は state に入れず、必ず検証済み文字列を得る（CISO M-1）。
+    if (reuseApp && !reuseAppId) {
+      reuseAppId = await promptExistingAppId(owner);
+      if (clack.isCancel(reuseAppId)) {
+        clack.cancel('セットアップを中止しました');
+        clearState(state);
+        process.exit(0);
+      }
+      reuseAppId = typeof reuseAppId === 'string' ? reuseAppId.trim() : reuseAppId;
+    }
+  }
+
   // 同意 + プレビュー（npm AUP 遵守、CLI が secret を書き込まない宣言）
+  const firstStepLine = reuseApp
+    ? `  [1/6] 既存 GitHub App を再利用（App ID 入力済み、新規作成しない）`
+    : '  [1/6] GitHub App を作成（localhost のみ、運営側サーバー通信なし）';
   note(
     [
       `owner: ${owner}`,
       `repo:  ${repo}`,
-      `mode:  ${dryRun ? 'dry-run（実際の操作は行わない）' : '通常実行'}`,
+      `mode:  ${dryRun ? 'dry-run（実際の操作は行わない）' : reuseApp ? '通常実行（既存 App 再利用）' : '通常実行（新規 App 作成）'}`,
       '',
       'このウィザードは以下を実行します:',
-      '  [1/6] GitHub App を作成（localhost のみ、運営側サーバー通信なし）',
+      firstStepLine,
       '  [2/6] App をリポジトリにインストール（利用者がブラウザで操作）',
       '  [3/6] VIBEHAWK_APP_ID を Secrets に登録（利用者が GitHub Settings で操作）',
       '  [4/6] VIBEHAWK_PRIVATE_KEY を生成・登録（利用者が GitHub Settings で操作）',
@@ -692,7 +809,28 @@ async function run({ argv = process.argv.slice(3) } = {}) {
     };
   }
 
-  const STEPS = buildSteps({ owner, repo });
+  // Issue #356: 再利用フローは実行パスで state を事前充足する（dry-run は早期 return 済みで到達しない）。
+  // slug は命名統制で vibehawk-for-<owner> に固定（owner は validateOwner 検証済み）。
+  // html_url は公開 App ページ。後続ステップ（app-install / secret-pem 等）が state から URL を組み立てる。
+  // Number.isInteger で再ガードし、"null" 等の不正値が state.appIdString に混入しないことを保証する（CISO M-1）。
+  if (reuseApp) {
+    const appId = Number(reuseAppId);
+    if (!isValidAppId(String(reuseAppId)) || !Number.isInteger(appId)) {
+      clack.cancel('既存 App の App ID が不正です（正の整数を指定してください）');
+      clearState(state);
+      process.exit(1);
+    }
+    const appName = buildAppName(owner);
+    state.credentials = {
+      id: appId,
+      name: appName,
+      slug: appName,
+      html_url: `https://github.com/apps/${appName}`,
+    };
+    state.appIdString = String(appId);
+  }
+
+  const STEPS = buildSteps({ owner, repo, reuseApp });
   state.totalSteps = STEPS.length;
   const summary = [];
 
@@ -836,6 +974,10 @@ async function run({ argv = process.argv.slice(3) } = {}) {
 module.exports = {
   run,
   parseDryRun,
+  // Issue #356: 既存 App 再利用フロー関連の export（テスト用）
+  isValidAppId,
+  parseReuseApp,
+  parseAppId,
   checkGhAuth,
   buildSteps,
   buildState,
