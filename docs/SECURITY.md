@@ -380,7 +380,8 @@ v0.2.3 以降、外部リポジトリに配布された workflow（`vibehawk-rev
 
 | 観点 | 内容 |
 |---|---|
-| token 非永続化 | runtime checkout は読み取り専用で後続の git 操作を伴わないため、`persist-credentials: false` を必須とする（token を `.vibehawk-runtime/.git/config` に永続化しない。CISO 承認条件） |
+| token 非永続化（2nd checkout） | runtime checkout は読み取り専用で後続の git 操作を伴わないため、`persist-credentials: false` を必須とする（token を `.vibehawk-runtime/.git/config` に永続化しない。CISO 承認条件） |
+| token 非永続化（1st checkout、Issue #349） | PR 本体 checkout も `persist-credentials: false` とし、`GITHUB_TOKEN` を `$GITHUB_WORKSPACE/.git/config` に永続化しない。後続の `claude-code-action`（LLM）が untrusted な PR diff を走査するため、workspace ツリーに token を残さない（`vibehawk-review.yml` / `vibehawk-chat.yml` / `vibehawk-review-skip-mark.yml` の 1st checkout に適用、後続 step は `git push`/`fetch` を行わず `gh` は `GH_TOKEN` env を使う） |
 | pin | `ref` はリリースタグ（`v<X.Y.Z>`）。配布時に `cli/install.js` が自パッケージ version から置換するため、利用者が検収した npm バージョンと実行されるスクリプトのバージョンが一致する |
 
 #### 残余リスク（CISO 記録）

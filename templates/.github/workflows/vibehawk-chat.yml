@@ -30,6 +30,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # persist-credentials: false: PR 本体 checkout の token を workspace の .git/config に残さない。
+          #   後続の claude-code-action（LLM）が untrusted な PR diff を走査するため、workspace ツリーに
+          #   token を残さない（Issue #349）。後続 step は git push/fetch を行わず GH_TOKEN env のみ使う。
+          persist-credentials: false
 
       # === 外部リポジトリでの自己完結化（Issue #346） ===
       # 本 workflow が参照するスクリプトは vibehawk リポジトリ本体にのみ存在する。
