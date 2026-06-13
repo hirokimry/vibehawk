@@ -2,6 +2,18 @@
 
 vibehawk のリリース履歴。各バージョンの主要変更点を記録する。
 
+## v0.3.0 - 2026-06-13
+
+## ✨ 新機能
+- 配布 workflow のランタイム取得が commit SHA pin になりタグ改変の波及を受けなくなる (#354) (4da9144)
+
+## 🐛 バグ修正
+- 外部リポジトリで lockfile のみ変更の PR でも vibehawk required check が緑になる (#353) (2236be2)
+- PR 本体 checkout が GITHUB_TOKEN を workspace の .git/config に残さなくなる (#352) (083edd0)
+
+## 📖 ドキュメント
+- POLICY の商標条項が vibehawk ロゴ画像の配布・使用条件をカバーするようになる (#351) (36bd104)
+
 ## v0.2.2 - 2026-06-12
 
 ## 🐛 バグ修正
