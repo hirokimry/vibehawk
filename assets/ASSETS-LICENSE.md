@@ -11,6 +11,7 @@ This directory contains binary assets bundled with the `vibehawk` npm package.
 
 > [!NOTE]
 > This image also functions as the **vibehawk brand mark**. Trademark use of the
-> `vibehawk` name and logo is governed by `docs/POLICY.md`. The MIT license covers
+> `vibehawk` name and logo is governed by `docs/POLICY.md` (see the section
+> "ロゴ画像（assets/vibehawk-logo.png）の配布・使用条件"). The MIT license covers
 > copying/redistribution of the file; it does not grant trademark rights to pass
 > off a fork as "vibehawk".
