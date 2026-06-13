@@ -5,6 +5,54 @@
 > 対象読者: vibehawk を導入する開発者。
 > 各項目には Source of Truth となる関連ドキュメントへの cross-reference を付与している。詳細な設計判断や法務効果はリンク先を参照すること。
 
+## 2 つ目以降のリポジトリ導入: 既存 App を再利用する
+
+> [!IMPORTANT]
+> vibehawk App は **owner 単位（1 App = N リポジトリ）** であり、`vibehawk-for-<owner>` は owner ごとに 1 つ。
+> 2 つ目以降のリポジトリ導入では **App を新規作成せず既存を再利用する** のが正規導線。
+
+### 症状
+
+owner が既に 1 リポジトリで vibehawk を導入済み（= `vibehawk-for-<owner>` App 作成済み）の状態で、別リポジトリに `npx vibehawk setup` すると、App 作成画面で **「Name is already taken」** が表示され「Create GitHub App」を押せない。
+
+GitHub Apps はグローバルで名前ユニーク制約があるため、同名 App は 2 つ作れない（Issue #356）。
+
+### 復旧手順（既存 App 再利用）
+
+1. **再利用モードを選ぶ**: `npx vibehawk setup` を実行すると冒頭で「🆕 新規作成 / ♻️ 既存 App を再利用」の選択が出る。**♻️ 既存 App を再利用** を選ぶ。
+
+   ```bash
+   npx vibehawk setup --owner <owner> --repo <owner>/<other-repo>
+   ```
+
+   非対話で実行する場合は `--reuse-app` / `--app-id <数値>` を付ける。
+
+   ```bash
+   npx vibehawk setup --owner <owner> --repo <owner>/<other-repo> --reuse-app --app-id <App ID>
+   ```
+
+   `--app-id <数値>` を付けると `--reuse-app` を省略しても再利用モードになる（App ID 指定は再利用を含意する）。
+
+2. **App ID を入力**: 既存 App の App ID（数値）を入力する。App ID は `https://github.com/settings/apps/vibehawk-for-<owner>` の "About" で確認できる。URL が自分の App と一致するか目視確認する。
+
+3. **App を新リポジトリにインストール**: ウィザードの案内に従い、既存 App を **新しい対象リポジトリにもインストール** する（owner 単位 App でもリポジトリごとに install が必要）。
+
+4. **Private Key を生成・登録**: `https://github.com/settings/apps/vibehawk-for-<owner>` で **"Generate a private key"** を押して `.pem` をダウンロードし、新リポジトリの Secrets に `VIBEHAWK_PRIVATE_KEY` として登録する。保存済みの `.pem` があればそれを再利用してもよい（Private Key は App 単位で全リポジトリ共通）。
+
+5. **残りの Secrets と workflow PR**: ウィザードが `VIBEHAWK_APP_ID` / `CLAUDE_CODE_OAUTH_TOKEN` の登録案内と workflow ファイル配置 PR の作成まで継続する。
+
+### 注意事項
+
+既存 App を **削除して作り直す必要はない**。削除すると 1 つ目のリポジトリの vibehawk が動かなくなる。2 つ目以降は必ず再利用する。
+
+CLI は再利用フローでも Private Key を一切 touch しない（新規作成しないため Manifest Flow の Private Key 受け取り自体が発生せず、攻撃面はむしろ縮小する。CISO 確認済み）。
+
+### 関連ドキュメント
+
+- `命名統制衝突（連番付与）が検出された場合`（本ドキュメント下記） — 連番付き App が作られてしまった場合の削除手順
+- `POLICY.md § vibehawk-for-<owner> 命名の商標使用許諾（Issue #33）` — owner 単位命名の根拠
+- `SECURITY.md` — Private Key を CLI が touch しない CISO Critical 条件
+
 ## 命名統制衝突（連番付与）が検出された場合
 
 `npx vibehawk install` 実行時に以下のようなエラーで処理が中断される場合がある（Issue #60 / CEO 判断 B、2026-05-09）。
@@ -29,6 +77,7 @@ GitHub Apps はグローバルで名前ユニーク制約があり、同名 App 
 
 2. **既存の `vibehawk-for-<owner>` App を確認**: 同名 App が既に存在することが連番付与の原因である。
    - `https://github.com/settings/apps` にアクセスして既存 App 一覧を確認
+   - **2 つ目以降のリポジトリ導入が目的なら、既存 App を削除せず再利用する**（本ドキュメント上部「2 つ目以降のリポジトリ導入: 既存 App を再利用する」を参照）
    - 不要であれば既存 App を削除し、その後 `npx vibehawk install --owner <owner>` を再実行
    - 既存 App を残したい場合は、別 owner 名で再実行（例: `npx vibehawk install --owner <別の名前>`）
 

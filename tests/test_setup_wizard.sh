@@ -1484,5 +1484,179 @@ else
   fail "setup.js に branchProtectionGated gating がない（Issue #134）"
 fi
 
+# Issue #356: 既存 App 再利用フロー
+echo ""
+echo "=== Issue #356: 既存 App 再利用フロー ==="
+
+# assert 1: parseReuseApp が --reuse-app を検出し、無指定で false を返す
+if node -e '
+const s = require("./cli/setup");
+if (s.parseReuseApp(["--reuse-app"]) !== true) process.exit(1);
+if (s.parseReuseApp(["--owner", "alice"]) !== false) process.exit(1);
+if (s.parseReuseApp([]) !== false) process.exit(1);
+'; then
+  pass "parseReuseApp が --reuse-app を検出し無指定で false（Issue #356）"
+else
+  fail "parseReuseApp の挙動が想定と異なる（Issue #356）"
+fi
+
+# assert 2: parseAppId が --app-id <n> / --app-id=<n> を取得し、不正値で null を返す
+if node -e '
+const s = require("./cli/setup");
+if (s.parseAppId(["--app-id", "123"]) !== "123") process.exit(1);
+if (s.parseAppId(["--app-id=456"]) !== "456") process.exit(1);
+// 不正値: 0 / 先頭ゼロ / 非数値 / 空 / 負数 → null
+if (s.parseAppId(["--app-id", "0"]) !== null) process.exit(1);
+if (s.parseAppId(["--app-id", "01"]) !== null) process.exit(1);
+if (s.parseAppId(["--app-id", "abc"]) !== null) process.exit(1);
+if (s.parseAppId(["--app-id", ""]) !== null) process.exit(1);
+if (s.parseAppId(["--app-id", "-5"]) !== null) process.exit(1);
+if (s.parseAppId([]) !== null) process.exit(1);
+'; then
+  pass "parseAppId が正の整数のみ取得し不正値（0 / 先頭ゼロ / 非数値 / 空 / 負数）で null（Issue #356）"
+else
+  fail "parseAppId の検証が想定と異なる（Issue #356）"
+fi
+
+# assert 3: isValidAppId が正の整数のみ true（フラグ/対話で共有する単一述語、CISO M-1）
+if node -e '
+const s = require("./cli/setup");
+if (s.isValidAppId("1") !== true) process.exit(1);
+if (s.isValidAppId("9999999") !== true) process.exit(1);
+if (s.isValidAppId("0") !== false) process.exit(1);
+if (s.isValidAppId("01") !== false) process.exit(1);
+if (s.isValidAppId("") !== false) process.exit(1);
+if (s.isValidAppId("12a") !== false) process.exit(1);
+if (s.isValidAppId(null) !== false) process.exit(1);
+'; then
+  pass "isValidAppId が正の整数のみ true（フラグ/対話で共有する単一述語、CISO M-1）"
+else
+  fail "isValidAppId の挙動が想定と異なる（Issue #356）"
+fi
+
+# assert 4: buildSteps({ reuseApp: true }) の第 1 ステップが app-reuse で app-create を含まない
+if node -e '
+const s = require("./cli/setup");
+const steps = s.buildSteps({ owner: "alice", repo: "alice/bob", reuseApp: true });
+if (steps.length !== 7) { console.error("expected 7 steps, got", steps.length); process.exit(1); }
+if (steps[0].id !== "app-reuse") { console.error("first step must be app-reuse, got", steps[0].id); process.exit(1); }
+if (steps.some((x) => x.id === "app-create")) { console.error("app-create must not exist in reuse mode"); process.exit(1); }
+// 第 2 ステップ以降は新規モードと共通（app-logo が index 1）
+if (steps[1].id !== "app-logo") { console.error("second step must be app-logo, got", steps[1].id); process.exit(1); }
+'; then
+  pass "buildSteps({ reuseApp: true }) が 7 ステップで第 1=app-reuse・app-create 不在・第 2=app-logo（Issue #356）"
+else
+  fail "buildSteps({ reuseApp: true }) の構造が想定と異なる（Issue #356）"
+fi
+
+# assert 5: buildSteps()（reuseApp 無指定）が従来通り app-create を第 1 ステップに持つ（後方互換）
+if node -e '
+const s = require("./cli/setup");
+const steps = s.buildSteps({ owner: "alice", repo: "alice/bob" });
+if (steps.length !== 7) process.exit(1);
+if (steps[0].id !== "app-create") { console.error("default first step must be app-create, got", steps[0].id); process.exit(1); }
+if (steps.some((x) => x.id === "app-reuse")) { console.error("app-reuse must not exist in default mode"); process.exit(1); }
+'; then
+  pass "buildSteps()（reuseApp 無指定）が第 1=app-create を維持（後方互換、Issue #356）"
+else
+  fail "buildSteps() のデフォルト挙動が変わった（後方互換違反、Issue #356）"
+fi
+
+# assert 6: app-reuse.run が clack / spawnSync を呼ばず、充足/未充足 state で正しく分岐する（CISO L-2 / architect #3）
+if node -e '
+const cp = require("child_process");
+const orig = cp.spawnSync;
+let spawnCalled = false;
+cp.spawnSync = function() { spawnCalled = true; return { status: 0, stdout: "", stderr: "" }; };
+const s = require("./cli/setup");
+const steps = s.buildSteps({ owner: "alice", repo: "alice/bob", reuseApp: true });
+const reuse = steps[0];
+(async () => {
+  const ok = await reuse.run({ appIdString: "123", credentials: { id: 123, name: "vibehawk-for-alice" } });
+  const ng = await reuse.run({});
+  cp.spawnSync = orig;
+  if (spawnCalled) { console.error("app-reuse.run must NOT call spawnSync"); process.exit(1); }
+  if (!ok || ok.ok !== true) { console.error("populated state must return ok:true"); process.exit(1); }
+  if (!ng || ng.ok !== false) { console.error("empty state must return ok:false"); process.exit(1); }
+})();
+' > /dev/null 2>&1; then
+  pass "app-reuse.run が spawnSync を呼ばず充足/未充足で {ok:true}/{ok:false} を返す（CISO L-2 / architect #3）"
+else
+  fail "app-reuse.run が spawnSync を呼ぶ or state 分岐が想定と異なる（Issue #356）"
+fi
+
+# assert 7: reuse モードで app-install / secret-pem の getUrl が state.credentials から正しい URL を生成
+if node -e '
+const s = require("./cli/setup");
+const steps = s.buildSteps({ owner: "alice", repo: "alice/bob", reuseApp: true });
+const cred = { id: 123, name: "vibehawk-for-alice", slug: "vibehawk-for-alice", html_url: "https://github.com/apps/vibehawk-for-alice" };
+const state = { credentials: cred, appIdString: "123" };
+const install = steps.find((x) => x.id === "app-install");
+const pem = steps.find((x) => x.id === "secret-pem");
+if (install.getUrl(state) !== "https://github.com/apps/vibehawk-for-alice/installations/new") { console.error("app-install url wrong:", install.getUrl(state)); process.exit(1); }
+if (pem.getUrl(state) !== "https://github.com/settings/apps/vibehawk-for-alice") { console.error("secret-pem url wrong:", pem.getUrl(state)); process.exit(1); }
+'; then
+  pass "reuse モードで app-install / secret-pem の getUrl が state.credentials から正しい URL を生成（Issue #356）"
+else
+  fail "reuse モードの getUrl が想定 URL を生成しない（Issue #356）"
+fi
+
+# assert 8: 再利用フローで run() が state.appIdString に "null" 文字列を混入させない（CISO M-1 機械検証）
+# --reuse-app かつ不正 --app-id を渡すと、parseAppId は null を返す。
+# 対話入力もできない（clack モックで isCancel false / 空文字を返すと validate で弾かれるが、
+# ここでは run() が "null"/"undefined"/"NaN" 文字列を state に書かないことを設計コードで検証する。
+# state 充足直前の Number.isInteger 再ガードで不正値は process.exit(1) になる。
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/setup.js", "utf8");
+// reuseApp 充足ブロックに Number.isInteger 再ガードがあること
+if (!/if\s*\(reuseApp\)\s*\{[\s\S]*?Number\.isInteger\(appId\)/.test(src)) {
+  console.error("state 充足ブロックに Number.isInteger 再ガードがない");
+  process.exit(1);
+}
+// state.appIdString = String(appId)（検証済み数値）であり String(reuseAppId) を直接代入しないこと
+if (/state\.appIdString\s*=\s*String\(reuseAppId\)/.test(src)) {
+  console.error("state.appIdString に未検証の reuseAppId を直接代入している");
+  process.exit(1);
+}
+if (!/state\.appIdString\s*=\s*String\(appId\)/.test(src)) {
+  console.error("state.appIdString = String(appId)（検証済み数値）になっていない");
+  process.exit(1);
+}
+'; then
+  pass "run() の state 充足が Number.isInteger 再ガード後に String(appId) を使い \"null\" 混入を防ぐ（CISO M-1）"
+else
+  fail "run() の state 充足に Number.isInteger 再ガードがない or 未検証値を代入している（CISO M-1 違反）"
+fi
+
+# assert 9: setup.js が gh secret set / 書込系 gh api を呼ばない（再利用フロー追加後も CISO Critical 維持）
+if grep -vE '^\s*(//|\*)' cli/setup.js | grep -E "spawnSync\(['\"]gh['\"][^)]*secret[^)]*set|['\"]--method['\"][[:space:]]*,[[:space:]]*['\"](PUT|POST|DELETE)['\"]" > /dev/null; then
+  fail "setup.js が gh secret set / 書込系 gh api を呼ぶ（再利用フロー追加で CISO Critical 違反）"
+else
+  pass "setup.js は再利用フロー追加後も gh secret set / 書込系 gh api を呼ばない（CISO Critical 維持）"
+fi
+
+# assert 10: docs/troubleshooting.md に既存 App 再利用の項が追加されている
+if grep -F "2 つ目以降のリポジトリ導入: 既存 App を再利用する" docs/troubleshooting.md > /dev/null; then
+  pass "docs/troubleshooting.md に既存 App 再利用の項が追加されている（Issue #356 完了条件）"
+else
+  fail "docs/troubleshooting.md に既存 App 再利用の項がない（Issue #356 完了条件違反）"
+fi
+
+# assert 11: 再利用案内に「削除せず再利用」「App ID 入力」「Private Key 生成」の導線がある
+declare -a REUSE_KEYWORDS=(
+  "削除して作り直す必要はない"
+  "App ID を入力"
+  "Generate a private key"
+  "--reuse-app"
+)
+for kw in "${REUSE_KEYWORDS[@]}"; do
+  if grep -F -- "$kw" docs/troubleshooting.md > /dev/null; then
+    pass "troubleshooting.md に再利用導線キーワード '$kw' が含まれる（Issue #356）"
+  else
+    fail "troubleshooting.md に再利用導線キーワード '$kw' がない（Issue #356）"
+  fi
+done
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
