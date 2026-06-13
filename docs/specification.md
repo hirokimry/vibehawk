@@ -122,7 +122,7 @@ CodeRabbit が DB で持つ状態を、vibehawk では GitHub 上のどこから
 |---|---|
 | 判定 | guard ファイルの存在を `hashFiles()` で確認し、空の場合を「外部リポジトリ」と判定する（vibehawk 自リポジトリ・fork では手元スクリプトを使い dogfooding が成立する）。guard ファイルは workflow ごとに異なる: `vibehawk-review.yml` / `vibehawk-chat.yml` は `scripts/ci/vibehawk-{review,chat}/check-secrets.sh`、`vibehawk-review-skip-mark.yml` は `scripts/ci/vibehawk-review-skip-mark/classify-paths-ignore.sh` |
 | 取得 | `actions/checkout@v4` で `repository: hirokimry/vibehawk` を `path: .vibehawk-runtime` に checkout する。`persist-credentials: false` で token を `.git/config` に永続化しない |
-| pin | `ref` はリリースタグ（`v<X.Y.Z>`）。テンプレートのプレースホルダ `__VIBEHAWK_REF__` を配布時に `cli/install.js` が自パッケージの version から置換する。リリースフロー（version bump → tag 作成 → npm publish）の順序により、配布物が指すタグは配布時点で必ず実在する |
+| pin | `ref` は配布時に `cli/install.js` がリリースタグ `v<X.Y.Z>` を解決した **commit SHA**（immutable、Issue #347）。テンプレートのプレースホルダ `__VIBEHAWK_REF__` を `<commit SHA>  # v<X.Y.Z>`（タグ名コメント併記で可読性維持）に置換する。git タグは force-update 可能（mutable）だが、配布時点で commit SHA を焼き込むため、タグ差し替えによる既配布リポジトリへのコード波及を構造的に受けない。解決は upstream `hirokimry/vibehawk` から行い、解決失敗（オフライン / API 障害 / タグ不在）時は fail-fast で配布を中止する |
 | 実行 | 以降の全 step は `${VIBEHAWK_RUNTIME}`（自リポジトリ = `.` / 外部 = `.vibehawk-runtime`）prefix 経由でスクリプトを実行する。スクリプト内部のファイル参照（prompt / include 基点）はスクリプト自身の位置から解決する |
 
 #### 🔖 タグ運用の前提（残余リスクの記録）

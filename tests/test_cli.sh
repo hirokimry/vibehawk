@@ -880,20 +880,66 @@ else
   fail "troubleshooting.md に「永続 pending」項目がない（Issue #134）"
 fi
 
-# Issue #346: renderWorkflowTemplate が __VIBEHAWK_REF__ を v<package.json version> に置換する
+# Issue #347: renderWorkflowTemplate が __VIBEHAWK_REF__ を解決済み commit SHA + タグコメントに
+# 置換する（解決済み SHA を注入し network 非依存に検証する）
 if node -e '
 const i = require("./cli/install.js");
 const { version } = require("./package.json");
+const FAKE_SHA = "a".repeat(40);
 for (const wf of i.WORKFLOWS) {
-  const rendered = i.renderWorkflowTemplate(wf);
+  const rendered = i.renderWorkflowTemplate(wf, { sha: FAKE_SHA, tag: "v" + version });
   if (rendered.includes(i.RUNTIME_REF_PLACEHOLDER)) process.exit(1);
-  if (!rendered.includes("ref: v" + version)) process.exit(1);
+  if (!rendered.includes("ref: " + FAKE_SHA + "  # v" + version)) process.exit(1);
 }
 process.exit(0);
 '; then
-  pass "renderWorkflowTemplate がプレースホルダを v$(node -p 'require("./package.json").version') へ置換する（Issue #346）"
+  pass "renderWorkflowTemplate がプレースホルダを commit SHA + タグコメントへ置換する（Issue #347）"
 else
-  fail "renderWorkflowTemplate のプレースホルダ置換が機能していない（Issue #346）"
+  fail "renderWorkflowTemplate のプレースホルダ置換が機能していない（Issue #347）"
+fi
+
+# Issue #347: resolveRuntimeRefSha が lightweight / annotated タグを commit SHA へ解決する
+# （spawn スタブ注入で network 非依存に検証）
+if node -e '
+const i = require("./cli/install.js");
+const COMMIT = "b".repeat(40);
+const ANNO_OBJ = "c".repeat(40);
+const PEELED = "d".repeat(40);
+// lightweight: 1 段で commit SHA
+const lw = i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 0, stdout: "commit " + COMMIT + "\n" }) });
+if (lw !== COMMIT) process.exit(1);
+// annotated: refs/tags が tag を返し、git/tags で commit へ peel
+let calls = 0;
+const an = i.resolveRuntimeRefSha("v1.2.3", { spawn: (cmd, args) => {
+  calls++;
+  if (args.join(" ").indexOf("git/refs/tags") !== -1) return { status: 0, stdout: "tag " + ANNO_OBJ + "\n" };
+  return { status: 0, stdout: PEELED + "\n" };
+} });
+if (an !== PEELED || calls !== 2) process.exit(1);
+process.exit(0);
+'; then
+  pass "resolveRuntimeRefSha が lightweight / annotated タグを commit SHA へ解決する（Issue #347）"
+else
+  fail "resolveRuntimeRefSha のタグ解決（peel 含む）が機能していない（Issue #347）"
+fi
+
+# Issue #347: resolveRuntimeRefSha が fail-fast する（API 失敗 / 不正 SHA / 不正 tag）
+if node -e '
+const i = require("./cli/install.js");
+function throws(fn, needle) {
+  try { fn(); return false; } catch (e) { return e.message.indexOf(needle) !== -1; }
+}
+// gh api status !== 0（オフライン / 404）
+if (!throws(() => i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 1, stderr: "not found" }) }), "解決に失敗")) process.exit(1);
+// 非 40hex の戻り値
+if (!throws(() => i.resolveRuntimeRefSha("v1.2.3", { spawn: () => ({ status: 0, stdout: "commit notasha\n" }) }), "40 桁 hex")) process.exit(1);
+// 不正 tag（改行混入 → YAML インジェクション防御）
+if (!throws(() => i.resolveRuntimeRefSha("v1.2.3\nevil: x", { spawn: () => ({ status: 0, stdout: "" }) }), "不正なリリースタグ")) process.exit(1);
+process.exit(0);
+'; then
+  pass "resolveRuntimeRefSha が API 失敗 / 不正 SHA / 不正 tag で fail-fast する（Issue #347）"
+else
+  fail "resolveRuntimeRefSha の fail-fast が機能していない（Issue #347）"
 fi
 
 # Issue #346: 配布テンプレート側にはプレースホルダが必ず 1 箇所（ref 行）存在する
