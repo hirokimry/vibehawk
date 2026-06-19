@@ -686,7 +686,7 @@ vibehawk は npm パッケージとして CLI を提供する。利用者は `np
 
 | コマンド | 用途 |
 |---|---|
-| `npx vibehawk setup [--owner USER] [--repo OWNER/REPO] [--dry-run]` | 対話型ウィザード（推奨）。App 作成 → リポジトリインストール → 3 secrets 登録 → workflow 配置の全 6 ステップを 1 コマンドに集約。Enter ゲートで段階検証（CLI は Anthropic に通信しない、secret を書き込まない）（Issue #91） |
+| `npx vibehawk setup [--owner USER] [--repo OWNER/REPO] [--dry-run]` | 対話型ウィザード（推奨）。App 作成 → bot アイコン（ロゴ）差し替え → リポジトリインストール → 3 secrets 登録 → workflow 配置の全 7 ステップを 1 コマンドに集約。Enter ゲートで段階検証（CLI は Anthropic に通信しない、secret を書き込まない）（Issue #91） |
 | `npx vibehawk install` | GitHub App Manifest Flow を起動して利用者の GitHub アカウントに `vibehawk-for-<owner>` App を作成（CLI は secret を書き込まない、利用者が GitHub Settings UI で App ID / Private Key を手動登録する） |
 | `npx vibehawk setup-token` | Claude OAuth Token の取得を補助し GitHub Settings 登録手順を画面誘導（CLI は secret を書き込まない、明示同意の上でクリップボードにコピー、Issue #74） |
 | `npx vibehawk help` | コマンド一覧を表示 |
@@ -728,11 +728,21 @@ CLI 起動時に「⚠️ 命名統制」の旨を明示表示し、利用者が
 
 #### 推奨経路: `npx vibehawk setup` 1 コマンドで導入（Issue #91）
 
-対話型ウィザードが全 6 ステップを 1 コマンドに集約する。
+対話型ウィザードが全 7 ステップを 1 コマンドに集約する（`buildSteps()` が返す 7 ステップ）。
 
 ```bash
 npx vibehawk setup --owner <your-github-username> --repo <owner>/<repo>
 ```
+
+ウィザードの 7 ステップは以下のとおり。
+
+1. **GitHub App を作成**（既存再利用時は「既存 App を再利用」に分岐、`--reuse-app`）
+2. **bot アイコン（ロゴ）を差し替え** — 同梱ロゴを App の Display information にアップロード案内。macOS では同梱ロゴを Finder で自動表示する（Issue #360）。任意ステップ
+3. **App を対象リポジトリにインストール**
+4. **`VIBEHAWK_APP_ID` を Secrets に登録**
+5. **`VIBEHAWK_PRIVATE_KEY` を生成・登録** — App 設定ページで鍵生成 → Secrets 登録ページで登録の 2 段を案内（Issue #359）
+6. **`CLAUDE_CODE_OAUTH_TOKEN` を取得・登録**（Issue #361）
+7. **workflow ファイル PR を作成**
 
 各ステップで「指示表示 → ブラウザで操作 → Enter → CLI が `gh api` 検証（読み取り専用）→ OK で次 / NG なら原因表示してリトライ・スキップ・中止」の Enter ゲートで進行する。
 CLI 自体は Anthropic に通信せず、secret を書き込まない。
