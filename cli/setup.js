@@ -346,9 +346,14 @@ function buildSteps({ owner, repo, reuseApp = false }) {
       // （URL コピー / ブラウザ自動遷移時に説明文が混入しないようにする）。
       getUrl: (state) =>
         `https://github.com/settings/apps/${state.credentials && state.credentials.slug}`,
+      // Issue #359: 鍵生成（App 設定ページ = getUrl）と登録（Secrets ページ）の 2 段動線を案内する。
+      // secret-app-id ステップは Secrets 登録 URL を案内しているのに secret-pem には無く、
+      // .pem ダウンロード後の貼り付け先が分からない不整合があったため、登録先 URL を追記する。
       getInstructions: () =>
         [
-          '"Generate a private key" を押下し .pem ファイルをダウンロードしてください。',
+          '① 上記 App 設定ページで "Generate a private key" を押下し .pem ファイルをダウンロードしてください。',
+          '② ダウンロードした .pem を以下の Secrets 登録ページで登録してください:',
+          `   https://github.com/${repo}/settings/secrets/actions/new`,
           'Name: `VIBEHAWK_PRIVATE_KEY` / Value: ダウンロードした .pem 全文（-----BEGIN ... -----END を含む）',
         ].join('\n'),
       verify: () => verifySecret(repo, 'VIBEHAWK_PRIVATE_KEY'),

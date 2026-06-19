@@ -1773,5 +1773,59 @@ else
   fail "secret-token の run() がスピナー active 下で実行される / 完走しない（Issue #361 回帰）"
 fi
 
+# Issue #359: secret-pem ステップが Secrets 登録ページ URL も案内する
+# secret-app-id は Secrets 登録 URL を案内するのに secret-pem は App 設定ページ URL だけで、
+# .pem ダウンロード後の貼り付け先が分からない不整合があった。getInstructions に登録 URL を追記する。
+echo "=== Issue #359: VIBEHAWK_PRIVATE_KEY の Secrets 登録 URL 案内検証 ==="
+
+# assert 1: secret-pem の getInstructions が Secrets 登録ページ URL（settings/secrets/actions/new）を含む
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const pem = steps.find((s) => s.id === "secret-pem");
+const instr = pem.getInstructions({ credentials: { slug: "vibehawk-for-alice" } });
+if (typeof instr !== "string" || instr.length === 0) { console.error("getInstructions must return non-empty string"); process.exit(1); }
+if (!instr.includes("https://github.com/alice/bob/settings/secrets/actions/new")) {
+  console.error("getInstructions must include Secrets registration URL, got:", instr);
+  process.exit(1);
+}
+if (!/VIBEHAWK_PRIVATE_KEY/.test(instr)) { console.error("must mention Secret name"); process.exit(1); }
+'; then
+  pass "secret-pem の getInstructions が Secrets 登録ページ URL を案内する（Issue #359）"
+else
+  fail "secret-pem の getInstructions が Secrets 登録ページ URL を案内しない（Issue #359）"
+fi
+
+# assert 2: secret-pem の getInstructions が鍵生成（App 設定ページ）と登録（Secrets ページ）の 2 段を区別する
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const pem = steps.find((s) => s.id === "secret-pem");
+const instr = pem.getInstructions({ credentials: { slug: "vibehawk-for-alice" } });
+// 鍵生成（Generate a private key）と登録（Secrets 登録）の両方の文言が含まれること
+if (!/Generate a private key/.test(instr)) { console.error("must mention key generation step"); process.exit(1); }
+if (!/登録/.test(instr)) { console.error("must mention registration step"); process.exit(1); }
+'; then
+  pass "secret-pem の getInstructions が鍵生成と登録の 2 段を区別する（Issue #359）"
+else
+  fail "secret-pem の getInstructions が 2 段を区別しない（Issue #359）"
+fi
+
+# assert 3: secret-pem の getUrl は App 設定ページ（settings/apps/<slug>）のまま不変（Issue #112 回帰防止）
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const pem = steps.find((s) => s.id === "secret-pem");
+const url = pem.getUrl({ credentials: { slug: "vibehawk-for-alice" } });
+if (url !== "https://github.com/settings/apps/vibehawk-for-alice") {
+  console.error("getUrl must remain settings/apps/<slug>, got:", url);
+  process.exit(1);
+}
+'; then
+  pass "secret-pem の getUrl は settings/apps/<slug> のまま不変（Issue #359 / #112 回帰防止）"
+else
+  fail "secret-pem の getUrl が変わった（Issue #112 回帰）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
