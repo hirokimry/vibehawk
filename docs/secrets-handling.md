@@ -174,6 +174,9 @@ $ npx vibehawk install --owner alice
 
 CLI は登録代行をしない。利用者が GitHub UI で操作する。
 
+> [!NOTE]
+> `npx vibehawk setup` ウィザードの `VIBEHAWK_PRIVATE_KEY` ステップは、鍵生成ページ（App 設定ページ）と Secrets 登録ページの 2 つの URL を順に案内するようになった（Issue #359）。.pem ダウンロード後の登録先が一目で分かる。
+
 ## 9. 🔗 関連 Issue / PR / 議論
 
 - [#72 議論本体（決定記録）](https://github.com/hirokimry/vibehawk/issues/72)
