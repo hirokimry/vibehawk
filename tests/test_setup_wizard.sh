@@ -1909,5 +1909,34 @@ else
   fail "app-logo の verify / getValue / isSensitive が変わった（Issue #249 回帰）"
 fi
 
+# Issue #362: 同梱ロゴが正方形枠で角まで隙間なく表示される（四隅が白く抜けない）
+# 旧ロゴは黒円 + 白い四隅で、GitHub の正方形アイコン枠だと角が白く抜けた。四隅を円と同じ dark で
+# 埋めた。read-png-corners.js（依存ゼロ PNG デコーダ）で四隅が dark（白でない）ことを検証する。
+echo "=== Issue #362: ロゴ四隅の正方形化検証 ==="
+
+# assert 1: 四隅 4 点が dark（各チャンネル < 64）で白く抜けていない
+if corners=$(node tests/read-png-corners.js assets/vibehawk-logo.png); then
+  if node -e '
+const s = process.argv[1];
+const nums = (s.match(/[0-9]+/g) || []).map(Number);
+if (nums.length < 12) { console.error("expected 12 channel values (4 corners x RGB), got:", s); process.exit(1); }
+const bright = nums.filter((v) => v >= 64);
+if (bright.length > 0) { console.error("a corner channel is too bright (white corner not filled):", s); process.exit(1); }
+' "$corners"; then
+    pass "ロゴの四隅 4 点が dark で白く抜けていない（Issue #362: 正方形化）"
+  else
+    fail "ロゴの四隅が白く抜けている（Issue #362: 正方形化が未反映）"
+  fi
+else
+  fail "read-png-corners.js がロゴの四隅を読み取れない（Issue #362）"
+fi
+
+# assert 2: read-png-corners.js が 4 隅 12 値を出力できる（ヘルパー自体の健全性、PNG デコード成立）
+if node tests/read-png-corners.js assets/vibehawk-logo.png | grep -qE '^tl=[0-9]+,[0-9]+,[0-9]+ tr=[0-9]+,[0-9]+,[0-9]+ bl=[0-9]+,[0-9]+,[0-9]+ br=[0-9]+,[0-9]+,[0-9]+$'; then
+  pass "read-png-corners.js が四隅 RGB を所定フォーマットで出力する（PNG デコード成立）"
+else
+  fail "read-png-corners.js の出力フォーマットが想定と異なる（PNG デコード失敗の可能性）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]
