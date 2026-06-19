@@ -1658,5 +1658,120 @@ for kw in "${REUSE_KEYWORDS[@]}"; do
   fi
 done
 
+# Issue #361: secret-token の run() をスピナーで包まないことでトークン貼り付けプロンプトが表示される
+# 根本原因: executeStep が run フェーズで clack.spinner() を start 直後に await step.run(state) するため、
+# secret-token の run()（oauth.setupToken → readline）の貼り付けプロンプトがスピナー描画に上書きされ
+# 画面に出なかった。修正: interactiveRun: true のステップはスピナーを生成しない。
+echo "=== Issue #361: OAuth トークン貼り付けプロンプト表示（スピナー競合解消）検証 ==="
+
+# assert 1: secret-token ステップが interactiveRun: true を持つ
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const t = steps.find((s) => s.id === "secret-token");
+if (!t) { console.error("secret-token step not found"); process.exit(1); }
+if (t.interactiveRun !== true) { console.error("secret-token must have interactiveRun: true, got:", t.interactiveRun); process.exit(1); }
+'; then
+  pass "secret-token ステップが interactiveRun: true を持つ（Issue #361: スピナー非使用の宣言）"
+else
+  fail "secret-token ステップに interactiveRun: true がない（Issue #361）"
+fi
+
+# assert 2: executeStep の run フェーズがスピナーを interactiveRun で条件分岐し、s.stop を null ガードする
+if node -e '
+const fs = require("fs");
+const src = fs.readFileSync("cli/setup.js", "utf8");
+const m = src.match(/async function executeStep[\s\S]*?\n\}/);
+if (!m) { console.error("executeStep not found"); process.exit(1); }
+const body = m[0];
+if (!/interactiveRun/.test(body)) { console.error("executeStep does not reference interactiveRun"); process.exit(1); }
+// スピナー生成が条件付き（... ? clack.spinner() : null）であること
+if (!/clack\.spinner\(\)\s*:\s*null/.test(body)) { console.error("spinner creation is not conditional (... ? clack.spinner() : null)"); process.exit(1); }
+// s.stop が if (s) でガードされていること（少なくとも 1 箇所）
+if (!/if\s*\(s\)\s*s\.stop/.test(body)) { console.error("s.stop is not guarded with if (s)"); process.exit(1); }
+'; then
+  pass "executeStep が run スピナーを interactiveRun で条件分岐し s.stop を null ガードする（Issue #361 / architect 指摘①）"
+else
+  fail "executeStep のスピナー条件分岐 / s.stop null ガードが不足（Issue #361 / architect 指摘①）"
+fi
+
+# assert 3: secret-token の getInstructions が登録手順・Secret 名・クリップボード貼付を案内する（item 3）
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const t = steps.find((s) => s.id === "secret-token");
+const instr = t.getInstructions();
+if (typeof instr !== "string" || instr.length === 0) { console.error("getInstructions must return non-empty string"); process.exit(1); }
+if (!/CLAUDE_CODE_OAUTH_TOKEN/.test(instr)) { console.error("must mention Secret name"); process.exit(1); }
+if (!/登録/.test(instr)) { console.error("must distinguish registration step"); process.exit(1); }
+if (!/クリップボード|Cmd\+V|Ctrl\+V/.test(instr)) { console.error("must mention clipboard paste"); process.exit(1); }
+'; then
+  pass "secret-token の getInstructions が登録手順・Secret 名・クリップボード貼付を案内する（Issue #361 item 3）"
+else
+  fail "secret-token の getInstructions が登録案内を欠く（Issue #361 item 3）"
+fi
+
+# assert 4: secret-token の run() が clack スピナー非アクティブ下で実行される（貼り付けプロンプトが上書きされない）
+# clack.spinner モックで active 状態を追跡し、oauth.setupToken モック内で run 実行時に active でないことを検証する。
+if node -e '
+process.env.NODE_NO_WARNINGS = "1";
+
+let spinnerActive = false;
+let runDuringSpinner = false;
+
+require.cache[require.resolve("@clack/prompts")] = {
+  exports: {
+    intro: () => {},
+    outro: () => {},
+    text: async () => "",
+    select: async () => "skip",
+    note: () => {},
+    spinner: () => ({ start: () => { spinnerActive = true; }, stop: () => { spinnerActive = false; } }),
+    cancel: () => {},
+    isCancel: () => false,
+    group: async () => {},
+  },
+};
+
+const cp = require("child_process");
+cp.spawnSync = function() { return { status: 0, stdout: "{}", stderr: "" }; };
+
+require.cache[require.resolve("./cli/install")] = {
+  exports: {
+    run: async () => ({ id: 12345, name: "vibehawk-for-test", html_url: "https://github.com/apps/vibehawk-for-test", slug: "vibehawk-for-test" }),
+    createWorkflowPr: async () => ({ url: "https://github.com/test/test/pull/1" }),
+  },
+};
+
+require.cache[require.resolve("./cli/verify")] = {
+  exports: {
+    verifySecret: () => ({ ok: true, reason: "found", hint: "" }),
+    verifyAppInstallation: () => ({ ok: true, reason: "installed_via_user", hint: "" }),
+    verifyWorkflow: () => ({ ok: true, reason: "found", hint: "" }),
+  },
+};
+
+require.cache[require.resolve("./cli/oauth")] = {
+  exports: {
+    setupToken: async () => {
+      if (spinnerActive) runDuringSpinner = true;
+      return { repo: "test/test", token: "X".repeat(40), settingsUrl: "https://github.com/test/test/settings/secrets/actions/new", clipboardCopied: true };
+    },
+    copyToClipboard: () => ({ success: true }),
+    parseRepoArg: () => "test/test",
+  },
+};
+
+const setup = require("./cli/setup");
+setup.run({ argv: ["--owner", "test", "--repo", "test/test"] }).then(() => {
+  if (runDuringSpinner) { console.error("spinner was active during secret-token run() (paste prompt would be overwritten)"); process.exit(1); }
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "secret-token の run() が clack スピナー非アクティブ下で実行される（Issue #361: 貼り付けプロンプトが上書きされない）"
+else
+  fail "secret-token の run() がスピナー active 下で実行される / 完走しない（Issue #361 回帰）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

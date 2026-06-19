@@ -357,6 +357,10 @@ function buildSteps({ owner, repo, reuseApp = false }) {
     {
       id: 'secret-token',
       label: 'CLAUDE_CODE_OAUTH_TOKEN を取得・登録',
+      // Issue #361: run() が oauth.setupToken → readline で stdin 入力（トークン貼り付け・
+      // クリップボード同意）を行うため、executeStep でスピナーを使わない。スピナーの再描画が
+      // 貼り付けプロンプトを上書きして画面から消すのを防ぐ（app-reuse の設計注記と同趣旨）。
+      interactiveRun: true,
       run: async (state) => {
         const result = await oauth.setupToken({
           argv: ['--repo', repo],
@@ -372,7 +376,14 @@ function buildSteps({ owner, repo, reuseApp = false }) {
         };
       },
       getUrl: () => `https://github.com/${repo}/settings/secrets/actions/new`,
-      getInstructions: () => 'Name: `CLAUDE_CODE_OAUTH_TOKEN` / Value: 取得したトークンを貼付',
+      // Issue #361: 取得手順（=== Claude OAuth Token の取得 ===、run 内で表示）と登録手順を
+      // 文面で区別し、Secret 名・クリップボードからの貼付を明示する。
+      getInstructions: () =>
+        [
+          '取得したトークンを GitHub Secrets に登録します（取得手順は上の「=== Claude OAuth Token の取得 ===」を参照）。',
+          'Name: `CLAUDE_CODE_OAUTH_TOKEN`',
+          'Value: 取得したトークン（クリップボードにコピー済みなら Cmd+V / Ctrl+V で貼付）',
+        ].join('\n'),
       verify: () => verifySecret(repo, 'CLAUDE_CODE_OAUTH_TOKEN'),
       isSensitive: true, // CISO Critical: クリップボードフォールバック時に値を絶対 stdout に出さない
       getValue: (state) => state.oauthToken,
@@ -482,8 +493,12 @@ async function executeStep(step, state, summary, dryRun) {
     let runResult = null;
     let runEarlyExit = false;
     for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
-      const s = clack.spinner();
-      s.start('実行中...');
+      // Issue #361: interactiveRun のステップ（secret-token）は run() 内で readline による
+      // stdin 入力を行うため、スピナーで包まない。スピナーの再描画が貼り付けプロンプトを
+      // 上書きして画面から消すのを防ぐ。非対話の run() は従来どおりスピナーで進捗を出す。
+      const useSpinner = !step.interactiveRun;
+      const s = useSpinner ? clack.spinner() : null;
+      if (s) s.start('実行中...');
       let r;
       try {
         r = await step.run(state);
@@ -497,7 +512,7 @@ async function executeStep(step, state, summary, dryRun) {
         // に token 値を埋め込まない実装（"vibehawk: OAuth token が空です" / "...形式が想定外です..."
         // のみ）。これにより isSensitive: true のステップでも値漏洩は起きない（Phase 3 テストで機械検証）。
         if (e instanceof CancelError) {
-          s.stop(`❌ ${e.message}`);
+          if (s) s.stop(`❌ ${e.message}`);
           throw e;
         }
         // 直後の `if (r.ok)` 分岐で s.stop が再度呼ばれるため、ここでは stop しない
@@ -505,12 +520,17 @@ async function executeStep(step, state, summary, dryRun) {
         r = { ok: false, hint: e.message };
       }
       if (r.ok) {
-        s.stop(`✅ ${r.info || '完了'}`);
+        if (s) s.stop(`✅ ${r.info || '完了'}`);
         runResult = r;
         runOk = true;
         break;
       }
-      s.stop(`❌ ${r.hint || '失敗'}`);
+      if (s) {
+        s.stop(`❌ ${r.hint || '失敗'}`);
+      } else {
+        // interactiveRun 経路はスピナーが無いため、失敗を note で可視化してから retry メニューへ
+        note(`❌ ${r.hint || '失敗'}`, '❌ 失敗');
+      }
       const action = await chooseRetryAction();
       if (action === 'cancel' || clack.isCancel(action)) {
         throw new CancelError(step.id);
