@@ -1827,5 +1827,87 @@ else
   fail "secret-pem の getUrl が変わった（Issue #112 回帰）"
 fi
 
+# Issue #360: app-logo ステップが macOS でロゴ画像を Finder に表示する（非 macOS / 失敗時はフォールバック）
+# パス文字列の表示だけだった app-logo に run を追加し、darwin で open -R によりロゴを Finder 選択表示する。
+# best-effort のため open 不在 / 失敗 / 非 macOS でもウィザードを止めずパス表示にフォールバックする。
+echo "=== Issue #360: ロゴ画像の Finder 自動表示検証 ==="
+
+# assert 1: app-logo ステップが run を持ち、呼び出すと {ok:true} を返す（platform 問わず落ちない）
+# spawnSync は setup.js が require 時に分割代入するため、require 前にモックを差し込む。
+if node -e '
+const cp = require("child_process");
+cp.spawnSync = function() { return { status: 0, stdout: "", stderr: "" }; };
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const logo = steps.find((s) => s.id === "app-logo");
+if (typeof logo.run !== "function") { console.error("app-logo must have a run function"); process.exit(1); }
+logo.run().then((r) => {
+  if (!r || r.ok !== true) { console.error("app-logo.run must return { ok: true }, got:", JSON.stringify(r)); process.exit(1); }
+  if (typeof r.info !== "string" || r.info.length === 0) { console.error("run must return info string"); process.exit(1); }
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "app-logo ステップが run を持ち {ok:true} を返す（Issue #360）"
+else
+  fail "app-logo ステップの run が無い / {ok:true} を返さない（Issue #360）"
+fi
+
+# assert 2: run の Finder 表示が platform 分岐する（darwin は open -R を呼び、非 darwin は呼ばない）
+if node -e '
+const cp = require("child_process");
+let calledWith = null;
+cp.spawnSync = function(cmd, args) { calledWith = { cmd, args }; return { status: 0, stdout: "", stderr: "" }; };
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const logo = steps.find((s) => s.id === "app-logo");
+logo.run().then(() => {
+  if (process.platform === "darwin") {
+    if (!calledWith || calledWith.cmd !== "open" || calledWith.args[0] !== "-R") {
+      console.error("darwin must call open -R, got:", JSON.stringify(calledWith)); process.exit(1);
+    }
+  } else {
+    if (calledWith !== null) { console.error("non-darwin must not call spawnSync, got:", JSON.stringify(calledWith)); process.exit(1); }
+  }
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "app-logo の run が platform 分岐する（darwin: open -R / 非 darwin: 呼ばない）（Issue #360）"
+else
+  fail "app-logo の run の platform 分岐が想定と異なる（Issue #360）"
+fi
+
+# assert 3: open 失敗（status≠0）でも run は {ok:true} でパス表示にフォールバックする（ウィザードを止めない）
+if node -e '
+const cp = require("child_process");
+cp.spawnSync = function() { return { status: 1, stdout: "", stderr: "open failed" }; };
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const logo = steps.find((s) => s.id === "app-logo");
+logo.run().then((r) => {
+  if (!r || r.ok !== true) { console.error("run must stay ok:true on open failure"); process.exit(1); }
+  if (!/ロゴ画像の場所/.test(r.info)) { console.error("run must fall back to path display on failure, got:", r.info); process.exit(1); }
+  process.exit(0);
+}).catch((e) => { console.error(e.message); process.exit(1); });
+' > /dev/null 2>&1; then
+  pass "app-logo の run が open 失敗時もパス表示にフォールバックし {ok:true} を保つ（Issue #360）"
+else
+  fail "app-logo の run が open 失敗時にフォールバックしない / 落ちる（Issue #360）"
+fi
+
+# assert 4: app-logo の verify は manual_confirmation のまま、getValue を持たない・isSensitive:false（Issue #249 回帰防止）
+if node -e '
+const setup = require("./cli/setup");
+const steps = setup.buildSteps({ owner: "alice", repo: "alice/bob" });
+const logo = steps.find((s) => s.id === "app-logo");
+const v = logo.verify({ credentials: { slug: "vibehawk-for-alice" } });
+if (!v || v.ok !== true || v.reason !== "manual_confirmation") { console.error("verify must stay manual_confirmation"); process.exit(1); }
+if (typeof logo.getValue === "function") { console.error("app-logo must NOT define getValue"); process.exit(1); }
+if (logo.isSensitive !== false) { console.error("app-logo isSensitive must stay false"); process.exit(1); }
+'; then
+  pass "app-logo の verify は manual_confirmation のまま getValue 不在・isSensitive:false（Issue #360 / #249 回帰防止）"
+else
+  fail "app-logo の verify / getValue / isSensitive が変わった（Issue #249 回帰）"
+fi
+
 echo "=== 結果: $PASSED passed, $FAILED failed ==="
 [[ $FAILED -eq 0 ]]

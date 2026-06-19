@@ -289,6 +289,18 @@ function buildSteps({ owner, repo, reuseApp = false }) {
       // ドラッグ&ドロップという手動 1 ステップへ導線を縮める。secret-pem と同じ設定 URL を案内する。
       // 認証・認可・credential 経路には一切触れない（getValue / clipboard / isSensitive 値出力なし）。
       // slug 未設定（app-create 失敗等）の場合は URL に 'undefined' を混入させず App 一覧へフォールバックする。
+      // Issue #360: macOS では同梱ロゴを Finder で選択表示し、ドラッグ&ドロップを容易にする。
+      // open -R はファイルに書き込まない UI 補助。非 macOS / open 不在 / 失敗時はパス表示に
+      // フォールバックし、ウィザードを止めない（best-effort のため常に ok を返す）。
+      run: async () => {
+        const revealed = revealLogoInFinder(LOGO_PATH);
+        return {
+          ok: true,
+          info: revealed
+            ? `ロゴ画像を Finder で表示しました: ${LOGO_PATH}`
+            : `ロゴ画像の場所: ${LOGO_PATH}`,
+        };
+      },
       getUrl: (state) => {
         const slug = state.credentials && state.credentials.slug;
         return slug
@@ -431,6 +443,19 @@ function buildSteps({ owner, repo, reuseApp = false }) {
       verify: () => verifyWorkflow(repo, '.github/workflows/vibehawk-review.yml'),
     },
   ];
+}
+
+// Issue #360: macOS で同梱ロゴ画像を Finder に選択表示する（ドラッグ&ドロップの導線短縮）。
+// `open -R` はファイルを選択するだけでファイルに書き込まない UI 補助。darwin 以外は何もしない。
+// open 不在・例外時は false を返してパス表示にフォールバックし、ウィザードを止めない。
+function revealLogoInFinder(logoPath) {
+  if (process.platform !== 'darwin') return false;
+  try {
+    const r = spawnSync('open', ['-R', logoPath]);
+    return r.status === 0;
+  } catch (e) {
+    return false;
+  }
 }
 
 function tryClipboardCopy(value, isSensitive) {
