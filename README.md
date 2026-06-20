@@ -155,13 +155,12 @@ status check が `failure` のまま止まることがある。
 | "Re-request review" ボタン | PR の Reviewers セクションで vibehawk-for-\<owner\> 横の 🔄 を押す |
 | `@vibehawk review` コメント | PR コメントに `@vibehawk review` と書く |
 
-> **利用者向けアップデート手順**: 最新の workflow を上書きコピーして PR を出す。
-> コピー元は `templates/.github/workflows/`。
-> コピー先は `.github/workflows/`。
-> 再 install・追加 secret は不要。
+> **利用者向けアップデート手順**: `npx vibehawk update --repo <owner>/<repo>` を実行する。
+> 導入済みの workflow を最新版（commit SHA pin）に更新する PR を作成する。App 作成は伴わず、追加 secret 登録も不要。
+> `templates/` の手動コピーや `install --overwrite` は使わない（前者は `__VIBEHAWK_REF__` 未解決で壊れ、後者は App を再作成するため）。
 >
 > **v0.2.2 以前の既存導入**: v0.2.3 で `vibehawk-review-skip-mark.yml` が新規追加された。
-> 上記の上書きコピーで取得できる。lockfile のみ変更の PR が required check で BLOCKED にならなくなる。
+> 上記の `vibehawk update` で取得できる。lockfile のみ変更の PR が required check で BLOCKED にならなくなる。
 
 メンテナー自身の PR でも Claude Pro / Max 枠を消費する。
 契約枠の保護設定は [`docs/maintainer-quota-policy.md`](docs/maintainer-quota-policy.md) を参照。
