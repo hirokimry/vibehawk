@@ -689,6 +689,7 @@ vibehawk は npm パッケージとして CLI を提供する。利用者は `np
 | `npx vibehawk setup [--owner USER] [--repo OWNER/REPO] [--dry-run]` | 対話型ウィザード（推奨）。App 作成 → bot アイコン（ロゴ）差し替え → リポジトリインストール → 3 secrets 登録 → workflow 配置の全 7 ステップを 1 コマンドに集約。Enter ゲートで段階検証（CLI は Anthropic に通信しない、secret を書き込まない）（Issue #91） |
 | `npx vibehawk install` | GitHub App Manifest Flow を起動して利用者の GitHub アカウントに `vibehawk-for-<owner>` App を作成（CLI は secret を書き込まない、利用者が GitHub Settings UI で App ID / Private Key を手動登録する） |
 | `npx vibehawk setup-token` | Claude OAuth Token の取得を補助し GitHub Settings 登録手順を画面誘導（CLI は secret を書き込まない、明示同意の上でクリップボードにコピー、Issue #74） |
+| `npx vibehawk update --repo OWNER/REPO` | 導入済みリポジトリの workflow を最新版（commit SHA pin）に更新する PR を作成（`createWorkflowPr({overwrite:true})` に委譲、**App 作成 Manifest Flow は伴わない**・secret 再登録不要、Issue #371）。`install --overwrite` は App を再作成するため更新には使わない |
 | `npx vibehawk help` | コマンド一覧を表示 |
 | `npx vibehawk version` | バージョンを表示 |
 
