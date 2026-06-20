@@ -18,6 +18,11 @@ const commands = {
     console.error(e.message || e);
     process.exit(1);
   }),
+  // Issue #371: 導入済みリポジトリの workflow を最新版に更新（App 作成なし、createWorkflowPr に委譲）
+  update: () => require('./update').run().catch((e) => {
+    console.error(e.message || e);
+    process.exit(1);
+  }),
   // Issue #331: push 前ローカルレビュー（read-only、claude -p の Pro/Max 枠）。run() は exit code を返す
   review: () => process.exit(require('./review').run()),
   help: () => printHelp(),
@@ -35,6 +40,7 @@ usage:
   npx vibehawk setup [--owner USER] [--repo OWNER/REPO] [--dry-run]   対話型ウィザードで全 6 ステップ（App 作成 → インストール → 3 secrets 登録 → workflow PR）を 1 コマンドに集約（CLI は secret を書き込まない、推奨）
   npx vibehawk install [--repo OWNER/REPO] [--overwrite]              GitHub App Manifest Flow を起動して vibehawk App を作成（--repo 指定時は workflow ファイル PR も自動作成、既存ファイル衝突時は --overwrite で上書き、CLI は secret を書き込まない）
   npx vibehawk setup-token [--repo OWNER/REPO]                        Claude OAuth Token を取得し GitHub Settings 登録手順を案内（CLI は secret を書き込まない）
+  npx vibehawk update --repo OWNER/REPO                               導入済みリポジトリの workflow を最新版（commit SHA）に更新する PR を作成（App 作成なし・secret 再登録不要）
   npx vibehawk review [--staged] [--base <ref>] [--intent <label>] [--output text|json] [--fail-on <severity>]
                                                                       push 前に手元の diff を CI と同一基準でレビュー（read-only、claude -p の Pro/Max 枠、追加課金ゼロ）
   npx vibehawk help                                                   このヘルプを表示
