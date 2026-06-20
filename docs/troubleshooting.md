@@ -337,13 +337,13 @@ v0.2.3 以降の配布 workflow は、外部リポジトリではリリースタ
 
 ### 復旧手順
 
-1. 最新版で workflow を再配布する（既存ファイルがあるため `--overwrite` が必要）。
+1. 最新版で workflow を再配布する（`update` が既存 workflow を最新 commit SHA で上書きする）。
 
    ```bash
-   npx vibehawk@latest install --repo <owner>/<repo> --overwrite
+   npx vibehawk@latest update --repo <owner>/<repo>
    ```
 
-   注意: `setup` サブコマンドに `--overwrite` は存在しない。既配布の上書きは `install` の `--overwrite` で行う。
+   注意: 更新に `install --overwrite` は使わない。`install` は `--overwrite` でも Manifest Flow を実行して App を再作成してしまうため（命名衝突の原因）。workflow のみの更新は `update` を使う（Issue #371）。
 
 2. 作成された workflow PR を確認してマージする（App / 3 secrets は登録済みのため再設定不要）。
 3. 任意の PR で `vibehawk` check が post されることを確認する。

@@ -30,7 +30,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "bash tests/test_smoke.sh && bash tests/test_workflow_yaml.sh && bash tests/test_cli.sh && bash tests/test_setup_wizard.sh && bash tests/test_expand_prompt_includes.sh && bash tests/test_review_prompt_single_source.sh && bash tests/test_load_vibehawk_prompt.sh && bash tests/test_review.sh"
+    "test": "bash tests/test_smoke.sh && bash tests/test_workflow_yaml.sh && bash tests/test_cli.sh && bash tests/test_setup_wizard.sh && bash tests/test_update.sh && bash tests/test_expand_prompt_includes.sh && bash tests/test_review_prompt_single_source.sh && bash tests/test_load_vibehawk_prompt.sh && bash tests/test_review.sh"
   },
   "keywords": [
     "code-review",
